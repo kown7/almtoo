@@ -1,0 +1,6 @@
+.aider*
+# dotnet stuff
+AlmToo/bin/
+AlmToo/obj/Release/
+AlmToo/publish/
+
