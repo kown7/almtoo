@@ -1,0 +1,22 @@
+# Installation
+
+## dotnet magic
+
+```
+dotnet new create blazorwasm -o AlmToo
+
+dotnet publish -c Release -o publish AlmToo.csproj 
+```
+
+
+## Required Packages
+
+apt update
+apt install npm
+apt install dotnet-sdk-10.0
+
+npm install -g @github/copilot
+npx @opengsd/gsd-core@latest
+npx @opengsd/gsd-pi@latest
+
+
