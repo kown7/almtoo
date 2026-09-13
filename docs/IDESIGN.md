@@ -193,6 +193,30 @@ Services/
     └── <shared helper files>
 ```
 
+### Namespace guidelines
+
+Use namespaces that mirror folder and layer ownership.
+
+**Root format:**
+- `<Company>.<Product>` as the stable namespace root (or equivalent org-wide standard)
+
+**Layered namespace format:**
+- `<Root>.Services.Managers.<ManagerName>.Interface`
+- `<Root>.Services.Managers.<ManagerName>.Service`
+- `<Root>.Services.Engines.<EngineName>.Interface`
+- `<Root>.Services.Engines.<EngineName>.Service`
+- `<Root>.Services.Accessors.<AccessorName>.Interface`
+- `<Root>.Services.Accessors.<AccessorName>.Service`
+- `<Root>.Services.Utilities`
+
+**Rules:**
+1. Namespace must map 1:1 with folder structure.
+2. Interface contracts and their DTOs belong in the same `.Interface` namespace.
+3. Implementations belong in the matching `.Service` namespace.
+4. Do not place layer-specific services into generic buckets like `.Common` or `.Helpers`.
+5. `using`/imports must respect the dependency matrix (namespace visibility does not justify illegal dependencies).
+6. Prefer file-scoped namespaces where language/version supports them for consistency and reduced nesting.
+
 ### DTO placement rule
 DTOs are owned by the interface boundary that uses them.  
 Do **not** centralize all DTOs in a global `Models/` folder without ownership context.
