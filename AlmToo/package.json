@@ -1,0 +1,15 @@
+{
+  "name": "almtoo-browser-git",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser Git engine dependencies for the AlmToo Blazor WebAssembly client.",
+  "type": "module",
+  "scripts": {
+    "postinstall": "node tools/copy-git-browser-assets.mjs",
+    "test": "node --test tests/browserGitEngineTests.mjs"
+  },
+  "dependencies": {
+    "@isomorphic-git/lightning-fs": "4.7.0",
+    "isomorphic-git": "1.42.2"
+  }
+}
