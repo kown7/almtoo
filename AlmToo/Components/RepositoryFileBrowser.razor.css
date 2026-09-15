@@ -1,0 +1,90 @@
+.file-browser {
+    border: 1px solid #dbe3ef;
+    border-radius: 1rem;
+    background: #ffffff;
+    box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.08);
+    display: grid;
+    gap: 1rem;
+    padding: 1.25rem;
+}
+
+.file-browser__header {
+    align-items: start;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.file-browser__header h2 {
+    margin: 0;
+}
+
+.file-browser__path {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    color: #1d4ed8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    margin: 0;
+    padding: 0.35rem 0.75rem;
+}
+
+.file-browser__list {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.8rem;
+    display: grid;
+    list-style: none;
+    margin: 0;
+    overflow: hidden;
+    padding: 0;
+}
+
+.file-browser__item + .file-browser__item {
+    border-top: 1px solid #e2e8f0;
+}
+
+.file-browser__entry {
+    align-items: center;
+    background: #ffffff;
+    border: 0;
+    color: #0f172a;
+    display: grid;
+    font: inherit;
+    gap: 0.6rem;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 0.8rem 0.9rem;
+    text-align: left;
+    width: 100%;
+}
+
+button.file-browser__entry {
+    cursor: pointer;
+}
+
+button.file-browser__entry:hover,
+button.file-browser__entry:focus-visible,
+.file-browser__entry.is-selected {
+    background: #f8fafc;
+    outline: 2px solid #93c5fd;
+    outline-offset: -2px;
+}
+
+.file-browser__entry--directory {
+    font-weight: 700;
+}
+
+.file-browser__entry--unsupported {
+    background: #f8fafc;
+    color: #64748b;
+}
+
+.file-browser__meta {
+    color: #64748b;
+    font-size: 0.85rem;
+    justify-self: end;
+}
+
+.file-browser__empty {
+    color: #64748b;
+    margin: 0;
+}
