@@ -91,6 +91,12 @@
                                OnDirectorySelected="LoadRepositoryPathAsync"
                                OnFileSelected="SelectFileAsync" />
 
+        <RepositoryChangedFiles ChangedFiles="changedFiles"
+                                IsLoading="isLoadingStatus"
+                                Message="changedFilesMessage"
+                                Succeeded="changedFilesSucceeded"
+                                OnRefreshRequested="RefreshChangedFilesAsync" />
+
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div>
                 <p class="helper-text">Selected file path</p>
@@ -159,11 +165,15 @@
     private string? editableFileContent;
     private string? fileBrowserMessage;
     private string? saveStatusMessage;
+    private IReadOnlyList<ChangedFile> changedFiles = Array.Empty<ChangedFile>();
+    private string? changedFilesMessage;
     private bool fileBrowserSucceeded;
     private bool saveSucceeded;
+    private bool changedFilesSucceeded;
     private bool isLoadingFiles;
     private bool isLoadingSelectedFile;
     private bool isSavingFile;
+    private bool isLoadingStatus;
 
     private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
 
@@ -209,6 +219,7 @@
                 currentRepository = openedRepository;
                 statusMessage = result.Message;
                 await LoadRepositoryPathAsync("/");
+                await RefreshChangedFilesAsync();
             }
             else
             {
@@ -269,6 +280,8 @@
         {
             isLoadingFiles = false;
         }
+
+        await RefreshChangedFilesAsync();
     }
 
     private async Task SelectFileAsync(string path)
@@ -350,6 +363,7 @@
                 selectedFileContent = contentToSave;
                 saveSucceeded = true;
                 saveStatusMessage = result.Message;
+                await RefreshChangedFilesAsync();
             }
             else
             {
@@ -365,6 +379,39 @@
         finally
         {
             isSavingFile = false;
+        }
+    }
+
+    private async Task RefreshChangedFilesAsync()
+    {
+        if (currentRepository is null)
+        {
+            changedFiles = Array.Empty<ChangedFile>();
+            changedFilesMessage = null;
+            changedFilesSucceeded = false;
+            return;
+        }
+
+        isLoadingStatus = true;
+
+        try
+        {
+            var result = await GitService.GetStatusAsync();
+            changedFilesSucceeded = result.Succeeded;
+            changedFilesMessage = result.Message;
+            changedFiles = result.Succeeded && result.Value is not null
+                ? result.Value
+                : Array.Empty<ChangedFile>();
+        }
+        catch (Exception)
+        {
+            changedFilesSucceeded = false;
+            changedFilesMessage = "Changed files could not be loaded. Reopen the repository and try again.";
+            changedFiles = Array.Empty<ChangedFile>();
+        }
+        finally
+        {
+            isLoadingStatus = false;
         }
     }
 
@@ -404,10 +451,14 @@
         editableFileContent = null;
         fileBrowserMessage = null;
         saveStatusMessage = null;
+        changedFilesMessage = null;
         fileBrowserSucceeded = false;
         saveSucceeded = false;
+        changedFilesSucceeded = false;
         isLoadingFiles = false;
         isLoadingSelectedFile = false;
         isSavingFile = false;
+        isLoadingStatus = false;
+        changedFiles = Array.Empty<ChangedFile>();
     }
 }
