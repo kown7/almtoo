@@ -1,7 +1,175 @@
-﻿@page "/"
+@page "/"
+@using AlmToo.Services.Git
+@inject IBrowserGitService GitService
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Repository Browser</PageTitle>
 
-<h1>Hello, world!</h1>
+<section class="repository-shell">
+    <div class="repository-hero">
+        <p class="helper-text">Browser-local Git workspace</p>
+        <h1>Open a public repository</h1>
+        <p>
+            Clone a public Git repository into local browser storage, or reopen the existing
+            local workspace when it has already been cloned in this browser.
+        </p>
+    </div>
 
-Welcome to your new app.
+    <div class="repository-card">
+        <form class="repository-form" @onsubmit="OpenRepositoryAsync" @onsubmit:preventDefault="true">
+            <div class="form-field">
+                <label for="repository-url">Repository URL</label>
+                <input id="repository-url"
+                       type="url"
+                       placeholder="https://github.com/example/project.git"
+                       autocomplete="url"
+                       @bind="repositoryUrl"
+                       @bind:event="oninput"
+                       disabled="@isOpening" />
+            </div>
+
+            <div class="repository-actions">
+                <button type="submit" disabled="@isOpening">
+                    @(isOpening ? "Opening repository..." : "Clone or open repository")
+                </button>
+                <p class="helper-text">Public repositories only. Private or authenticated repositories are not supported yet.</p>
+            </div>
+        </form>
+
+        @if (isOpening)
+        {
+            <p class="status-message info" role="status" aria-live="polite">
+                Contacting the Git host and preparing browser storage...
+            </p>
+        }
+        else if (!string.IsNullOrWhiteSpace(statusMessage))
+        {
+            <p class="@StatusMessageCssClass" role="status" aria-live="polite">
+                @statusMessage
+            </p>
+        }
+    </div>
+
+    @if (currentRepository is not null)
+    {
+        <section class="repository-status" aria-labelledby="repository-status-heading">
+            <div>
+                <p class="helper-text">Current repository state</p>
+                <h2 id="repository-status-heading">Repository ready</h2>
+            </div>
+
+            <dl class="status-grid">
+                <div>
+                    <dt>Repository</dt>
+                    <dd>@currentRepository.RepositoryUrl</dd>
+                </div>
+                <div>
+                    <dt>Workspace</dt>
+                    <dd>@currentRepository.WorkspaceName</dd>
+                </div>
+                <div>
+                    <dt>Root path</dt>
+                    <dd>@currentRepository.RootPath</dd>
+                </div>
+                <div>
+                    <dt>Open mode</dt>
+                    <dd>@(currentRepository.WasCloned ? "Cloned into browser storage" : "Opened existing browser-local copy")</dd>
+                </div>
+            </dl>
+        </section>
+    }
+</section>
+
+@code {
+    private const int MaxWorkspaceNameLength = 80;
+
+    private string repositoryUrl = string.Empty;
+    private RepositoryInfo? currentRepository;
+    private bool isOpening;
+    private bool statusSucceeded;
+    private string? statusMessage;
+
+    private string StatusMessageCssClass => statusSucceeded
+        ? "status-message success"
+        : "status-message warning";
+
+    private async Task OpenRepositoryAsync()
+    {
+        var trimmedRepositoryUrl = repositoryUrl.Trim();
+
+        if (string.IsNullOrWhiteSpace(trimmedRepositoryUrl))
+        {
+            currentRepository = null;
+            statusSucceeded = false;
+            statusMessage = "Enter a public repository URL before opening a workspace.";
+            return;
+        }
+
+        isOpening = true;
+        currentRepository = null;
+        statusMessage = null;
+
+        try
+        {
+            var request = new RepositoryOpenRequest(
+                trimmedRepositoryUrl,
+                CreateWorkspaceName(trimmedRepositoryUrl));
+
+            var result = await GitService.CloneOrOpenAsync(request);
+            var openedRepository = result.Value;
+            statusSucceeded = result.Succeeded && openedRepository is not null;
+
+            if (openedRepository is not null && result.Succeeded)
+            {
+                currentRepository = openedRepository;
+                statusMessage = openedRepository.WasCloned
+                    ? "Repository cloned into browser-local storage."
+                    : "Opened the existing browser-local repository.";
+            }
+            else
+            {
+                statusMessage = string.IsNullOrWhiteSpace(result.Message)
+                    ? "This repository could not be opened. Confirm it is public and try again."
+                    : result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            statusSucceeded = false;
+            statusMessage = "This repository could not be opened. Confirm it is public and try again.";
+        }
+        finally
+        {
+            isOpening = false;
+        }
+    }
+
+    private static string CreateWorkspaceName(string repositoryUrl)
+    {
+        var candidate = repositoryUrl
+            .Trim()
+            .TrimEnd('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault() ?? "repository";
+
+        if (candidate.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            candidate = candidate[..^4];
+        }
+
+        var workspaceName = new string(candidate
+            .Select(character => char.IsLetterOrDigit(character) || character is '-' or '_'
+                ? character
+                : '-')
+            .ToArray())
+            .Trim('-');
+
+        if (string.IsNullOrWhiteSpace(workspaceName))
+        {
+            workspaceName = "repository";
+        }
+
+        return workspaceName.Length > MaxWorkspaceNameLength
+            ? workspaceName[..MaxWorkspaceNameLength]
+            : workspaceName;
+    }
+}

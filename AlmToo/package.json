@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "postinstall": "node tools/copy-git-browser-assets.mjs",
-    "test": "node --test tests/browserGitEngineTests.mjs"
+    "test": "node --test tests/browserGitEngineTests.mjs tests/homePageContractTests.mjs"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "4.7.0",

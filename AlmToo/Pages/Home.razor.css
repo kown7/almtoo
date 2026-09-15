@@ -1,0 +1,138 @@
+.repository-shell {
+    display: grid;
+    gap: 1.5rem;
+    max-width: 60rem;
+}
+
+.repository-hero {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.repository-hero h1 {
+    margin: 0;
+    font-size: clamp(2rem, 4vw, 3.5rem);
+}
+
+.repository-hero p {
+    max-width: 48rem;
+    color: #475569;
+    font-size: 1.1rem;
+}
+
+.repository-card,
+.repository-status {
+    border: 1px solid #dbe3ef;
+    border-radius: 1rem;
+    background: #ffffff;
+    box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.08);
+    padding: 1.25rem;
+}
+
+.repository-form {
+    display: grid;
+    gap: 1rem;
+}
+
+.form-field {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.form-field label {
+    font-weight: 700;
+}
+
+.form-field input {
+    border: 1px solid #bac7d8;
+    border-radius: 0.7rem;
+    font-size: 1rem;
+    padding: 0.75rem 0.9rem;
+}
+
+.form-field input:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.15);
+    outline: none;
+}
+
+.repository-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.repository-actions button {
+    border: 0;
+    border-radius: 999px;
+    background: #2563eb;
+    color: #ffffff;
+    cursor: pointer;
+    font-weight: 700;
+    padding: 0.75rem 1.2rem;
+}
+
+.repository-actions button:disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+}
+
+.helper-text {
+    color: #64748b;
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+.status-message {
+    border-radius: 0.75rem;
+    margin: 0;
+    padding: 0.85rem 1rem;
+}
+
+.status-message.info {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.status-message.success {
+    background: #ecfdf5;
+    color: #047857;
+}
+
+.status-message.warning {
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.repository-status {
+    display: grid;
+    gap: 1rem;
+}
+
+.status-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.status-grid div {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    background: #f8fafc;
+    padding: 0.85rem;
+}
+
+.status-grid dt {
+    color: #64748b;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    margin: 0 0 0.35rem;
+    text-transform: uppercase;
+}
+
+.status-grid dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
