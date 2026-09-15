@@ -97,6 +97,12 @@
                                 Succeeded="changedFilesSucceeded"
                                 OnRefreshRequested="RefreshChangedFilesAsync" />
 
+        <RepositoryCommitForm IsCommitting="isCommitting"
+                              StatusMessage="commitStatusMessage"
+                              StatusIsError="@(!commitSucceeded)"
+                              CreatedCommit="createdCommit"
+                              OnCommitRequested="CreateCommitAsync" />
+
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div>
                 <p class="helper-text">Selected file path</p>
@@ -174,6 +180,10 @@
     private bool isLoadingSelectedFile;
     private bool isSavingFile;
     private bool isLoadingStatus;
+    private bool isCommitting;
+    private bool commitSucceeded;
+    private string? commitStatusMessage;
+    private CommitInfo? createdCommit;
 
     private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
 
@@ -415,6 +425,42 @@
         }
     }
 
+    private async Task CreateCommitAsync(CommitRequest request)
+    {
+        if (currentRepository is null)
+        {
+            commitSucceeded = false;
+            commitStatusMessage = "Open a repository before creating a commit.";
+            return;
+        }
+
+        isCommitting = true;
+        commitStatusMessage = null;
+        createdCommit = null;
+
+        try
+        {
+            var result = await GitService.CommitAsync(request);
+            commitSucceeded = result.Succeeded && result.Value is not null;
+            commitStatusMessage = result.Message;
+            createdCommit = commitSucceeded ? result.Value : null;
+
+            if (commitSucceeded)
+            {
+                await RefreshChangedFilesAsync();
+            }
+        }
+        catch (Exception)
+        {
+            commitSucceeded = false;
+            commitStatusMessage = "The local commit could not be created. Review the changed files and try again.";
+        }
+        finally
+        {
+            isCommitting = false;
+        }
+    }
+
     private static string CreateWorkspaceName(string repositoryUrl)
     {
         var name = repositoryUrl.TrimEnd('/').Split('/').LastOrDefault() ?? "repository";
@@ -459,6 +505,10 @@
         isLoadingSelectedFile = false;
         isSavingFile = false;
         isLoadingStatus = false;
+        isCommitting = false;
+        commitSucceeded = false;
+        commitStatusMessage = null;
+        createdCommit = null;
         changedFiles = Array.Empty<ChangedFile>();
     }
 }

@@ -1,0 +1,90 @@
+@using AlmToo.Services.Git
+
+<section class="commit-form" aria-labelledby="commit-form-heading">
+    <div>
+        <p class="helper-text">Local history</p>
+        <h2 id="commit-form-heading">Create a commit</h2>
+        <p class="commit-form__description">Save the current working tree as a local commit. Pushing is not included.</p>
+    </div>
+
+    <form @onsubmit="CreateCommitAsync" @onsubmit:preventDefault novalidate>
+        <div class="form-field">
+            <label for="commit-message">Commit message</label>
+            <input id="commit-message" @bind="CommitMessage" maxlength="200" disabled="@IsCommitting" />
+        </div>
+        <div class="commit-form__identity">
+            <div class="form-field">
+                <label for="commit-author-name">Author name</label>
+                <input id="commit-author-name" @bind="AuthorName" autocomplete="name" maxlength="100" disabled="@IsCommitting" />
+            </div>
+            <div class="form-field">
+                <label for="commit-author-email">Author email</label>
+                <input id="commit-author-email" type="email" @bind="AuthorEmail" autocomplete="email" maxlength="254" disabled="@IsCommitting" />
+            </div>
+        </div>
+        <p class="commit-form__hint">Starter identity is stored only with commits in this browser-local repository.</p>
+        <button type="submit" disabled="@IsCommitting">@(IsCommitting ? "Creating commit..." : "Create local commit")</button>
+    </form>
+
+    @if (!string.IsNullOrWhiteSpace(EffectiveStatusMessage))
+    {
+        <p class="@StatusCssClass" role="status" aria-live="polite">@EffectiveStatusMessage</p>
+    }
+
+    @if (CreatedCommit is not null)
+    {
+        <dl class="commit-form__confirmation">
+            <div><dt>Commit</dt><dd><code>@CreatedCommit.CommitId</code></dd></div>
+            <div><dt>Message</dt><dd>@CreatedCommit.Message</dd></div>
+        </dl>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public EventCallback<CommitRequest> OnCommitRequested { get; set; }
+
+    [Parameter]
+    public bool IsCommitting { get; set; }
+
+    [Parameter]
+    public string? StatusMessage { get; set; }
+
+    [Parameter]
+    public bool StatusIsError { get; set; }
+
+    [Parameter]
+    public CommitInfo? CreatedCommit { get; set; }
+
+    private string CommitMessage { get; set; } = string.Empty;
+    private string AuthorName { get; set; } = "AlmToo User";
+    private string AuthorEmail { get; set; } = "user@almtoo.local";
+    private string? ValidationMessage { get; set; }
+
+    private string? EffectiveStatusMessage => ValidationMessage ?? StatusMessage;
+    private string StatusCssClass => $"status-message {(ValidationMessage is not null || StatusIsError ? "error" : "success")}";
+
+    private async Task CreateCommitAsync()
+    {
+        var message = CommitMessage.Trim();
+        var authorName = AuthorName.Trim();
+        var authorEmail = AuthorEmail.Trim();
+
+        ValidationMessage = Validate(message, authorName, authorEmail);
+        if (ValidationMessage is not null)
+        {
+            return;
+        }
+
+        await OnCommitRequested.InvokeAsync(new CommitRequest(message, authorName, authorEmail));
+        ValidationMessage = null;
+    }
+
+    private static string? Validate(string message, string authorName, string authorEmail)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return "Enter a commit message.";
+        if (string.IsNullOrWhiteSpace(authorName)) return "Enter an author name.";
+        if (string.IsNullOrWhiteSpace(authorEmail) || !authorEmail.Contains('@')) return "Enter a valid author email.";
+        return null;
+    }
+}

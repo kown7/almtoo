@@ -1,0 +1,22 @@
+.commit-form {
+    border: 1px solid #dbe3ef;
+    border-radius: 1rem;
+    background: #fff;
+    box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.08);
+    display: grid;
+    gap: 1rem;
+    padding: 1.25rem;
+}
+
+.commit-form h2 { margin: 0; }
+.commit-form form { display: grid; gap: 1rem; }
+.commit-form__description, .commit-form__hint { color: #475569; margin: 0.35rem 0 0; }
+.commit-form__hint { font-size: 0.9rem; }
+.commit-form__identity { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.commit-form input { border: 1px solid #94a3b8; border-radius: 0.55rem; font: inherit; padding: 0.7rem; }
+.commit-form button { justify-self: start; background: #1d4ed8; border: 0; border-radius: 0.6rem; color: white; cursor: pointer; font: inherit; font-weight: 700; padding: 0.7rem 1rem; }
+.commit-form button:disabled { cursor: not-allowed; opacity: 0.7; }
+.commit-form__confirmation { border: 1px solid #bbf7d0; border-radius: 0.75rem; background: #f0fdf4; display: grid; gap: 0.65rem; margin: 0; padding: 1rem; }
+.commit-form__confirmation div { display: grid; gap: 0.15rem; }
+.commit-form__confirmation dt { color: #166534; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; }
+.commit-form__confirmation dd { margin: 0; overflow-wrap: anywhere; }

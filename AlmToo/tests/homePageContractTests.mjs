@@ -6,6 +6,8 @@ const homePageUrl = new URL('../Pages/Home.razor', import.meta.url);
 const homeStylesUrl = new URL('../Pages/Home.razor.css', import.meta.url);
 const fileBrowserUrl = new URL('../Components/RepositoryFileBrowser.razor', import.meta.url);
 const fileBrowserStylesUrl = new URL('../Components/RepositoryFileBrowser.razor.css', import.meta.url);
+const commitFormUrl = new URL('../Components/RepositoryCommitForm.razor', import.meta.url);
+const commitFormStylesUrl = new URL('../Components/RepositoryCommitForm.razor.css', import.meta.url);
 
 async function readHomePage() {
   return readFile(homePageUrl, 'utf8');
@@ -13,6 +15,10 @@ async function readHomePage() {
 
 async function readFileBrowser() {
   return readFile(fileBrowserUrl, 'utf8');
+}
+
+async function readCommitForm() {
+  return readFile(commitFormUrl, 'utf8');
 }
 
 test('home page opens repositories through the browser Git service contract', async () => {
@@ -106,4 +112,44 @@ test('repository browser styles expose stateful surfaces', async () => {
   assert.match(fileBrowserStyles, /\.file-browser__entry--directory/);
   assert.match(fileBrowserStyles, /\.file-browser__entry--unsupported/);
   assert.match(fileBrowserStyles, /\.file-browser__entry\.is-selected/);
+});
+
+test('local commit form validates message and starter author identity', async () => {
+  const source = await readCommitForm();
+
+  assert.match(source, /@onsubmit="CreateCommitAsync"/);
+  assert.match(source, /CommitMessage\.Trim\(\)/);
+  assert.match(source, /AuthorName\.Trim\(\)/);
+  assert.match(source, /AuthorEmail\.Trim\(\)/);
+  assert.match(source, /Enter a commit message\./);
+  assert.match(source, /Enter an author name\./);
+  assert.match(source, /Enter a valid author email\./);
+  assert.match(source, /new CommitRequest\(message, authorName, authorEmail\)/);
+  assert.match(source, /AlmToo User/);
+  assert.match(source, /user@almtoo\.local/);
+  assert.match(source, /aria-live="polite"/);
+});
+
+test('home page invokes local commit service and refreshes status only after success', async () => {
+  const source = await readHomePage();
+
+  assert.match(source, /<RepositoryCommitForm/);
+  assert.match(source, /OnCommitRequested="CreateCommitAsync"/);
+  assert.match(source, /GitService\.CommitAsync\(request\)/);
+  assert.match(source, /commitSucceeded = result\.Succeeded && result\.Value is not null/);
+  assert.match(source, /createdCommit = commitSucceeded \? result\.Value : null/);
+  assert.match(source, /if \(commitSucceeded\)\s*\{\s*await RefreshChangedFilesAsync\(\)/);
+  assert.match(source, /The local commit could not be created\. Review the changed files and try again\./);
+  assert.doesNotMatch(source, /result\.Diagnostic/);
+});
+
+test('local commit form exposes confirmation and responsive styling', async () => {
+  const source = await readCommitForm();
+  const styles = await readFile(commitFormStylesUrl, 'utf8');
+
+  assert.match(source, /CreatedCommit\.CommitId/);
+  assert.match(source, /CreatedCommit\.Message/);
+  assert.match(source, /Pushing is not included/);
+  assert.match(styles, /\.commit-form__identity/);
+  assert.match(styles, /\.commit-form__confirmation/);
 });
