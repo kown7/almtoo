@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 const moduleUrl = new URL('../wwwroot/js/browserGitEngine.js', import.meta.url);
+const serviceUrl = new URL('../Services/Git/BrowserGitService.cs', import.meta.url);
 
 async function importFreshModule() {
   return import(`${moduleUrl.href}?case=${Date.now()}-${Math.random()}`);
@@ -195,4 +197,28 @@ test('commit validates author input and no-change repositories as structured fai
   assert.equal(noChangesResult.succeeded, false);
   assert.match(noChangesResult.message, /commit could not be created/i);
   assert.match(noChangesResult.diagnostic, /no browser-local changes/);
+});
+
+test('Blazor Git service invokes operations exported by the browser Git module', async () => {
+  const [serviceSource, moduleSource] = await Promise.all([
+    readFile(serviceUrl, 'utf8'),
+    readFile(moduleUrl, 'utf8')
+  ]);
+
+  for (const operation of [
+    'initialize',
+    'cloneOrOpen',
+    'listFiles',
+    'readTextFile',
+    'writeTextFile',
+    'getStatus',
+    'commit'
+  ]) {
+    assert.match(moduleSource, new RegExp(`export async function ${operation}\\b`));
+    assert.match(serviceSource, new RegExp(`\\"${operation}\\"`));
+  }
+
+  assert.match(serviceSource, /catch \(JSException exception\)/);
+  assert.match(serviceSource, /GitOperationResult<RepositoryInfo>\.Failure/);
+  assert.match(serviceSource, /GitOperationResult<CommitInfo>\.Failure/);
 });
