@@ -79,7 +79,7 @@
                 </div>
                 <div>
                     <dt>Save status</dt>
-                    <dd>Not edited in this step</dd>
+                    <dd>@SaveStatusText</dd>
                 </div>
             </dl>
         </section>
@@ -91,10 +91,10 @@
                                OnDirectorySelected="LoadRepositoryPathAsync"
                                OnFileSelected="SelectFileAsync" />
 
-        <section class="file-preview" aria-labelledby="file-preview-heading">
+        <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div>
                 <p class="helper-text">Selected file path</p>
-                <h2 id="file-preview-heading">@(selectedFilePath ?? "No file selected")</h2>
+                <h2 id="file-editor-heading">@(selectedFilePath ?? "No file selected")</h2>
             </div>
 
             @if (isLoadingSelectedFile)
@@ -106,14 +106,39 @@
                 <p class="@FileBrowserMessageCssClass" role="status" aria-live="polite">@fileBrowserMessage</p>
             }
 
+            @if (!string.IsNullOrWhiteSpace(saveStatusMessage))
+            {
+                <p class="@SaveStatusMessageCssClass" role="status" aria-live="polite">@saveStatusMessage</p>
+            }
+
             @if (selectedFileContent is not null)
             {
-                <pre class="file-preview__content"><code>@selectedFileContent</code></pre>
+                <div class="file-editor__field">
+                    <label for="selected-file-content">Plain text editor</label>
+                    <textarea id="selected-file-content"
+                              class="file-editor__textarea"
+                              spellcheck="false"
+                              @bind="editableFileContent"
+                              @bind:event="oninput"
+                              disabled="@isSavingFile"></textarea>
+                </div>
+
+                <div class="file-editor__actions">
+                    <button class="primary-action"
+                            type="button"
+                            @onclick="SaveSelectedFileAsync"
+                            disabled="@(isSavingFile || !HasUnsavedChanges)">
+                        @(isSavingFile ? "Saving..." : "Save changes")
+                    </button>
+                    <p class="file-editor__dirty-state">
+                        @(HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits")
+                    </p>
+                </div>
             }
             else if (selectedFilePath is null && !isLoadingSelectedFile)
             {
                 <p class="file-preview__placeholder">
-                    Choose a text file from the browser to load a preview. Binary or oversized files stay disabled.
+                    Choose a text file from the browser to load the editor. Binary or oversized files stay disabled.
                 </p>
             }
         </section>
@@ -131,14 +156,26 @@
     private string currentBrowserPath = "/";
     private string? selectedFilePath;
     private string? selectedFileContent;
+    private string? editableFileContent;
     private string? fileBrowserMessage;
+    private string? saveStatusMessage;
     private bool fileBrowserSucceeded;
+    private bool saveSucceeded;
     private bool isLoadingFiles;
     private bool isLoadingSelectedFile;
+    private bool isSavingFile;
+
+    private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
+
+    private string SaveStatusText => isSavingFile
+        ? "Saving changes"
+        : saveStatusMessage ?? (HasUnsavedChanges ? "Unsaved edits" : "No changes saved");
 
     private string StatusMessageCssClass => $"status-message {(statusSucceeded ? "success" : "error")}";
 
     private string FileBrowserMessageCssClass => $"status-message {(fileBrowserSucceeded ? "success" : "error")}";
+
+    private string SaveStatusMessageCssClass => $"status-message {(saveSucceeded ? "success" : "error")}";
 
     private async Task OpenRepositoryAsync()
     {
@@ -198,8 +235,11 @@
 
         isLoadingFiles = true;
         fileBrowserMessage = null;
+        saveStatusMessage = null;
+        saveSucceeded = false;
         selectedFilePath = null;
         selectedFileContent = null;
+        editableFileContent = null;
 
         try
         {
@@ -240,6 +280,9 @@
 
         selectedFilePath = path;
         selectedFileContent = null;
+        editableFileContent = null;
+        saveStatusMessage = null;
+        saveSucceeded = false;
 
         var selectedEntry = repositoryEntries.FirstOrDefault(entry => entry.Path == path);
         if (selectedEntry is null)
@@ -265,6 +308,7 @@
             if (result.Succeeded && result.Value is not null)
             {
                 selectedFileContent = result.Value.Content;
+                editableFileContent = result.Value.Content;
                 fileBrowserSucceeded = true;
                 fileBrowserMessage = $"Loaded {result.Value.Path}.";
             }
@@ -282,6 +326,45 @@
         finally
         {
             isLoadingSelectedFile = false;
+        }
+    }
+
+    private async Task SaveSelectedFileAsync()
+    {
+        if (currentRepository is null || string.IsNullOrWhiteSpace(selectedFilePath) || selectedFileContent is null)
+        {
+            saveSucceeded = false;
+            saveStatusMessage = "Choose a text file before saving changes.";
+            return;
+        }
+
+        isSavingFile = true;
+        saveStatusMessage = null;
+
+        try
+        {
+            var contentToSave = editableFileContent ?? string.Empty;
+            var result = await GitService.WriteTextFileAsync(selectedFilePath, contentToSave);
+            if (result.Succeeded)
+            {
+                selectedFileContent = contentToSave;
+                saveSucceeded = true;
+                saveStatusMessage = result.Message;
+            }
+            else
+            {
+                saveSucceeded = false;
+                saveStatusMessage = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            saveSucceeded = false;
+            saveStatusMessage = "The selected file could not be saved. Reopen the repository and try again.";
+        }
+        finally
+        {
+            isSavingFile = false;
         }
     }
 
@@ -318,9 +401,13 @@
         currentBrowserPath = "/";
         selectedFilePath = null;
         selectedFileContent = null;
+        editableFileContent = null;
         fileBrowserMessage = null;
+        saveStatusMessage = null;
         fileBrowserSucceeded = false;
+        saveSucceeded = false;
         isLoadingFiles = false;
         isLoadingSelectedFile = false;
+        isSavingFile = false;
     }
 }

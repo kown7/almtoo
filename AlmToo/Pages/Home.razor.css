@@ -141,15 +141,43 @@
     overflow-wrap: anywhere;
 }
 
-.file-preview__content {
+.file-editor__field {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.file-editor__field label {
+    font-weight: 700;
+}
+
+.file-editor__textarea {
     background: #0f172a;
+    border: 1px solid #334155;
     border-radius: 0.8rem;
     color: #e2e8f0;
-    margin: 0;
-    max-height: 28rem;
-    overflow: auto;
+    font: 0.95rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    min-height: 24rem;
     padding: 1rem;
-    white-space: pre-wrap;
+    resize: vertical;
+    white-space: pre;
+}
+
+.file-editor__textarea:disabled {
+    cursor: progress;
+    opacity: 0.75;
+}
+
+.file-editor__actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.file-editor__dirty-state {
+    color: #64748b;
+    font-weight: 700;
+    margin: 0;
 }
 
 @media (max-width: 640px) {

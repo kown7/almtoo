@@ -41,17 +41,36 @@ test('home page lists repository files after a workspace opens', async () => {
   assert.match(source, /Repository files could not be loaded\. Reopen the public repository and try again\./);
 });
 
-test('home page loads selected text files and exposes current state', async () => {
+test('home page loads selected text files into a textarea editor', async () => {
   const source = await readHomePage();
 
   assert.match(source, /OnFileSelected="SelectFileAsync"/);
   assert.match(source, /selectedEntry\.IsEditableText/);
   assert.match(source, /GitService\.ReadTextFileAsync\(path\)/);
   assert.match(source, /selectedFileContent = result\.Value\.Content/);
-  assert.match(source, /class="file-preview__content"/);
+  assert.match(source, /editableFileContent = result\.Value\.Content/);
+  assert.match(source, /<textarea id="selected-file-content"/);
+  assert.match(source, /@bind="editableFileContent"/);
+  assert.match(source, /@bind:event="oninput"/);
+  assert.match(source, /Plain text editor/);
   assert.match(source, /Selected file/);
   assert.match(source, /Save status/);
-  assert.match(source, /Not edited in this step/);
+  assert.match(source, /Choose a text file from the browser to load the editor\./);
+});
+
+test('home page saves edited plain text through the browser Git service contract', async () => {
+  const source = await readHomePage();
+
+  assert.match(source, /@onclick="SaveSelectedFileAsync"/);
+  assert.match(source, /HasUnsavedChanges/);
+  assert.match(source, /GitService\.WriteTextFileAsync\(selectedFilePath, contentToSave\)/);
+  assert.match(source, /selectedFileContent = contentToSave/);
+  assert.match(source, /saveStatusMessage = result\.Message/);
+  assert.match(source, /Choose a text file before saving changes\./);
+  assert.match(source, /The selected file could not be saved\. Reopen the repository and try again\./);
+  assert.match(source, /Saving\.\.\./);
+  assert.match(source, /Unsaved edits/);
+  assert.match(source, /No unsaved edits/);
 });
 
 test('home page shows recoverable unsupported file states', async () => {
@@ -81,7 +100,8 @@ test('repository browser styles expose stateful surfaces', async () => {
   const fileBrowserStyles = await readFile(fileBrowserStylesUrl, 'utf8');
 
   assert.match(homeStyles, /\.repository-status/);
-  assert.match(homeStyles, /\.file-preview__content/);
+  assert.match(homeStyles, /\.file-editor__textarea/);
+  assert.match(homeStyles, /\.file-editor__dirty-state/);
   assert.match(homeStyles, /\.status-message\.error/);
   assert.match(fileBrowserStyles, /\.file-browser__entry--directory/);
   assert.match(fileBrowserStyles, /\.file-browser__entry--unsupported/);
