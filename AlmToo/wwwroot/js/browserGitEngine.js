@@ -238,7 +238,7 @@ export async function push(review, personalAccessToken) {
     const current = await readPushState(operation);
 
     if (!samePushState(reviewed, current)) {
-      throw new Error('The repository, checked-out branch, or local HEAD changed since review. Inspect the push again.');
+      return normalizedPushFailure('unknown');
     }
 
     const { fs, dir } = await getActiveWorkspace(operation);
@@ -258,7 +258,7 @@ export async function push(review, personalAccessToken) {
         })
       });
     } catch (error) {
-      return pushFailure(operation, error);
+      return normalizedPushFailure(classifyPushFailure(error));
     }
 
     return success(operation, 'Pushed the reviewed commit to the matching origin branch.', {
@@ -268,7 +268,7 @@ export async function push(review, personalAccessToken) {
       pushedCommitId: current.outgoingCommitId
     });
   } catch (error) {
-    return failure(operation, 'The reviewed commit could not be pushed.', error, [token]);
+    return normalizedPushFailure(classifyPushFailure(error));
   } finally {
     token = undefined;
   }
@@ -572,42 +572,66 @@ function failure(operation, message, error, secrets = []) {
   };
 }
 
-function pushFailure(operation, error) {
-  const failureKind = classifyPushFailure(error);
+const pushFailureDiagnostics = Object.freeze({
+  credentialRejected: 'The remote rejected the supplied credentials or repository permission.',
+  remoteAhead: 'The remote branch contains commits that are not in the reviewed local history.',
+  networkUnavailable: 'The remote could not be reached from this browser.',
+  unsupportedRef: 'The checked-out ref is not a supported local branch.',
+  unknown: 'The push failed without exposing remote response details.'
+});
+
+function normalizedPushFailure(failureKind) {
+  const safeFailureKind = Object.hasOwn(pushFailureDiagnostics, failureKind)
+    ? failureKind
+    : 'unknown';
 
   return {
-    operation,
+    operation: 'push',
     succeeded: false,
     message: 'The reviewed commit could not be pushed.',
     value: null,
-    diagnostic: failureKind === 'credentialRejected'
-      ? 'The remote rejected the supplied credentials or repository permission.'
-      : 'The push failed without exposing remote response details.',
-    failureKind
+    diagnostic: pushFailureDiagnostics[safeFailureKind],
+    failureKind: safeFailureKind
   };
 }
 
 function classifyPushFailure(error) {
   try {
-    const statusCode = error?.statusCode ?? error?.status ?? error?.data?.statusCode ?? error?.response?.status;
+    const statusCode = error?.statusCode ?? error?.status ?? error?.data?.statusCode ?? error?.data?.status ?? error?.response?.status;
     if (statusCode === 401 || statusCode === 403 || statusCode === '401' || statusCode === '403') {
       return 'credentialRejected';
     }
 
     const code = typeof error?.code === 'string' ? error.code : '';
-    if (/^(?:EAUTH|E401|E403|AUTHENTICATION_ERROR|AUTHORIZATION_ERROR)$/i.test(code)) {
+    const name = typeof error?.name === 'string' ? error.name : '';
+    const caller = typeof error?.caller === 'string' ? error.caller : '';
+    const message = typeof error?.message === 'string' ? error.message : '';
+    const rejectionReason = typeof error?.data?.reason === 'string' ? error.data.reason : '';
+    const combined = `${name} ${code} ${caller} ${message}`;
+
+    if (/^(?:EAUTH|E401|E403|AUTHENTICATION_ERROR|AUTHORIZATION_ERROR)$/i.test(code)
+        || /\b(?:401|403)\b|authentication failed|invalid credentials?|bad credentials?|not authorized|authorization failed|permission denied|write access (?:is )?not granted/i.test(message)) {
       return 'credentialRejected';
     }
 
-    const message = typeof error?.message === 'string' ? error.message : '';
-    if (/\b(?:401|403)\b|authentication failed|invalid credentials?|bad credentials?|not authorized|authorization failed|permission denied|write access (?:is )?not granted/i.test(message)) {
-      return 'credentialRejected';
+    if (rejectionReason === 'not-fast-forward'
+        || /NonFastForwardError|non[- ]fast[- ]forward|not a simple fast-forward|fetch first|remote contains work|remote branch is ahead/i.test(combined)) {
+      return 'remoteAhead';
+    }
+
+    if (/^(?:ECONNABORTED|ECONNREFUSED|ECONNRESET|ENETDOWN|ENETUNREACH|ETIMEDOUT)$/i.test(code)
+        || /Failed to fetch|NetworkError|network (?:request )?(?:failed|timeout|unavailable)|CORS|cross-origin/i.test(combined)) {
+      return 'networkUnavailable';
+    }
+
+    if (/checked-out ref|checked-out branch|detached HEAD|refs\/heads|supported local branch/i.test(message)) {
+      return 'unsupportedRef';
     }
   } catch {
     // Error objects originate outside this module and may contain throwing accessors.
   }
 
-  return null;
+  return 'unknown';
 }
 
 function getDiagnostic(error) {

@@ -123,20 +123,9 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
         string personalAccessToken,
         CancellationToken cancellationToken = default)
     {
-        if (request is null)
+        if (request is null || string.IsNullOrWhiteSpace(personalAccessToken))
         {
-            return GitOperationResult<PushResult>.Failure(
-                "push",
-                "The reviewed commit could not be pushed.",
-                "Push request is required.");
-        }
-
-        if (string.IsNullOrWhiteSpace(personalAccessToken))
-        {
-            return GitOperationResult<PushResult>.Failure(
-                "push",
-                "The reviewed commit could not be pushed.",
-                "A personal access token is required.");
+            return SanitizedPushFailure(GitOperationFailureKind.Unknown);
         }
 
         var result = await InvokeWithValueAsync<PushResultDto, PushResult>(
@@ -158,19 +147,26 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
             return result with { FailureKind = null };
         }
 
-        GitOperationFailureKind? failureKind = result.FailureKind == GitOperationFailureKind.CredentialRejected
-            ? GitOperationFailureKind.CredentialRejected
-            : null;
+        return SanitizedPushFailure(result.FailureKind ?? GitOperationFailureKind.Unknown);
+    }
 
-        return result with
+    private static GitOperationResult<PushResult> SanitizedPushFailure(
+        GitOperationFailureKind failureKind)
+    {
+        var diagnostic = failureKind switch
         {
-            Operation = "push",
-            Message = "The reviewed commit could not be pushed.",
-            Diagnostic = failureKind == GitOperationFailureKind.CredentialRejected
-                ? "The remote rejected the supplied credentials or repository permission."
-                : "The push failed without exposing remote response details.",
-            FailureKind = failureKind
+            GitOperationFailureKind.CredentialRejected => "The remote rejected the supplied credentials or repository permission.",
+            GitOperationFailureKind.RemoteAhead => "The remote branch contains commits that are not in the reviewed local history.",
+            GitOperationFailureKind.NetworkUnavailable => "The remote could not be reached from this browser.",
+            GitOperationFailureKind.UnsupportedRef => "The checked-out ref is not a supported local branch.",
+            _ => "The push failed without exposing remote response details."
         };
+
+        return GitOperationResult<PushResult>.Failure(
+            "push",
+            "The reviewed commit could not be pushed.",
+            diagnostic,
+            failureKind);
     }
 
     private static GitOperationResult<PushResult> RedactCredential(
@@ -259,10 +255,15 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
                 ParseFailureKind(result.FailureKind));
     }
 
-    private static GitOperationFailureKind? ParseFailureKind(string? failureKind) =>
-        string.Equals(failureKind, "credentialRejected", StringComparison.Ordinal)
-            ? GitOperationFailureKind.CredentialRejected
-            : null;
+    private static GitOperationFailureKind? ParseFailureKind(string? failureKind) => failureKind switch
+    {
+        "credentialRejected" => GitOperationFailureKind.CredentialRejected,
+        "remoteAhead" => GitOperationFailureKind.RemoteAhead,
+        "networkUnavailable" => GitOperationFailureKind.NetworkUnavailable,
+        "unsupportedRef" => GitOperationFailureKind.UnsupportedRef,
+        "unknown" => GitOperationFailureKind.Unknown,
+        _ => null
+    };
 
     private async Task<BrowserGitResponse<TValue>> InvokeResponseAsync<TValue>(
         string operation,

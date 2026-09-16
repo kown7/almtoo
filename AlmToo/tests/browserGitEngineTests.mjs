@@ -338,10 +338,11 @@ test('push rejects missing credentials and malformed review without transport', 
   const missingReview = await engine.push(null, 'token');
   const missingToken = await engine.push({ repositoryUrl: 'https://github.com/octocat/Hello-World.git' }, '');
 
-  assert.equal(missingReview.succeeded, false);
-  assert.match(missingReview.diagnostic, /review is required/i);
-  assert.equal(missingToken.succeeded, false);
-  assert.match(missingToken.diagnostic, /personalAccessToken is required/i);
+  for (const result of [missingReview, missingToken]) {
+    assert.equal(result.succeeded, false);
+    assert.equal(result.failureKind, 'unknown');
+    assert.equal(result.diagnostic, 'The push failed without exposing remote response details.');
+  }
   assert.equal(pushCount, 0);
 });
 
@@ -410,21 +411,22 @@ test('push rejects changed review state and transport errors without retrying or
   oid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
   const staleHead = await engine.push(review, token);
   assert.equal(staleHead.succeeded, false);
-  assert.match(staleHead.diagnostic, /changed since review/i);
+  assert.equal(staleHead.failureKind, 'unknown');
+  assert.equal(staleHead.diagnostic, 'The push failed without exposing remote response details.');
   assert.equal(pushCount, 0);
 
   oid = review.outgoingCommitId;
   branch = 'refs/heads/other';
   const staleBranch = await engine.push(review, token);
   assert.equal(staleBranch.succeeded, false);
-  assert.match(staleBranch.diagnostic, /changed since review/i);
+  assert.equal(staleBranch.failureKind, 'unknown');
   assert.equal(pushCount, 0);
 
   branch = 'refs/heads/main';
   origin = 'https://github.com/octocat/Another-Repository.git';
   const staleOrigin = await engine.push(review, token);
   assert.equal(staleOrigin.succeeded, false);
-  assert.match(staleOrigin.diagnostic, /changed since review/i);
+  assert.equal(staleOrigin.failureKind, 'unknown');
   assert.equal(pushCount, 0);
 
   origin = review.repositoryUrl;
@@ -432,7 +434,7 @@ test('push rejects changed review state and transport errors without retrying or
   assert.equal(rejected.succeeded, false);
   assert.equal(pushCount, 1);
   assert.equal(JSON.stringify(rejected).includes(token), false);
-  assert.equal(rejected.failureKind, null);
+  assert.equal(rejected.failureKind, 'unknown');
   assert.equal(rejected.diagnostic, 'The push failed without exposing remote response details.');
 });
 
@@ -458,28 +460,120 @@ test('push classifies authentication and permission rejection without exposing h
   }
 });
 
-test('push leaves unknown, non-auth, and malformed transport failures generic', async () => {
+test('push classifies remote-ahead and network or CORS failures with fixed redacted fields', async () => {
+  const token = 'github_pat_test-sentinel';
+  const scenarios = [
+    {
+      kind: 'remoteAhead',
+      diagnostic: 'The remote branch contains commits that are not in the reviewed local history.',
+      errors: [
+        Object.assign(new Error(`Push rejected because it was not a simple fast-forward ${token}`), {
+          code: 'PushRejectedError',
+          data: { reason: 'not-fast-forward' }
+        }),
+        new Error(`non-fast-forward: fetch first ${token}`)
+      ]
+    },
+    {
+      kind: 'networkUnavailable',
+      diagnostic: 'The remote could not be reached from this browser.',
+      errors: [
+        Object.assign(new Error(`network timeout ${token}`), { code: 'ETIMEDOUT' }),
+        new TypeError(`Failed to fetch because of CORS ${token}`)
+      ]
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    for (const error of scenario.errors) {
+      const result = await runPushFailure(error, token);
+      const serialized = JSON.stringify(result);
+
+      assert.equal(result.succeeded, false);
+      assert.equal(result.failureKind, scenario.kind);
+      assert.equal(result.diagnostic, scenario.diagnostic);
+      assert.deepEqual(Object.keys(result).sort(), ['diagnostic', 'failureKind', 'message', 'operation', 'succeeded', 'value']);
+      assert.equal(serialized.includes(token), false);
+      assert.equal(serialized.includes(error.message), false);
+    }
+  }
+});
+
+test('push rejects unsupported refs before transport and preserves the local HEAD', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  const oid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  let branch = 'refs/heads/main';
+  let pushCount = 0;
+  installFakeGitRuntime({
+    async getConfig() { return 'https://github.com/octocat/Hello-World.git'; },
+    async currentBranch() { return branch; },
+    async resolveRef() { return oid; },
+    async push() { pushCount += 1; }
+  });
+
+  const engine = await importFreshModule();
+  await engine.cloneOrOpen({ repositoryUrl: 'https://github.com/octocat/Hello-World.git', workspaceName: 'demo' });
+  const review = (await engine.inspectPush()).value;
+  branch = 'refs/tags/v1';
+
+  const result = await engine.push(review, 'github_pat_test-sentinel');
+
+  assert.equal(result.failureKind, 'unsupportedRef');
+  assert.equal(result.diagnostic, 'The checked-out ref is not a supported local branch.');
+  assert.equal(pushCount, 0);
+  branch = 'refs/heads/main';
+  assert.equal((await engine.inspectPush()).value.outgoingCommitId, oid);
+});
+
+test('rejected transport preserves local HEAD and is attempted exactly once', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  const oid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  let pushCount = 0;
+  installFakeGitRuntime({
+    async getConfig() { return 'https://github.com/octocat/Hello-World.git'; },
+    async currentBranch() { return 'refs/heads/main'; },
+    async resolveRef() { return oid; },
+    async push() {
+      pushCount += 1;
+      throw Object.assign(new Error('non-fast-forward'), { code: 'PushRejectedError' });
+    }
+  });
+
+  const engine = await importFreshModule();
+  await engine.cloneOrOpen({ repositoryUrl: 'https://github.com/octocat/Hello-World.git', workspaceName: 'demo' });
+  const review = (await engine.inspectPush()).value;
+  const result = await engine.push(review, 'github_pat_test-sentinel');
+  const after = (await engine.inspectPush()).value;
+
+  assert.equal(result.failureKind, 'remoteAhead');
+  assert.equal(pushCount, 1);
+  assert.equal(after.outgoingCommitId, oid);
+  assert.deepEqual(after, review);
+});
+
+test('push maps unknown and malformed failures to an explicit redacted fallback', async () => {
   const token = 'github_pat_test-sentinel';
   const malformedError = {};
   Object.defineProperty(malformedError, 'statusCode', {
     get() { throw new Error(`throwing accessor leaked ${token}`); }
   });
 
-  for (const error of [
-    new Error(`remote rejected the update for ${token}`),
-    Object.assign(new Error(`network timeout while using ${token}`), { code: 'ETIMEDOUT' }),
-    malformedError,
-    null
-  ]) {
+  const nonStaleRejection = Object.assign(new Error(`Push rejected because tag exists ${token}`), {
+    code: 'PushRejectedError',
+    data: { reason: 'tag-exists' }
+  });
+
+  for (const error of [new Error(`opaque host failure ${token}`), nonStaleRejection, malformedError, null, 'bad error']) {
     const result = await runPushFailure(error, token);
     const serialized = JSON.stringify(result);
 
     assert.equal(result.succeeded, false);
-    assert.equal(result.failureKind, null);
+    assert.equal(result.failureKind, 'unknown');
     assert.equal(result.diagnostic, 'The push failed without exposing remote response details.');
     assert.equal(serialized.includes(token), false);
-    assert.equal(serialized.includes('timeout'), false);
-    assert.equal(serialized.includes('remote rejected the update'), false);
+    assert.equal(serialized.includes('opaque host failure'), false);
   }
 });
 
@@ -555,9 +649,19 @@ test('Blazor push boundary keeps credentials input-only and preserves reviewed a
   assert.match(serviceSource, /return new\(RepositoryUrl, Branch, DestinationRef, PushedCommitId\);/);
   assert.match(serviceSource, /RedactCredential\(result, personalAccessToken\)/);
   assert.match(serviceSource, /SanitizePushFailure\(RedactCredential\(result, personalAccessToken\)\)/);
-  assert.match(serviceSource, /string\.Equals\(failureKind, "credentialRejected", StringComparison\.Ordinal\)/);
+  for (const [wireKind, typedKind] of [
+    ['credentialRejected', 'CredentialRejected'],
+    ['remoteAhead', 'RemoteAhead'],
+    ['networkUnavailable', 'NetworkUnavailable'],
+    ['unsupportedRef', 'UnsupportedRef'],
+    ['unknown', 'Unknown']
+  ]) {
+    assert.match(serviceSource, new RegExp(`"${wireKind}" => GitOperationFailureKind\\.${typedKind}`));
+    assert.match(resultContractSource, new RegExp(`\\b${typedKind}\\b`));
+  }
   assert.match(serviceSource, /\[JsonPropertyName\("failureKind"\)\][\s\S]*?string\? FailureKind/);
-  assert.match(serviceSource, /FailureKind = failureKind/);
+  assert.match(serviceSource, /SanitizedPushFailure\(result\.FailureKind \?\? GitOperationFailureKind\.Unknown\)/);
+  assert.match(serviceSource, /diagnostic,[\s\S]*?failureKind\);/);
   assert.match(serviceSource, /The push failed without exposing remote response details/);
   assert.match(resultContractSource, /GitOperationFailureKind\? FailureKind = null/);
   assert.match(resultContractSource, /enum GitOperationFailureKind[\s\S]*?CredentialRejected/);

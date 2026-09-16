@@ -46,7 +46,11 @@ public record GitOperationResult<T>(
 /// </summary>
 public enum GitOperationFailureKind
 {
-    CredentialRejected
+    CredentialRejected,
+    RemoteAhead,
+    NetworkUnavailable,
+    UnsupportedRef,
+    Unknown
 }
 
 public record RepositoryOpenRequest(
