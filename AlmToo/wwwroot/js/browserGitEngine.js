@@ -217,6 +217,59 @@ export async function commit(request) {
   }
 }
 
+export async function inspectPush() {
+  const operation = 'inspectPush';
+
+  try {
+    const review = await readPushState(operation);
+    return success(operation, 'The outgoing push is ready for review.', review);
+  } catch (error) {
+    return failure(operation, 'The outgoing push could not be inspected.', error);
+  }
+}
+
+export async function push(review, personalAccessToken) {
+  const operation = 'push';
+  let token;
+
+  try {
+    token = requireText(personalAccessToken, 'personalAccessToken');
+    const reviewed = validatePushReview(review);
+    const current = await readPushState(operation);
+
+    if (!samePushState(reviewed, current)) {
+      throw new Error('The repository, checked-out branch, or local HEAD changed since review. Inspect the push again.');
+    }
+
+    const { fs, dir } = await getActiveWorkspace(operation);
+    await getGit().push({
+      fs,
+      http: getGitHttp(),
+      dir,
+      url: current.repositoryUrl,
+      corsProxy,
+      ref: current.branch,
+      remoteRef: current.branch,
+      force: false,
+      onAuth: () => ({
+        username: token,
+        password: 'x-oauth-basic'
+      })
+    });
+
+    return success(operation, 'Pushed the reviewed commit to the matching origin branch.', {
+      repositoryUrl: current.repositoryUrl,
+      branch: current.branch,
+      destinationRef: current.destinationRef,
+      pushedCommitId: current.outgoingCommitId
+    });
+  } catch (error) {
+    return failure(operation, 'The reviewed commit could not be pushed.', error, [token]);
+  } finally {
+    token = undefined;
+  }
+}
+
 async function ensureDependencies() {
   if (!dependenciesPromise) {
     dependenciesPromise = loadVendorScripts();
@@ -292,6 +345,115 @@ async function getActiveWorkspace(operation) {
   }
 
   return { fs, ...activeRepository };
+}
+
+async function readPushState(operation) {
+  const { fs, dir } = await getActiveWorkspace(operation);
+  const git = getGit();
+  const origin = await git.getConfig({ fs, dir, path: 'remote.origin.url' });
+
+  if (typeof origin !== 'string' || origin.trim().length === 0) {
+    throw new Error('The active repository does not have an origin remote.');
+  }
+
+  const repositoryUrl = canonicalizeGitHubOrigin(origin);
+  const fullRef = await git.currentBranch({ fs, dir, fullname: true });
+
+  if (typeof fullRef !== 'string' || fullRef.length === 0) {
+    throw new Error('The active repository does not have a checked-out branch; detached HEAD cannot be pushed.');
+  }
+
+  const branch = parseLocalBranchRef(fullRef);
+  const outgoingCommitId = await git.resolveRef({ fs, dir, ref: 'HEAD' });
+  if (typeof outgoingCommitId !== 'string' || !/^[0-9a-f]{40}$/i.test(outgoingCommitId)) {
+    throw new Error('The active repository HEAD did not resolve to a valid commit SHA.');
+  }
+
+  return {
+    repositoryUrl,
+    branch,
+    outgoingCommitId,
+    destinationRef: `refs/heads/${branch}`
+  };
+}
+
+function canonicalizeGitHubOrigin(origin) {
+  let parsed;
+  try {
+    parsed = new URL(origin.trim());
+  } catch {
+    throw new Error('The origin remote must be a valid GitHub HTTPS URL.');
+  }
+
+  const pathSegments = parsed.pathname.split('/').filter(Boolean);
+  if (parsed.protocol !== 'https:'
+      || parsed.hostname.toLowerCase() !== 'github.com'
+      || parsed.username.length > 0
+      || parsed.password.length > 0
+      || parsed.search.length > 0
+      || parsed.hash.length > 0
+      || pathSegments.length !== 2) {
+    throw new Error('The origin remote must be a credential-free GitHub HTTPS repository URL.');
+  }
+
+  const [owner, repository] = pathSegments;
+  if (owner === '.' || owner === '..' || repository === '.' || repository === '..') {
+    throw new Error('The origin remote must identify a GitHub owner and repository.');
+  }
+
+  return `https://github.com/${owner}/${repository}`;
+}
+
+function parseLocalBranchRef(fullRef) {
+  const prefix = 'refs/heads/';
+  if (!fullRef.startsWith(prefix)) {
+    throw new Error('The checked-out ref must be under refs/heads/.');
+  }
+
+  const branch = fullRef.slice(prefix.length);
+  const segments = branch.split('/');
+  const isInvalid = branch.length === 0
+    || branch === '@'
+    || branch.includes('..')
+    || branch.includes('@{')
+    || branch.endsWith('.')
+    || branch.endsWith('/')
+    || /[\x00-\x20~^:?*[\\]/.test(branch)
+    || segments.some((segment) => segment.length === 0 || segment.startsWith('.') || segment.endsWith('.lock'));
+
+  if (isInvalid) {
+    throw new Error('The checked-out branch is not a supported refs/heads branch.');
+  }
+
+  return branch;
+}
+
+function validatePushReview(review) {
+  if (!review || typeof review !== 'object' || Array.isArray(review)) {
+    throw new Error('A push review is required.');
+  }
+
+  const repositoryUrl = requireText(review.repositoryUrl, 'review.repositoryUrl');
+  const branch = requireText(review.branch, 'review.branch');
+  const outgoingCommitId = requireText(review.outgoingCommitId, 'review.outgoingCommitId');
+  const destinationRef = requireText(review.destinationRef, 'review.destinationRef');
+
+  if (!/^[0-9a-f]{40}$/i.test(outgoingCommitId)) {
+    throw new Error('review.outgoingCommitId must be a full commit SHA.');
+  }
+
+  if (destinationRef !== `refs/heads/${branch}`) {
+    throw new Error('The reviewed destination must exactly match the reviewed branch.');
+  }
+
+  return { repositoryUrl, branch, outgoingCommitId, destinationRef };
+}
+
+function samePushState(reviewed, current) {
+  return reviewed.repositoryUrl === current.repositoryUrl
+    && reviewed.branch === current.branch
+    && reviewed.outgoingCommitId === current.outgoingCommitId
+    && reviewed.destinationRef === current.destinationRef;
 }
 
 function getGit() {
@@ -396,13 +558,13 @@ function success(operation, message, value) {
   };
 }
 
-function failure(operation, message, error) {
+function failure(operation, message, error, secrets = []) {
   return {
     operation,
     succeeded: false,
     message,
     value: null,
-    diagnostic: getDiagnostic(error)
+    diagnostic: redactSecrets(getDiagnostic(error), secrets)
   };
 }
 
@@ -420,4 +582,14 @@ function getDiagnostic(error) {
   } catch {
     return String(error);
   }
+}
+
+function redactSecrets(value, secrets) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return secrets
+    .filter((secret) => typeof secret === 'string' && secret.length > 0)
+    .reduce((redacted, secret) => redacted.replaceAll(secret, '[REDACTED]'), value);
 }
