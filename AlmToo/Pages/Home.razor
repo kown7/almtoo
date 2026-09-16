@@ -1,7 +1,514 @@
-﻿@page "/"
+@page "/"
+@using AlmToo.Components
+@using AlmToo.Services.Git
+@inject IBrowserGitService GitService
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Repository Browser</PageTitle>
 
-<h1>Hello, world!</h1>
+<section class="repository-shell">
+    <div class="repository-hero">
+        <p class="helper-text">Browser-local Git workspace</p>
+        <h1>Open a public repository</h1>
+        <p>
+            Clone a public Git repository into local browser storage, or reopen the existing
+            local workspace when it has already been cloned in this browser.
+        </p>
+    </div>
 
-Welcome to your new app.
+    <div class="repository-card">
+        <form class="repository-form" @onsubmit="OpenRepositoryAsync" @onsubmit:preventDefault="true">
+            <div class="form-field">
+                <label for="repository-url">Repository URL</label>
+                <input id="repository-url"
+                       name="repository-url"
+                       type="url"
+                       placeholder="https://github.com/example/project.git"
+                       autocomplete="url"
+                       @bind="repositoryUrl"
+                       disabled="@isOpening" />
+                <p class="field-help">Public HTTPS Git URLs work best in browser-local storage.</p>
+            </div>
+
+            <button class="primary-action" type="submit" disabled="@isOpening">
+                @(isOpening ? "Opening..." : "Open repository")
+            </button>
+        </form>
+
+        @if (isOpening)
+        {
+            <p class="status-message info" role="status" aria-live="polite">
+                Contacting the Git host and preparing browser storage...
+            </p>
+        }
+        else if (!string.IsNullOrWhiteSpace(statusMessage))
+        {
+            <p class="@StatusMessageCssClass" role="status" aria-live="polite">
+                @statusMessage
+            </p>
+        }
+    </div>
+
+    @if (currentRepository is not null)
+    {
+        <section class="repository-status" aria-labelledby="repository-status-heading">
+            <div>
+                <p class="helper-text">Current repository state</p>
+                <h2 id="repository-status-heading">Repository ready</h2>
+            </div>
+
+            <dl class="status-grid">
+                <div>
+                    <dt>Repository</dt>
+                    <dd>@currentRepository.RepositoryUrl</dd>
+                </div>
+                <div>
+                    <dt>Workspace</dt>
+                    <dd>@currentRepository.WorkspaceName</dd>
+                </div>
+                <div>
+                    <dt>Storage path</dt>
+                    <dd>@currentRepository.RootPath</dd>
+                </div>
+                <div>
+                    <dt>Clone status</dt>
+                    <dd>@(currentRepository.WasCloned ? "Cloned in this session" : "Opened from browser storage")</dd>
+                </div>
+                <div>
+                    <dt>Selected file</dt>
+                    <dd>@(selectedFilePath ?? "None selected")</dd>
+                </div>
+                <div>
+                    <dt>Save status</dt>
+                    <dd>@SaveStatusText</dd>
+                </div>
+            </dl>
+        </section>
+
+        <RepositoryFileBrowser Entries="repositoryEntries"
+                               CurrentPath="currentBrowserPath"
+                               SelectedPath="selectedFilePath"
+                               IsLoading="isLoadingFiles"
+                               OnDirectorySelected="LoadRepositoryPathAsync"
+                               OnFileSelected="SelectFileAsync" />
+
+        <RepositoryChangedFiles ChangedFiles="changedFiles"
+                                IsLoading="isLoadingStatus"
+                                Message="@changedFilesMessage"
+                                Succeeded="changedFilesSucceeded"
+                                OnRefreshRequested="RefreshChangedFilesAsync" />
+
+        <RepositoryCommitForm IsCommitting="isCommitting"
+                              StatusMessage="@commitStatusMessage"
+                              StatusIsError="@(!commitSucceeded)"
+                              CreatedCommit="createdCommit"
+                              OnCommitRequested="CreateCommitAsync" />
+
+        <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
+            <div>
+                <p class="helper-text">Selected file path</p>
+                <h2 id="file-editor-heading">@(selectedFilePath ?? "No file selected")</h2>
+            </div>
+
+            @if (isLoadingSelectedFile)
+            {
+                <p class="status-message info" role="status" aria-live="polite">Loading selected text file...</p>
+            }
+            else if (!string.IsNullOrWhiteSpace(fileBrowserMessage))
+            {
+                <p class="@FileBrowserMessageCssClass" role="status" aria-live="polite">@fileBrowserMessage</p>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(saveStatusMessage))
+            {
+                <p class="@SaveStatusMessageCssClass" role="status" aria-live="polite">@saveStatusMessage</p>
+            }
+
+            @if (selectedFileContent is not null)
+            {
+                <div class="file-editor__field">
+                    <label for="selected-file-content">Plain text editor</label>
+                    <textarea id="selected-file-content"
+                              class="file-editor__textarea"
+                              spellcheck="false"
+                              @bind="editableFileContent"
+                              @bind:event="oninput"
+                              disabled="@isSavingFile"></textarea>
+                </div>
+
+                <div class="file-editor__actions">
+                    <button class="primary-action"
+                            type="button"
+                            @onclick="SaveSelectedFileAsync"
+                            disabled="@(isSavingFile || !HasUnsavedChanges)">
+                        @(isSavingFile ? "Saving..." : "Save changes")
+                    </button>
+                    <p class="file-editor__dirty-state">
+                        @(HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits")
+                    </p>
+                </div>
+            }
+            else if (selectedFilePath is null && !isLoadingSelectedFile)
+            {
+                <p class="file-preview__placeholder">
+                    Choose a text file from the browser to load the editor. Binary or oversized files stay disabled.
+                </p>
+            }
+        </section>
+    }
+</section>
+
+@code {
+    private string repositoryUrl = string.Empty;
+    private RepositoryInfo? currentRepository;
+    private bool isOpening;
+    private string? statusMessage;
+    private bool statusSucceeded;
+
+    private IReadOnlyList<RepositoryFileEntry> repositoryEntries = Array.Empty<RepositoryFileEntry>();
+    private string currentBrowserPath = "/";
+    private string? selectedFilePath;
+    private string? selectedFileContent;
+    private string? editableFileContent;
+    private string? fileBrowserMessage;
+    private string? saveStatusMessage;
+    private IReadOnlyList<ChangedFile> changedFiles = Array.Empty<ChangedFile>();
+    private string? changedFilesMessage;
+    private bool fileBrowserSucceeded;
+    private bool saveSucceeded;
+    private bool changedFilesSucceeded;
+    private bool isLoadingFiles;
+    private bool isLoadingSelectedFile;
+    private bool isSavingFile;
+    private bool isLoadingStatus;
+    private bool isCommitting;
+    private bool commitSucceeded;
+    private string? commitStatusMessage;
+    private CommitInfo? createdCommit;
+
+    private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
+
+    private string SaveStatusText => isSavingFile
+        ? "Saving changes"
+        : saveStatusMessage ?? (HasUnsavedChanges ? "Unsaved edits" : "No changes saved");
+
+    private string StatusMessageCssClass => $"status-message {(statusSucceeded ? "success" : "error")}";
+
+    private string FileBrowserMessageCssClass => $"status-message {(fileBrowserSucceeded ? "success" : "error")}";
+
+    private string SaveStatusMessageCssClass => $"status-message {(saveSucceeded ? "success" : "error")}";
+
+    private async Task OpenRepositoryAsync()
+    {
+        var trimmedRepositoryUrl = repositoryUrl.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedRepositoryUrl))
+        {
+            ResetRepositoryBrowser();
+            currentRepository = null;
+            statusSucceeded = false;
+            statusMessage = "Enter a public repository URL before opening a workspace.";
+            return;
+        }
+
+        isOpening = true;
+        currentRepository = null;
+        statusMessage = null;
+        ResetRepositoryBrowser();
+
+        try
+        {
+            var request = new RepositoryOpenRequest(
+                trimmedRepositoryUrl,
+                CreateWorkspaceName(trimmedRepositoryUrl));
+
+            var result = await GitService.CloneOrOpenAsync(request);
+            var openedRepository = result.Value;
+            statusSucceeded = result.Succeeded && openedRepository is not null;
+
+            if (openedRepository is not null && result.Succeeded)
+            {
+                currentRepository = openedRepository;
+                statusMessage = result.Message;
+                await LoadRepositoryPathAsync("/");
+                await RefreshChangedFilesAsync();
+            }
+            else
+            {
+                statusMessage = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            statusSucceeded = false;
+            statusMessage = "The repository could not be opened. Check that the URL is public and supported.";
+        }
+        finally
+        {
+            isOpening = false;
+        }
+    }
+
+    private async Task LoadRepositoryPathAsync(string path)
+    {
+        if (currentRepository is null)
+        {
+            return;
+        }
+
+        isLoadingFiles = true;
+        fileBrowserMessage = null;
+        saveStatusMessage = null;
+        saveSucceeded = false;
+        selectedFilePath = null;
+        selectedFileContent = null;
+        editableFileContent = null;
+
+        try
+        {
+            var normalizedPath = NormalizeRepositoryPath(path);
+            var result = await GitService.ListFilesAsync(normalizedPath);
+            if (result.Succeeded && result.Value is not null)
+            {
+                repositoryEntries = result.Value;
+                currentBrowserPath = normalizedPath;
+                fileBrowserSucceeded = true;
+                fileBrowserMessage = result.Message;
+            }
+            else
+            {
+                repositoryEntries = Array.Empty<RepositoryFileEntry>();
+                fileBrowserSucceeded = false;
+                fileBrowserMessage = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            repositoryEntries = Array.Empty<RepositoryFileEntry>();
+            fileBrowserSucceeded = false;
+            fileBrowserMessage = "Repository files could not be loaded. Reopen the public repository and try again.";
+        }
+        finally
+        {
+            isLoadingFiles = false;
+        }
+
+        await RefreshChangedFilesAsync();
+    }
+
+    private async Task SelectFileAsync(string path)
+    {
+        if (currentRepository is null)
+        {
+            return;
+        }
+
+        selectedFilePath = path;
+        selectedFileContent = null;
+        editableFileContent = null;
+        saveStatusMessage = null;
+        saveSucceeded = false;
+
+        var selectedEntry = repositoryEntries.FirstOrDefault(entry => entry.Path == path);
+        if (selectedEntry is null)
+        {
+            fileBrowserSucceeded = false;
+            fileBrowserMessage = "The selected file is no longer visible in the current repository listing.";
+            return;
+        }
+
+        if (!selectedEntry.IsEditableText)
+        {
+            fileBrowserSucceeded = false;
+            fileBrowserMessage = "This file is binary, oversized, or otherwise unsupported for text preview.";
+            return;
+        }
+
+        isLoadingSelectedFile = true;
+        fileBrowserMessage = null;
+
+        try
+        {
+            var result = await GitService.ReadTextFileAsync(path);
+            if (result.Succeeded && result.Value is not null)
+            {
+                selectedFileContent = result.Value.Content;
+                editableFileContent = result.Value.Content;
+                fileBrowserSucceeded = true;
+                fileBrowserMessage = $"Loaded {result.Value.Path}.";
+            }
+            else
+            {
+                fileBrowserSucceeded = false;
+                fileBrowserMessage = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            fileBrowserSucceeded = false;
+            fileBrowserMessage = "The selected file could not be loaded as text. Choose another file or reopen the repository.";
+        }
+        finally
+        {
+            isLoadingSelectedFile = false;
+        }
+    }
+
+    private async Task SaveSelectedFileAsync()
+    {
+        if (currentRepository is null || string.IsNullOrWhiteSpace(selectedFilePath) || selectedFileContent is null)
+        {
+            saveSucceeded = false;
+            saveStatusMessage = "Choose a text file before saving changes.";
+            return;
+        }
+
+        isSavingFile = true;
+        saveStatusMessage = null;
+
+        try
+        {
+            var contentToSave = editableFileContent ?? string.Empty;
+            var result = await GitService.WriteTextFileAsync(selectedFilePath, contentToSave);
+            if (result.Succeeded)
+            {
+                selectedFileContent = contentToSave;
+                saveSucceeded = true;
+                saveStatusMessage = result.Message;
+                await RefreshChangedFilesAsync();
+            }
+            else
+            {
+                saveSucceeded = false;
+                saveStatusMessage = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            saveSucceeded = false;
+            saveStatusMessage = "The selected file could not be saved. Reopen the repository and try again.";
+        }
+        finally
+        {
+            isSavingFile = false;
+        }
+    }
+
+    private async Task RefreshChangedFilesAsync()
+    {
+        if (currentRepository is null)
+        {
+            changedFiles = Array.Empty<ChangedFile>();
+            changedFilesMessage = null;
+            changedFilesSucceeded = false;
+            return;
+        }
+
+        isLoadingStatus = true;
+
+        try
+        {
+            var result = await GitService.GetStatusAsync();
+            changedFilesSucceeded = result.Succeeded;
+            changedFilesMessage = result.Message;
+            changedFiles = result.Succeeded && result.Value is not null
+                ? result.Value
+                : Array.Empty<ChangedFile>();
+        }
+        catch (Exception)
+        {
+            changedFilesSucceeded = false;
+            changedFilesMessage = "Changed files could not be loaded. Reopen the repository and try again.";
+            changedFiles = Array.Empty<ChangedFile>();
+        }
+        finally
+        {
+            isLoadingStatus = false;
+        }
+    }
+
+    private async Task CreateCommitAsync(CommitRequest request)
+    {
+        if (currentRepository is null)
+        {
+            commitSucceeded = false;
+            commitStatusMessage = "Open a repository before creating a commit.";
+            return;
+        }
+
+        isCommitting = true;
+        commitStatusMessage = null;
+        createdCommit = null;
+
+        try
+        {
+            var result = await GitService.CommitAsync(request);
+            commitSucceeded = result.Succeeded && result.Value is not null;
+            commitStatusMessage = result.Message;
+            createdCommit = commitSucceeded ? result.Value : null;
+
+            if (commitSucceeded)
+            {
+                await RefreshChangedFilesAsync();
+            }
+        }
+        catch (Exception)
+        {
+            commitSucceeded = false;
+            commitStatusMessage = "The local commit could not be created. Review the changed files and try again.";
+        }
+        finally
+        {
+            isCommitting = false;
+        }
+    }
+
+    private static string CreateWorkspaceName(string repositoryUrl)
+    {
+        var name = repositoryUrl.TrimEnd('/').Split('/').LastOrDefault() ?? "repository";
+        name = name.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
+            ? name[..^4]
+            : name;
+
+        var safeCharacters = name
+            .Select(character => char.IsLetterOrDigit(character) ? character : '-')
+            .ToArray();
+
+        var workspaceName = new string(safeCharacters).Trim('-').ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(workspaceName)
+            ? "repository"
+            : workspaceName;
+    }
+
+    private static string NormalizeRepositoryPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || path == ".")
+        {
+            return "/";
+        }
+
+        return path.StartsWith("/", StringComparison.Ordinal) ? path : $"/{path}";
+    }
+
+    private void ResetRepositoryBrowser()
+    {
+        repositoryEntries = Array.Empty<RepositoryFileEntry>();
+        currentBrowserPath = "/";
+        selectedFilePath = null;
+        selectedFileContent = null;
+        editableFileContent = null;
+        fileBrowserMessage = null;
+        saveStatusMessage = null;
+        changedFilesMessage = null;
+        fileBrowserSucceeded = false;
+        saveSucceeded = false;
+        changedFilesSucceeded = false;
+        isLoadingFiles = false;
+        isLoadingSelectedFile = false;
+        isSavingFile = false;
+        isLoadingStatus = false;
+        isCommitting = false;
+        commitSucceeded = false;
+        commitStatusMessage = null;
+        createdCommit = null;
+        changedFiles = Array.Empty<ChangedFile>();
+    }
+}

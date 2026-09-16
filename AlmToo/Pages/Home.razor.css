@@ -1,0 +1,191 @@
+.repository-shell {
+    display: grid;
+    gap: 1.5rem;
+    max-width: 64rem;
+}
+
+.repository-hero {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.repository-hero h1,
+.repository-status h2,
+.file-preview h2 {
+    margin: 0;
+}
+
+.repository-hero h1 {
+    font-size: clamp(2rem, 4vw, 3.5rem);
+}
+
+.repository-hero p {
+    max-width: 48rem;
+    color: #475569;
+    font-size: 1.1rem;
+}
+
+.repository-card,
+.repository-status,
+.file-preview {
+    border: 1px solid #dbe3ef;
+    border-radius: 1rem;
+    background: #ffffff;
+    box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.08);
+    padding: 1.25rem;
+}
+
+.repository-form,
+.repository-status,
+.file-preview {
+    display: grid;
+    gap: 1rem;
+}
+
+.form-field {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.form-field label {
+    font-weight: 700;
+}
+
+.form-field input {
+    border: 1px solid #bac7d8;
+    border-radius: 0.7rem;
+    font-size: 1rem;
+    padding: 0.75rem 0.9rem;
+}
+
+.form-field input:disabled,
+.primary-action:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.field-help,
+.helper-text,
+.file-preview__placeholder {
+    color: #64748b;
+    margin: 0;
+}
+
+.helper-text {
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.primary-action {
+    align-self: start;
+    border: 0;
+    border-radius: 999px;
+    background: #2563eb;
+    color: #ffffff;
+    cursor: pointer;
+    font-weight: 700;
+    padding: 0.75rem 1.2rem;
+}
+
+.primary-action:hover:not(:disabled),
+.primary-action:focus-visible {
+    background: #1d4ed8;
+}
+
+.status-message {
+    border-radius: 0.8rem;
+    margin: 1rem 0 0;
+    padding: 0.8rem 0.9rem;
+}
+
+.status-message.info {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.status-message.success {
+    background: #ecfdf5;
+    color: #047857;
+}
+
+.status-message.error {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+.status-grid {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    margin: 0;
+}
+
+.status-grid div {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+}
+
+.status-grid dt {
+    color: #64748b;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.status-grid dd {
+    margin: 0.25rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+.file-editor__field {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.file-editor__field label {
+    font-weight: 700;
+}
+
+.file-editor__textarea {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 0.8rem;
+    color: #e2e8f0;
+    font: 0.95rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    min-height: 24rem;
+    padding: 1rem;
+    resize: vertical;
+    white-space: pre;
+}
+
+.file-editor__textarea:disabled {
+    cursor: progress;
+    opacity: 0.75;
+}
+
+.file-editor__actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.file-editor__dirty-state {
+    color: #64748b;
+    font-weight: 700;
+    margin: 0;
+}
+
+@media (max-width: 640px) {
+    .repository-shell {
+        max-width: 100%;
+    }
+
+    .primary-action {
+        width: 100%;
+    }
+}

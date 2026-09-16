@@ -1,0 +1,97 @@
+@using AlmToo.Services.Git
+
+<section class="file-browser" aria-labelledby="file-browser-heading">
+    <div class="file-browser__header">
+        <div>
+            <p class="helper-text">Repository files</p>
+            <h2 id="file-browser-heading">Browse workspace</h2>
+        </div>
+        <p class="file-browser__path" aria-label="Current repository path">@CurrentPath</p>
+    </div>
+
+    @if (IsLoading)
+    {
+        <p class="status-message info" role="status" aria-live="polite">Loading repository files...</p>
+    }
+    else if (Entries.Count == 0)
+    {
+        <p class="file-browser__empty">No files were found at this path.</p>
+    }
+    else
+    {
+        <ul class="file-browser__list" aria-label="Repository file list">
+            @foreach (var entry in Entries)
+            {
+                <li class="file-browser__item">
+                    @if (entry.Kind == RepositoryFileKind.Directory)
+                    {
+                        <button class="file-browser__entry file-browser__entry--directory"
+                                type="button"
+                                @onclick="() => OnDirectorySelected.InvokeAsync(entry.Path)">
+                            <span aria-hidden="true">📁</span>
+                            <span>@entry.Name</span>
+                        </button>
+                    }
+                    else if (entry.IsEditableText)
+                    {
+                        <button class="file-browser__entry file-browser__entry--file @(entry.Path == SelectedPath ? "is-selected" : null)"
+                                type="button"
+                                aria-current="@(entry.Path == SelectedPath ? "true" : null)"
+                                @onclick="() => OnFileSelected.InvokeAsync(entry.Path)">
+                            <span aria-hidden="true">📄</span>
+                            <span>@entry.Name</span>
+                            @if (entry.SizeBytes is not null)
+                            {
+                                <span class="file-browser__meta">@FormatSize(entry.SizeBytes.Value)</span>
+                            }
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="file-browser__entry file-browser__entry--unsupported" aria-disabled="true">
+                            <span aria-hidden="true">🚫</span>
+                            <span>@entry.Name</span>
+                            <span class="file-browser__meta">Binary or oversized file not available for text editing</span>
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<RepositoryFileEntry> Entries { get; set; } = Array.Empty<RepositoryFileEntry>();
+
+    [Parameter]
+    public string CurrentPath { get; set; } = "/";
+
+    [Parameter]
+    public string? SelectedPath { get; set; }
+
+    [Parameter]
+    public bool IsLoading { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnDirectorySelected { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnFileSelected { get; set; }
+
+    private static string FormatSize(long sizeBytes)
+    {
+        if (sizeBytes < 1024)
+        {
+            return $"{sizeBytes} B";
+        }
+
+        var kibibytes = sizeBytes / 1024d;
+        if (kibibytes < 1024)
+        {
+            return $"{kibibytes:0.#} KiB";
+        }
+
+        return $"{kibibytes / 1024d:0.#} MiB";
+    }
+}

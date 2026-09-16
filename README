@@ -19,4 +19,17 @@ npm install -g @github/copilot
 npx @opengsd/gsd-core@latest
 npx @opengsd/gsd-pi@latest
 
+## Verified browser-local workflow
+
+The clone, browse, edit, save, changed-file review, and local commit flow has been
+verified with the small public repository
+`https://github.com/octocat/Hello-World.git`.
+
+Current limitations:
+
+- repositories must be publicly readable over HTTPS;
+- repository data and commits remain in browser-local storage;
+- authenticated clone, remote authentication, and push are not included;
+- browser storage capacity is the practical repository-size limit, so small
+  repositories are recommended.
 
