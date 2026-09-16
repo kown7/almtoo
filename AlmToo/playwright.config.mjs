@@ -24,7 +24,7 @@ export default defineConfig({
   webServer: {
     command: 'dotnet run --project AlmToo.csproj --urls http://127.0.0.1:5208',
     url: baseURL,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'pipe',
     stderr: 'pipe'
