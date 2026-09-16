@@ -21,11 +21,19 @@ const missingLiveVariables = Object.entries(requiredLiveVariables)
 
 function observeBrowserErrors(page) {
   const errors = [];
-  page.on('pageerror', error => errors.push(`pageerror: ${error.message}`));
+  page.on('pageerror', () => errors.push('pageerror'));
   page.on('console', message => {
-    if (message.type() === 'error') errors.push(`console: ${message.text()}`);
+    if (message.type() === 'error') errors.push('console-error');
   });
   return errors;
+}
+
+function createRejectedCredential() {
+  return ['ghp', 'rejected', 'credential', Date.now().toString(36)].join('_');
+}
+
+async function credentialIsStored(page) {
+  return page.evaluate(() => sessionStorage.getItem('almtoo.push-credential.v1') !== null);
 }
 
 async function openFixtureFile(page, repositoryPath) {
@@ -75,7 +83,7 @@ test('loads the browser-local repository form without browser errors', async ({ 
   await expect(page.getByLabel('Repository URL')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open repository' })).toBeEnabled();
 
-  expect(browserErrors, browserErrors.join('\n')).toEqual([]);
+  expect(browserErrors, 'The smoke case must not emit browser errors').toEqual([]);
 });
 
 test('pushes the exact reviewed SHA to the matching disposable GitHub branch', async ({ page }) => {
@@ -114,6 +122,8 @@ test('pushes the exact reviewed SHA to the matching disposable GitHub branch', a
   const patInput = page.getByLabel('GitHub personal access token');
   await expect(patInput).toHaveAttribute('type', 'password');
   await patInput.fill(token);
+  await page.getByRole('button', { name: 'Use token in this tab' }).click();
+  await expect(page.locator('.credential-presence[data-credential-state="present"]')).toBeVisible();
   const pushButton = page.getByRole('button', { name: 'Push reviewed commit' });
   await expect(pushButton).toBeDisabled();
   await page.getByLabel(/I confirm this exact commit/).check();
@@ -126,5 +136,54 @@ test('pushes the exact reviewed SHA to the matching disposable GitHub branch', a
 
   const remoteSha = await readRemoteBranchSha(owner, repository, branch, token);
   expect(remoteSha).toBe(reviewedSha);
-  expect(browserErrors, browserErrors.join('\n')).toEqual([]);
+  expect(browserErrors, 'The successful live push must not emit browser errors').toEqual([]);
+});
+
+test('real GitHub authentication rejection forgets the tab credential', async ({ page }) => {
+  test.skip(
+    missingLiveVariables.length > 0,
+    `Live disposable GitHub rejection proof skipped; set: ${missingLiveVariables.join(', ')}.`);
+  test.setTimeout(180_000);
+
+  const browserErrors = observeBrowserErrors(page);
+  const { owner, repository, branch, file } = liveFixture;
+  const repositoryUrl = `https://github.com/${owner}/${repository}.git`;
+  const uniqueMarker = `\nAlmToo live rejection proof ${Date.now()}-${Math.random().toString(16).slice(2)}\n`;
+  const rejectedCredential = createRejectedCredential();
+
+  await page.goto('/');
+  await page.getByLabel('Repository URL').fill(repositoryUrl);
+  await page.getByRole('button', { name: 'Open repository' }).click();
+  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
+
+  await openFixtureFile(page, file);
+  const editor = page.getByLabel('Plain text editor');
+  await expect(editor).toBeVisible();
+  await editor.fill(`${await editor.inputValue()}${uniqueMarker}`);
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+
+  await page.getByLabel('Commit message').fill(`AlmToo live rejection proof ${Date.now()}`);
+  await page.getByRole('button', { name: 'Create local commit' }).click();
+  await expect(page.getByText('Created a browser-local commit.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Review push' }).click();
+  await expect(page.locator('[data-push-review="origin"]')).toHaveText(`https://github.com/${owner}/${repository}`);
+  await expect(page.locator('[data-push-review="branch"]')).toHaveText(branch);
+
+  const patInput = page.getByLabel('GitHub personal access token');
+  await patInput.fill(rejectedCredential);
+  await page.getByRole('button', { name: 'Use token in this tab' }).click();
+  expect(await credentialIsStored(page), 'Credential should exist before the explicit rejection attempt').toBe(true);
+
+  await page.getByLabel(/I confirm this exact commit/).check();
+  await page.getByRole('button', { name: 'Push reviewed commit' }).click();
+
+  await expect(page.locator('[data-credential-state="replacement-required"]')).toHaveText(
+    'The remote rejected the credential or repository permission. Enter a replacement token.',
+    { timeout: 90_000 });
+  await expect(patInput).toBeEnabled();
+  await expect(patInput).toHaveValue('');
+  expect(await credentialIsStored(page), 'Live credential rejection must remove tab storage').toBe(false);
+  expect(browserErrors, 'The live rejection case must not emit browser errors').toEqual([]);
 });
