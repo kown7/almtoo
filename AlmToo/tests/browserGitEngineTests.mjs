@@ -97,6 +97,25 @@ function installFakeGitRuntime(gitOverrides = {}) {
   globalThis.GitHttp = { request() {} };
 }
 
+async function runPushFailure(error, token = 'github_pat_test-sentinel') {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  installFakeGitRuntime({
+    async getConfig() { return 'https://github.com/octocat/Hello-World.git'; },
+    async currentBranch() { return 'refs/heads/main'; },
+    async resolveRef() { return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; },
+    async push() { throw error; }
+  });
+
+  const engine = await importFreshModule();
+  await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'demo'
+  });
+  const review = (await engine.inspectPush()).value;
+  return engine.push(review, token);
+}
+
 test('initialize returns a structured failure when a vendor dependency cannot load', async () => {
   resetBrowserGlobals();
   installLoadingDocument({ failFirstScript: true });
@@ -413,8 +432,75 @@ test('push rejects changed review state and transport errors without retrying or
   assert.equal(rejected.succeeded, false);
   assert.equal(pushCount, 1);
   assert.equal(JSON.stringify(rejected).includes(token), false);
-  assert.match(rejected.diagnostic, /remote rejected/i);
-  assert.match(rejected.diagnostic, /\[REDACTED\]/);
+  assert.equal(rejected.failureKind, null);
+  assert.equal(rejected.diagnostic, 'The push failed without exposing remote response details.');
+});
+
+test('push classifies authentication and permission rejection without exposing host details', async () => {
+  const token = 'github_pat_test-sentinel';
+  const scenarios = [
+    Object.assign(new Error(`Authentication failed: Authorization: Bearer ${token}`), { statusCode: 401 }),
+    { status: 403, message: `write access not granted; credential=${token}` },
+    Object.assign(new Error(`bad credentials ${token}`), { code: 'EAUTH' })
+  ];
+
+  for (const error of scenarios) {
+    const result = await runPushFailure(error, token);
+    const serialized = JSON.stringify(result);
+
+    assert.equal(result.succeeded, false);
+    assert.equal(result.failureKind, 'credentialRejected');
+    assert.equal(result.diagnostic, 'The remote rejected the supplied credentials or repository permission.');
+    assert.equal(serialized.includes(token), false);
+    assert.equal(serialized.includes('Authorization:'), false);
+    assert.equal(serialized.includes('Bearer'), false);
+    assert.equal(serialized.includes(error.message), false);
+  }
+});
+
+test('push leaves unknown, non-auth, and malformed transport failures generic', async () => {
+  const token = 'github_pat_test-sentinel';
+  const malformedError = {};
+  Object.defineProperty(malformedError, 'statusCode', {
+    get() { throw new Error(`throwing accessor leaked ${token}`); }
+  });
+
+  for (const error of [
+    new Error(`remote rejected the update for ${token}`),
+    Object.assign(new Error(`network timeout while using ${token}`), { code: 'ETIMEDOUT' }),
+    malformedError,
+    null
+  ]) {
+    const result = await runPushFailure(error, token);
+    const serialized = JSON.stringify(result);
+
+    assert.equal(result.succeeded, false);
+    assert.equal(result.failureKind, null);
+    assert.equal(result.diagnostic, 'The push failed without exposing remote response details.');
+    assert.equal(serialized.includes(token), false);
+    assert.equal(serialized.includes('timeout'), false);
+    assert.equal(serialized.includes('remote rejected the update'), false);
+  }
+});
+
+test('push failure classification does not write host errors or credentials to console', async () => {
+  const calls = [];
+  const originalMethods = Object.fromEntries(
+    ['log', 'info', 'warn', 'error'].map((method) => [method, console[method]]));
+
+  for (const method of Object.keys(originalMethods)) {
+    console[method] = (...args) => calls.push([method, ...args]);
+  }
+
+  try {
+    await runPushFailure(new Error('Authentication failed for a hidden credential'));
+  } finally {
+    for (const [method, implementation] of Object.entries(originalMethods)) {
+      console[method] = implementation;
+    }
+  }
+
+  assert.deepEqual(calls, []);
 });
 
 test('Blazor Git service invokes operations exported by the browser Git module', async () => {
@@ -468,5 +554,12 @@ test('Blazor push boundary keeps credentials input-only and preserves reviewed a
   assert.match(serviceSource, /InvokeWithValueAsync<PushResultDto, PushResult>\([\s\S]*?request,[\s\S]*?personalAccessToken\);/);
   assert.match(serviceSource, /return new\(RepositoryUrl, Branch, DestinationRef, PushedCommitId\);/);
   assert.match(serviceSource, /RedactCredential\(result, personalAccessToken\)/);
+  assert.match(serviceSource, /SanitizePushFailure\(RedactCredential\(result, personalAccessToken\)\)/);
+  assert.match(serviceSource, /string\.Equals\(failureKind, "credentialRejected", StringComparison\.Ordinal\)/);
+  assert.match(serviceSource, /\[JsonPropertyName\("failureKind"\)\][\s\S]*?string\? FailureKind/);
+  assert.match(serviceSource, /FailureKind = failureKind/);
+  assert.match(serviceSource, /The push failed without exposing remote response details/);
+  assert.match(resultContractSource, /GitOperationFailureKind\? FailureKind = null/);
+  assert.match(resultContractSource, /enum GitOperationFailureKind[\s\S]*?CredentialRejected/);
   assert.match(serviceSource, /The response value did not match the expected contract/);
 });

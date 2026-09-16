@@ -242,20 +242,24 @@ export async function push(review, personalAccessToken) {
     }
 
     const { fs, dir } = await getActiveWorkspace(operation);
-    await getGit().push({
-      fs,
-      http: getGitHttp(),
-      dir,
-      url: current.repositoryUrl,
-      corsProxy,
-      ref: current.branch,
-      remoteRef: current.branch,
-      force: false,
-      onAuth: () => ({
-        username: token,
-        password: 'x-oauth-basic'
-      })
-    });
+    try {
+      await getGit().push({
+        fs,
+        http: getGitHttp(),
+        dir,
+        url: current.repositoryUrl,
+        corsProxy,
+        ref: current.branch,
+        remoteRef: current.branch,
+        force: false,
+        onAuth: () => ({
+          username: token,
+          password: 'x-oauth-basic'
+        })
+      });
+    } catch (error) {
+      return pushFailure(operation, error);
+    }
 
     return success(operation, 'Pushed the reviewed commit to the matching origin branch.', {
       repositoryUrl: current.repositoryUrl,
@@ -566,6 +570,44 @@ function failure(operation, message, error, secrets = []) {
     value: null,
     diagnostic: redactSecrets(getDiagnostic(error), secrets)
   };
+}
+
+function pushFailure(operation, error) {
+  const failureKind = classifyPushFailure(error);
+
+  return {
+    operation,
+    succeeded: false,
+    message: 'The reviewed commit could not be pushed.',
+    value: null,
+    diagnostic: failureKind === 'credentialRejected'
+      ? 'The remote rejected the supplied credentials or repository permission.'
+      : 'The push failed without exposing remote response details.',
+    failureKind
+  };
+}
+
+function classifyPushFailure(error) {
+  try {
+    const statusCode = error?.statusCode ?? error?.status ?? error?.data?.statusCode ?? error?.response?.status;
+    if (statusCode === 401 || statusCode === 403 || statusCode === '401' || statusCode === '403') {
+      return 'credentialRejected';
+    }
+
+    const code = typeof error?.code === 'string' ? error.code : '';
+    if (/^(?:EAUTH|E401|E403|AUTHENTICATION_ERROR|AUTHORIZATION_ERROR)$/i.test(code)) {
+      return 'credentialRejected';
+    }
+
+    const message = typeof error?.message === 'string' ? error.message : '';
+    if (/\b(?:401|403)\b|authentication failed|invalid credentials?|bad credentials?|not authorized|authorization failed|permission denied|write access (?:is )?not granted/i.test(message)) {
+      return 'credentialRejected';
+    }
+  } catch {
+    // Error objects originate outside this module and may contain throwing accessors.
+  }
+
+  return null;
 }
 
 function getDiagnostic(error) {

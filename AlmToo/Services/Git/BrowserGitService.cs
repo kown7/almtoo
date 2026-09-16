@@ -147,7 +147,30 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
             request,
             personalAccessToken);
 
-        return RedactCredential(result, personalAccessToken);
+        return SanitizePushFailure(RedactCredential(result, personalAccessToken));
+    }
+
+    private static GitOperationResult<PushResult> SanitizePushFailure(
+        GitOperationResult<PushResult> result)
+    {
+        if (result.Succeeded)
+        {
+            return result with { FailureKind = null };
+        }
+
+        GitOperationFailureKind? failureKind = result.FailureKind == GitOperationFailureKind.CredentialRejected
+            ? GitOperationFailureKind.CredentialRejected
+            : null;
+
+        return result with
+        {
+            Operation = "push",
+            Message = "The reviewed commit could not be pushed.",
+            Diagnostic = failureKind == GitOperationFailureKind.CredentialRejected
+                ? "The remote rejected the supplied credentials or repository permission."
+                : "The push failed without exposing remote response details.",
+            FailureKind = failureKind
+        };
     }
 
     private static GitOperationResult<PushResult> RedactCredential(
@@ -188,7 +211,11 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
 
         if (!result.Succeeded)
         {
-            return GitOperationResult<TValue>.Failure(result.Operation, result.Message, result.Diagnostic);
+            return GitOperationResult<TValue>.Failure(
+                result.Operation,
+                result.Message,
+                result.Diagnostic,
+                ParseFailureKind(result.FailureKind));
         }
 
         if (result.Value is null)
@@ -225,8 +252,17 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
 
         return result.Succeeded
             ? GitOperationResult.Success(result.Operation, result.Message)
-            : GitOperationResult.Failure(result.Operation, result.Message, result.Diagnostic);
+            : GitOperationResult.Failure(
+                result.Operation,
+                result.Message,
+                result.Diagnostic,
+                ParseFailureKind(result.FailureKind));
     }
+
+    private static GitOperationFailureKind? ParseFailureKind(string? failureKind) =>
+        string.Equals(failureKind, "credentialRejected", StringComparison.Ordinal)
+            ? GitOperationFailureKind.CredentialRejected
+            : null;
 
     private async Task<BrowserGitResponse<TValue>> InvokeResponseAsync<TValue>(
         string operation,
@@ -380,6 +416,9 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
 
         [JsonPropertyName("diagnostic")]
         public string? Diagnostic { get; init; }
+
+        [JsonPropertyName("failureKind")]
+        public string? FailureKind { get; init; }
 
         public static BrowserGitResponse<TValue> Failure(string operation, string message, string? diagnostic) =>
             new()
