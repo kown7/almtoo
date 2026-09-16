@@ -93,12 +93,12 @@
 
         <RepositoryChangedFiles ChangedFiles="changedFiles"
                                 IsLoading="isLoadingStatus"
-                                Message="changedFilesMessage"
+                                Message="@changedFilesMessage"
                                 Succeeded="changedFilesSucceeded"
                                 OnRefreshRequested="RefreshChangedFilesAsync" />
 
         <RepositoryCommitForm IsCommitting="isCommitting"
-                              StatusMessage="commitStatusMessage"
+                              StatusMessage="@commitStatusMessage"
                               StatusIsError="@(!commitSucceeded)"
                               CreatedCommit="createdCommit"
                               OnCommitRequested="CreateCommitAsync" />

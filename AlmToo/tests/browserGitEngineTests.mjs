@@ -122,6 +122,29 @@ test('cloneOrOpen validates malformed repository requests before invoking git cl
   assert.match(result.diagnostic, /repositoryUrl is required/);
 });
 
+test('cloneOrOpen routes public repository clones through the browser CORS proxy', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  let cloneOptions;
+  installFakeGitRuntime({
+    async clone(options) {
+      cloneOptions = options;
+    }
+  });
+
+  const engine = await importFreshModule();
+  const result = await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'hello-world'
+  });
+
+  assert.equal(result.succeeded, true);
+  assert.equal(cloneOptions.url, 'https://github.com/octocat/Hello-World.git');
+  assert.equal(cloneOptions.corsProxy, 'https://cors.isomorphic-git.org');
+  assert.equal(cloneOptions.singleBranch, true);
+  assert.equal(cloneOptions.depth, 1);
+});
+
 test('repository paths reject parent directory traversal as structured operation failures', async () => {
   resetBrowserGlobals();
   installLoadingDocument();

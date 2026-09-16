@@ -1,0 +1,14 @@
+- main:
+  - link "About":
+    - /url: https://learn.microsoft.com/aspnet/core/
+  - article:
+    - paragraph: Browser-local Git workspace
+    - heading "Open a public repository" [level=1]
+    - paragraph: Clone a public Git repository into local browser storage, or reopen the existing local workspace when it has already been cloned in this browser.
+    - text: Repository URL
+    - textbox "Repository URL":
+      - /placeholder: https://github.com/example/project.git
+      - text: https://github.com/octocat/this-repository-should-not-exist-uat.git
+    - paragraph: Public HTTPS Git URLs work best in browser-local storage.
+    - button "Open repository"
+    - status: The repository could not be cloned or opened.

@@ -1,0 +1,171 @@
+{
+  "entries": [
+    {
+      "id": 1,
+      "tool": "browser_navigate",
+      "status": "success",
+      "durationMs": 3181,
+      "beforeUrl": "about:blank",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#1 | browser_navigate | success | 3181ms | url=\"http://127.0.0.1:5080\", screenshot=true | URL changed to http://127.0.0.1:5080/; title changed to Repository Browser; focus changed; landmarks 0→4"
+    },
+    {
+      "id": 2,
+      "tool": "browser_batch",
+      "status": "error",
+      "durationMs": 8206,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#2 | browser_batch | error | 8206ms | steps=[3], stopOnFailure=true, finalSummaryOnly=false | Stopped at step 2 (click) | focus changed",
+      "batchSteps": [
+        {
+          "action": "type",
+          "ok": true
+        },
+        {
+          "action": "click",
+          "ok": false
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "tool": "browser_batch",
+      "status": "success",
+      "durationMs": 1864,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#3 | browser_batch | success | 1864ms | steps=[2], stopOnFailure=true, finalSummaryOnly=false | focus changed; landmarks 4→10; buttons 2→6; inputs 1→4",
+      "batchSteps": [
+        {
+          "action": "click",
+          "ok": true
+        },
+        {
+          "action": "wait_for",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "tool": "browser_batch",
+      "status": "error",
+      "durationMs": 8272,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#4 | browser_batch | error | 8272ms | steps=[3], stopOnFailure=true, finalSummaryOnly=false | Stopped at step 2 (click) | focus changed; visible text changed",
+      "batchSteps": [
+        {
+          "action": "type",
+          "ok": true
+        },
+        {
+          "action": "click",
+          "ok": false
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "tool": "browser_batch",
+      "status": "error",
+      "durationMs": 30318,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#5 | browser_batch | error | 30318ms | steps=[4], stopOnFailure=true, finalSummaryOnly=false | Stopped at step 2 (wait_for) | focus changed; visible text changed",
+      "batchSteps": [
+        {
+          "action": "click",
+          "ok": true
+        },
+        {
+          "action": "wait_for",
+          "ok": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "tool": "browser_click",
+      "status": "success",
+      "durationMs": 283,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#6 | browser_click | success | 283ms | selector=\"button.changed-files__refresh\" | SOFT-FAIL (no observable state change) | No meaningful browser-state change detected"
+    },
+    {
+      "id": 7,
+      "tool": "browser_batch",
+      "status": "error",
+      "durationMs": 10361,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#7 | browser_batch | error | 10361ms | steps=[3], stopOnFailure=true, finalSummaryOnly=false | Stopped at step 3 (wait_for) | focus changed; visible text changed",
+      "batchSteps": [
+        {
+          "action": "type",
+          "ok": true
+        },
+        {
+          "action": "click",
+          "ok": true
+        },
+        {
+          "action": "wait_for",
+          "ok": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "tool": "browser_batch",
+      "status": "error",
+      "durationMs": 30451,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#8 | browser_batch | error | 30451ms | steps=[3], stopOnFailure=true, finalSummaryOnly=false | Stopped at step 3 (wait_for) | focus changed; visible text changed",
+      "batchSteps": [
+        {
+          "action": "type",
+          "ok": true
+        },
+        {
+          "action": "click",
+          "ok": true
+        },
+        {
+          "action": "wait_for",
+          "ok": false
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "tool": "browser_batch",
+      "status": "error",
+      "durationMs": 31573,
+      "beforeUrl": "http://127.0.0.1:5080/",
+      "afterUrl": "http://127.0.0.1:5080/",
+      "line": "#9 | browser_batch | error | 31573ms | steps=[3], stopOnFailure=true, finalSummaryOnly=false | Stopped at step 3 (wait_for) | landmarks 10→4; buttons 7→2; inputs 5→1; headings changed",
+      "batchSteps": [
+        {
+          "action": "type",
+          "ok": true
+        },
+        {
+          "action": "click",
+          "ok": true
+        },
+        {
+          "action": "wait_for",
+          "ok": false
+        }
+      ]
+    }
+  ],
+  "retained": 9,
+  "totalRecorded": 9,
+  "bounded": false,
+  "summary": "Timeline: 9 browser actions recorded."
+}

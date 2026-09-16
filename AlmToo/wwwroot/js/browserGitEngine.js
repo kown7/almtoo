@@ -1,10 +1,12 @@
 const vendorScripts = [
+  './js/vendor/buffer/buffer.min.js',
   './js/vendor/lightning-fs/lightning-fs.min.js',
   './js/vendor/isomorphic-git/index.umd.min.js',
   './js/vendor/isomorphic-git/http-web.umd.js'
 ];
 
 const workspaceRoot = '/almtoo-workspaces';
+const corsProxy = 'https://cors.isomorphic-git.org';
 const textDecoder = new TextDecoder('utf-8', { fatal: false });
 const textEncoder = new TextEncoder();
 
@@ -57,6 +59,7 @@ export async function cloneOrOpen(request) {
       http: getGitHttp(),
       dir,
       url: repositoryUrl,
+      corsProxy,
       singleBranch: true,
       depth: 1
     });
@@ -220,6 +223,10 @@ async function ensureDependencies() {
   }
 
   await dependenciesPromise;
+
+  if (!globalThis.Buffer) {
+    throw new Error('The Buffer browser dependency did not load.');
+  }
 
   if (!globalThis.LightningFS) {
     throw new Error('The Lightning FS browser dependency did not load.');

@@ -1,8 +1,22 @@
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+
+const bufferDestination = join(projectRoot, 'wwwroot/js/vendor/buffer/buffer.min.js');
+await mkdir(dirname(bufferDestination), { recursive: true });
+await build({
+  entryPoints: [join(projectRoot, 'node_modules/buffer/index.js')],
+  bundle: true,
+  minify: true,
+  format: 'iife',
+  globalName: 'BufferPolyfill',
+  footer: { js: 'globalThis.Buffer = BufferPolyfill.Buffer;' },
+  outfile: bufferDestination
+});
+console.log('Bundled buffer browser polyfill -> wwwroot/js/vendor/buffer/buffer.min.js');
 
 const assets = [
   {

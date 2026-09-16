@@ -11,5 +11,8 @@
   "dependencies": {
     "@isomorphic-git/lightning-fs": "4.7.0",
     "isomorphic-git": "1.42.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
