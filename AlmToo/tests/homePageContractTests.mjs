@@ -167,17 +167,38 @@ test('push review visibly presents the exact GitHub destination and outgoing com
   assert.match(source, /private void InvalidatePushReview\(\)[\s\S]*pushReview = null;[\s\S]*pushConfirmed = false;/);
 });
 
-test('push form masks credentials and requires one explicit guarded confirmation', async () => {
+test('push form masks credential entry and requires stored presence plus explicit confirmation', async () => {
   const source = await readHomePage();
 
-  assert.match(source, /id="github-pat"[\s\S]*type="password"[\s\S]*@bind="personalAccessToken"/);
+  assert.match(source, /id="github-pat"[\s\S]*type="password"[\s\S]*value="@credentialInput"/);
+  assert.match(source, /autocomplete="off"/);
+  assert.match(source, /Use token in this tab/);
   assert.match(source, /id="confirm-push"[\s\S]*type="checkbox"[\s\S]*@bind="pushConfirmed"/);
   assert.match(source, /disabled="@\(!CanPush\)"/);
-  assert.match(source, /private bool CanPush => pushReview is not null\s*&& pushConfirmed\s*&& !string\.IsNullOrWhiteSpace\(personalAccessToken\)[\s\S]*&& !isPushing;/);
-  assert.match(source, /if \(isPushing \|\| pushReview is null \|\| !pushConfirmed \|\| string\.IsNullOrWhiteSpace\(personalAccessToken\)\)\s*\{\s*return;/);
-  assert.match(source, /var tokenForAttempt = personalAccessToken;\s*\n\s*isPushing = true;/);
+  assert.match(source, /private bool CanPush => pushReview is not null\s*&& pushConfirmed\s*&& hasStoredCredential[\s\S]*&& !isPushing;/);
+  assert.match(source, /if \(isPushing \|\| pushReview is null \|\| !pushConfirmed \|\| !hasStoredCredential\)\s*\{\s*return;/);
+  assert.match(source, /InvokeAsync<string\?>\("getCredentialForPush"\)/);
   assert.match(source, /GitService\.PushAsync\(reviewedPush, tokenForAttempt\)/);
-  assert.match(source, /finally\s*\{\s*personalAccessToken = string\.Empty;\s*pushConfirmed = false;\s*isPushing = false;/);
+  assert.match(source, /finally\s*\{\s*tokenForAttempt = null;\s*pushConfirmed = false;\s*isPushing = false;/);
+});
+
+test('home page restores presence only and supports explicit or rejection-driven forgetting', async () => {
+  const source = await readHomePage();
+  const initialization = source.match(/protected override async Task OnAfterRenderAsync[\s\S]*?private async Task<IJSObjectReference>/)?.[0] ?? '';
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private void InvalidatePushReview/)?.[0] ?? '';
+
+  assert.match(source, /CredentialModulePath = "\.\/js\/pushCredentialSession\.js"/);
+  assert.match(initialization, /InvokeAsync<bool>\("hasCredential"\)/);
+  assert.doesNotMatch(initialization, /getCredentialForPush/);
+  assert.match(source, /credentialInput = string\.Empty;[\s\S]*InvokeAsync<bool>\("storeCredential", credentialForStorage\)/);
+  assert.match(source, /@onclick="ForgetCredentialAsync"/);
+  assert.match(source, /InvokeAsync<bool>\("forgetCredential"\)/);
+  assert.match(source, /data-credential-state="present"/);
+  assert.match(source, /credentialReplacementRequired \? "replacement-required"/);
+  assert.match(pushMethod, /result\.FailureKind == GitOperationFailureKind\.CredentialRejected/);
+  assert.match(pushMethod, /ClearCredentialAsync\(replacementRequired: true\)/);
+  assert.doesNotMatch(pushMethod, /else[\s\S]*ClearCredentialAsync\(replacementRequired: false\)/);
+  assert.doesNotMatch(source, /sessionStorage/);
 });
 
 test('push outcomes remain credential-safe, preserve local work, and refresh status only on success', async () => {
@@ -190,7 +211,8 @@ test('push outcomes remain credential-safe, preserve local work, and refresh sta
   assert.match(pushMethod, /The push could not be completed\. The local commit remains available; review the destination and try again\./);
   assert.doesNotMatch(pushMethod, /createdCommit\s*=/);
   assert.doesNotMatch(source, /pushStatusMessage\s*=\s*\$"[^"]*(?:personalAccessToken|tokenForAttempt)/);
-  assert.doesNotMatch(source, /@(?:personalAccessToken|tokenForAttempt)(?![^<]*type="password")/);
+  assert.doesNotMatch(source, /@tokenForAttempt/);
+  assert.doesNotMatch(source, /credentialStatusMessage\s*=\s*\$"/);
   assert.doesNotMatch(source, /result\.Diagnostic/);
 });
 

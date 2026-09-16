@@ -29,7 +29,8 @@
 .repository-card,
 .repository-status,
 .file-preview,
-.push-panel {
+.push-panel,
+.credential-reload-state {
     border: 1px solid #dbe3ef;
     border-radius: 1rem;
     background: #ffffff;
@@ -162,12 +163,58 @@
     overflow-wrap: anywhere;
 }
 
+.credential-reload-state {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.credential-reload-state p {
+    color: #047857;
+    font-weight: 700;
+    margin: 0;
+}
+
 .push-panel__heading {
     align-items: center;
     display: flex;
     flex-wrap: wrap;
     gap: 1rem;
     justify-content: space-between;
+}
+
+.push-credential {
+    background: #f8fafc;
+    border: 1px solid #dbe3ef;
+    border-radius: 0.8rem;
+    display: grid;
+    gap: 0.8rem;
+    padding: 1rem;
+}
+
+.push-credential__heading,
+.credential-form {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.push-credential__heading h3,
+.credential-presence {
+    margin: 0;
+}
+
+.credential-form .form-field {
+    flex: 1 1 20rem;
+}
+
+.credential-presence {
+    color: #047857;
+    font-weight: 700;
 }
 
 .push-review {
@@ -270,7 +317,10 @@
         width: 100%;
     }
 
-    .push-panel__heading {
+    .push-panel__heading,
+    .push-credential__heading,
+    .credential-form,
+    .credential-reload-state {
         align-items: stretch;
     }
 }
