@@ -185,7 +185,7 @@ test('push form masks credential entry and requires stored presence plus explici
 test('home page restores presence only and supports explicit or rejection-driven forgetting', async () => {
   const source = await readHomePage();
   const initialization = source.match(/protected override async Task OnAfterRenderAsync[\s\S]*?private async Task<IJSObjectReference>/)?.[0] ?? '';
-  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private void InvalidatePushReview/)?.[0] ?? '';
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private static GitOperationFailureKind NormalizePushFailureKind/)?.[0] ?? '';
 
   assert.match(source, /CredentialModulePath = "\.\/js\/pushCredentialSession\.js"/);
   assert.match(initialization, /InvokeAsync<bool>\("hasCredential"\)/);
@@ -195,7 +195,7 @@ test('home page restores presence only and supports explicit or rejection-driven
   assert.match(source, /InvokeAsync<bool>\("forgetCredential"\)/);
   assert.match(source, /data-credential-state="present"/);
   assert.match(source, /credentialReplacementRequired \? "replacement-required"/);
-  assert.match(pushMethod, /result\.FailureKind == GitOperationFailureKind\.CredentialRejected/);
+  assert.match(pushMethod, /pushFailureKind == GitOperationFailureKind\.CredentialRejected/);
   assert.match(pushMethod, /ClearCredentialAsync\(replacementRequired: true\)/);
   assert.doesNotMatch(pushMethod, /else[\s\S]*ClearCredentialAsync\(replacementRequired: false\)/);
   assert.doesNotMatch(source, /sessionStorage/);
@@ -203,17 +203,52 @@ test('home page restores presence only and supports explicit or rejection-driven
 
 test('push outcomes remain credential-safe, preserve local work, and refresh status only on success', async () => {
   const source = await readHomePage();
-  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private void InvalidatePushReview/)?.[0] ?? '';
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private static GitOperationFailureKind NormalizePushFailureKind/)?.[0] ?? '';
 
   assert.match(pushMethod, /pushSucceeded = result\.Succeeded && result\.Value is not null/);
   assert.match(pushMethod, /Pushed commit \{result\.Value!\.PushedCommitId\}/);
   assert.match(pushMethod, /if \(pushSucceeded\)[\s\S]*await RefreshChangedFilesAsync\(\)/);
-  assert.match(pushMethod, /The push could not be completed\. The local commit remains available; review the destination and try again\./);
+  assert.match(pushMethod, /pushFailureKind = NormalizePushFailureKind\(result\.FailureKind\)/);
+  assert.match(pushMethod, /pushStatusMessage = GetPushRecoveryGuidance\(pushFailureKind\.Value\)/);
+  assert.match(pushMethod, /catch \(Exception\)[\s\S]*pushFailureKind = GitOperationFailureKind\.Unknown/);
+  assert.doesNotMatch(pushMethod, /pushStatusMessage = result\.Message/);
+  assert.doesNotMatch(pushMethod, /pushReview\s*=\s*null/);
   assert.doesNotMatch(pushMethod, /createdCommit\s*=/);
   assert.doesNotMatch(source, /pushStatusMessage\s*=\s*\$"[^"]*(?:personalAccessToken|tokenForAttempt)/);
   assert.doesNotMatch(source, /@tokenForAttempt/);
   assert.doesNotMatch(source, /credentialStatusMessage\s*=\s*\$"/);
   assert.doesNotMatch(source, /result\.Diagnostic/);
+});
+
+test('push rejection guidance is fixed, categorized, accessible, and manually recoverable', async () => {
+  const source = await readHomePage();
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private static GitOperationFailureKind NormalizePushFailureKind/)?.[0] ?? '';
+  const normalizer = source.match(/private static GitOperationFailureKind NormalizePushFailureKind[\s\S]*?\n    private static string GetPushRecoveryGuidance/)?.[0] ?? '';
+  const guidance = source.match(/private static string GetPushRecoveryGuidance[\s\S]*?\n    private void InvalidatePushReview/)?.[0] ?? '';
+
+  assert.match(source, /data-push-failure="@PushFailureCategory"/);
+  assert.match(source, /role="@\(pushFailureKind is null \? "status" : "alert"\)"/);
+  assert.match(source, /aria-live="@\(pushFailureKind is null \? "polite" : "assertive"\)"/);
+  assert.match(source, /"credential-rejected"/);
+  assert.match(source, /"remote-ahead"/);
+  assert.match(source, /"network-unavailable"/);
+  assert.match(source, /"unsupported-ref"/);
+  assert.match(source, /"unknown"/);
+
+  assert.match(guidance, /Replace the token[\s\S]*retry manually/);
+  assert.match(guidance, /Refresh the repository, reconcile the remote commits with the preserved local commit[\s\S]*retry manually/);
+  assert.match(guidance, /Resolve the network or CORS issue, then retry this reviewed push manually/);
+  assert.match(guidance, /Check out a local branch, review its destination, and retry manually/);
+  assert.match(guidance, /local commit and reviewed destination remain available[\s\S]*retrying manually/);
+  assert.match(normalizer, /: GitOperationFailureKind\.Unknown/);
+  assert.match(source, /private async Task InspectPushAsync\(\)[\s\S]*pushFailureKind = NormalizePushFailureKind\(result\.FailureKind\)/);
+
+  assert.equal((pushMethod.match(/GitService\.PushAsync\(/g) ?? []).length, 1);
+  assert.match(pushMethod, /if \(isPushing \|\| pushReview is null \|\| !pushConfirmed \|\| !hasStoredCredential\)[\s\S]*return;/);
+  assert.ok(pushMethod.indexOf('isPushing = true;') < pushMethod.indexOf('GetCredentialModuleAsync()'));
+  assert.ok(pushMethod.indexOf('isPushing = true;') < pushMethod.indexOf('GitService.PushAsync('));
+  assert.doesNotMatch(pushMethod, /retry|while\s*\(|for\s*\(/i);
+  assert.doesNotMatch(guidance, /Diagnostic|result\.Message|tokenForAttempt|personalAccessToken/);
 });
 
 test('push review has dedicated responsive and readable styles', async () => {
@@ -224,4 +259,5 @@ test('push review has dedicated responsive and readable styles', async () => {
   assert.match(styles, /overflow-wrap: anywhere/);
   assert.match(styles, /\.push-confirmation/);
   assert.match(styles, /\.secondary-action:disabled/);
+  assert.match(styles, /\.status-message\[data-push-failure\]/);
 });

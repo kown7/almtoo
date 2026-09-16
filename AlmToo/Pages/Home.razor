@@ -246,7 +246,10 @@
 
             @if (!string.IsNullOrWhiteSpace(pushStatusMessage))
             {
-                <p class="@PushStatusMessageCssClass" role="status" aria-live="polite">@pushStatusMessage</p>
+                <p class="@PushStatusMessageCssClass"
+                   data-push-failure="@PushFailureCategory"
+                   role="@(pushFailureKind is null ? "status" : "alert")"
+                   aria-live="@(pushFailureKind is null ? "polite" : "assertive")">@pushStatusMessage</p>
             }
         </section>
 
@@ -345,6 +348,7 @@
     private bool isInspectingPush;
     private bool isPushing;
     private bool pushSucceeded;
+    private GitOperationFailureKind? pushFailureKind;
     private string? pushStatusMessage;
 
     private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
@@ -365,7 +369,18 @@
 
     private string SaveStatusMessageCssClass => $"status-message {(saveSucceeded ? "success" : "error")}";
 
-    private string PushStatusMessageCssClass => $"status-message {(pushSucceeded ? "success" : "error")}";
+    private string PushStatusMessageCssClass => $"status-message {(pushSucceeded ? "success" : pushFailureKind is not null ? "error" : "info")}";
+
+    private string? PushFailureCategory => pushSucceeded || pushFailureKind is null
+        ? null
+        : pushFailureKind switch
+        {
+            GitOperationFailureKind.CredentialRejected => "credential-rejected",
+            GitOperationFailureKind.RemoteAhead => "remote-ahead",
+            GitOperationFailureKind.NetworkUnavailable => "network-unavailable",
+            GitOperationFailureKind.UnsupportedRef => "unsupported-ref",
+            _ => "unknown"
+        };
 
     private string CredentialStatusMessageCssClass => $"status-message {(credentialStatusSucceeded ? "success" : "error")}";
 
@@ -750,6 +765,7 @@
         pushReview = null;
         pushConfirmed = false;
         pushSucceeded = false;
+        pushFailureKind = null;
         pushStatusMessage = null;
 
         try
@@ -762,12 +778,14 @@
             }
             else
             {
-                pushStatusMessage = result.Message;
+                pushFailureKind = NormalizePushFailureKind(result.FailureKind);
+                pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
             }
         }
         catch (Exception)
         {
-            pushStatusMessage = "Push details could not be inspected. The local commit remains available; review the workspace and try again.";
+            pushFailureKind = GitOperationFailureKind.Unknown;
+            pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
         }
         finally
         {
@@ -781,6 +799,11 @@
         {
             return;
         }
+
+        isPushing = true;
+        pushSucceeded = false;
+        pushFailureKind = null;
+        pushStatusMessage = "Pushing the reviewed commit to GitHub...";
 
         var reviewedPush = new PushRequest(
             pushReview.RepositoryUrl,
@@ -807,12 +830,9 @@
             credentialReplacementRequired = true;
             credentialStatusMessage = "The saved token is unavailable. Enter a replacement token to continue.";
             pushConfirmed = false;
+            isPushing = false;
             return;
         }
-
-        isPushing = true;
-        pushSucceeded = false;
-        pushStatusMessage = "Pushing the reviewed commit to GitHub...";
 
         try
         {
@@ -826,8 +846,9 @@
             }
             else
             {
-                pushStatusMessage = result.Message;
-                if (result.FailureKind == GitOperationFailureKind.CredentialRejected)
+                pushFailureKind = NormalizePushFailureKind(result.FailureKind);
+                pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
+                if (pushFailureKind == GitOperationFailureKind.CredentialRejected)
                 {
                     tokenForAttempt = null;
                     await ClearCredentialAsync(replacementRequired: true);
@@ -836,7 +857,8 @@
         }
         catch (Exception)
         {
-            pushStatusMessage = "The push could not be completed. The local commit remains available; review the destination and try again.";
+            pushFailureKind = GitOperationFailureKind.Unknown;
+            pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
         }
         finally
         {
@@ -846,11 +868,34 @@
         }
     }
 
+    private static GitOperationFailureKind NormalizePushFailureKind(GitOperationFailureKind? failureKind) =>
+        failureKind is GitOperationFailureKind.CredentialRejected
+            or GitOperationFailureKind.RemoteAhead
+            or GitOperationFailureKind.NetworkUnavailable
+            or GitOperationFailureKind.UnsupportedRef
+            ? failureKind.Value
+            : GitOperationFailureKind.Unknown;
+
+    private static string GetPushRecoveryGuidance(GitOperationFailureKind failureKind) => failureKind switch
+    {
+        GitOperationFailureKind.CredentialRejected =>
+            "The remote rejected the credential or repository permission. Replace the token, review the same destination again, and retry manually.",
+        GitOperationFailureKind.RemoteAhead =>
+            "The remote branch is ahead. Refresh the repository, reconcile the remote commits with the preserved local commit, then review and retry manually.",
+        GitOperationFailureKind.NetworkUnavailable =>
+            "The browser could not reach the remote. Resolve the network or CORS issue, then retry this reviewed push manually.",
+        GitOperationFailureKind.UnsupportedRef =>
+            "The checked-out ref is not a supported local branch. Check out a local branch, review its destination, and retry manually.",
+        _ =>
+            "The push could not be completed safely. The local commit and reviewed destination remain available; inspect the workspace before retrying manually."
+    };
+
     private void InvalidatePushReview()
     {
         pushReview = null;
         pushConfirmed = false;
         pushSucceeded = false;
+        pushFailureKind = null;
         pushStatusMessage = null;
     }
 

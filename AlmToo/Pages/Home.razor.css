@@ -137,6 +137,10 @@
     color: #b91c1c;
 }
 
+.status-message[data-push-failure]:not([data-push-failure=""]) {
+    border-left: 0.3rem solid #b91c1c;
+}
+
 .status-grid {
     display: grid;
     gap: 0.75rem;
