@@ -82,3 +82,31 @@ public record CommitRequest(
 public record CommitInfo(
     string CommitId,
     string Message);
+
+/// <summary>
+/// Immutable snapshot of the active repository state presented before a push.
+/// </summary>
+public record PushReview(
+    string RepositoryUrl,
+    string Branch,
+    string OutgoingCommitId,
+    string DestinationRef);
+
+/// <summary>
+/// Token-free request containing the exact push state previously reviewed by the user.
+/// Credentials are supplied separately to the service and are never retained by this model.
+/// </summary>
+public record PushRequest(
+    string RepositoryUrl,
+    string Branch,
+    string OutgoingCommitId,
+    string DestinationRef);
+
+/// <summary>
+/// Successful remote push identity returned to callers.
+/// </summary>
+public record PushResult(
+    string RepositoryUrl,
+    string Branch,
+    string DestinationRef,
+    string PushedCommitId);

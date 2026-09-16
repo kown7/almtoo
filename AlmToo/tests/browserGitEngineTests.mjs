@@ -4,6 +4,8 @@ import { test } from 'node:test';
 
 const moduleUrl = new URL('../wwwroot/js/browserGitEngine.js', import.meta.url);
 const serviceUrl = new URL('../Services/Git/BrowserGitService.cs', import.meta.url);
+const serviceContractUrl = new URL('../Services/Git/IBrowserGitService.cs', import.meta.url);
+const resultContractUrl = new URL('../Services/Git/GitOperationResult.cs', import.meta.url);
 
 async function importFreshModule() {
   return import(`${moduleUrl.href}?case=${Date.now()}-${Math.random()}`);
@@ -428,13 +430,43 @@ test('Blazor Git service invokes operations exported by the browser Git module',
     'readTextFile',
     'writeTextFile',
     'getStatus',
-    'commit'
+    'commit',
+    'inspectPush',
+    'push'
   ]) {
     assert.match(moduleSource, new RegExp(`export async function ${operation}\\b`));
     assert.match(serviceSource, new RegExp(`\\"${operation}\\"`));
   }
 
-  assert.match(serviceSource, /catch \(JSException exception\)/);
+  assert.match(serviceSource, /catch \(OperationCanceledException\)/);
+  assert.match(serviceSource, /catch \(JSException\)/);
+  assert.doesNotMatch(serviceSource, /exception\.ToString\(\)/);
   assert.match(serviceSource, /GitOperationResult<RepositoryInfo>\.Failure/);
   assert.match(serviceSource, /GitOperationResult<CommitInfo>\.Failure/);
+});
+
+test('Blazor push boundary keeps credentials input-only and preserves reviewed and pushed identity', async () => {
+  const [serviceSource, interfaceSource, resultContractSource] = await Promise.all([
+    readFile(serviceUrl, 'utf8'),
+    readFile(serviceContractUrl, 'utf8'),
+    readFile(resultContractUrl, 'utf8')
+  ]);
+
+  assert.match(interfaceSource, /GitOperationResult<PushReview>> InspectPushAsync/);
+  assert.match(interfaceSource, /GitOperationResult<PushResult>> PushAsync\([\s\S]*?PushRequest request,[\s\S]*?string personalAccessToken/);
+
+  assert.match(resultContractSource, /public record PushReview\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string OutgoingCommitId,[\s\S]*?string DestinationRef\);/);
+  assert.match(resultContractSource, /public record PushRequest\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string OutgoingCommitId,[\s\S]*?string DestinationRef\);/);
+  assert.match(resultContractSource, /public record PushResult\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string DestinationRef,[\s\S]*?string PushedCommitId\);/);
+
+  const recordParameters = [...resultContractSource.matchAll(/public record\s+\w+(?:<[^>]+>)?\s*\(([\s\S]*?)\);/g)]
+    .map((match) => match[1])
+    .join('\n');
+  assert.doesNotMatch(recordParameters, /\b(?:PersonalAccessToken|Token|Pat)\b/i);
+
+  assert.match(serviceSource, /InvokeWithValueAsync<PushReviewDto, PushReview>\([\s\S]*?\"inspectPush\"/);
+  assert.match(serviceSource, /InvokeWithValueAsync<PushResultDto, PushResult>\([\s\S]*?request,[\s\S]*?personalAccessToken\);/);
+  assert.match(serviceSource, /return new\(RepositoryUrl, Branch, DestinationRef, PushedCommitId\);/);
+  assert.match(serviceSource, /RedactCredential\(result, personalAccessToken\)/);
+  assert.match(serviceSource, /The response value did not match the expected contract/);
 });
