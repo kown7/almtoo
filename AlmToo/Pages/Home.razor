@@ -103,6 +103,79 @@
                               CreatedCommit="createdCommit"
                               OnCommitRequested="CreateCommitAsync" />
 
+        <section class="push-panel" aria-labelledby="push-heading">
+            <div class="push-panel__heading">
+                <div>
+                    <p class="helper-text">Remote write</p>
+                    <h2 id="push-heading">Push local commit to GitHub</h2>
+                </div>
+                <button class="secondary-action"
+                        type="button"
+                        @onclick="InspectPushAsync"
+                        disabled="@(isInspectingPush || isPushing)">
+                    @(isInspectingPush ? "Reviewing..." : "Review push")
+                </button>
+            </div>
+
+            @if (pushReview is not null)
+            {
+                <dl class="push-review" aria-label="Push destination review">
+                    <div>
+                        <dt>GitHub origin</dt>
+                        <dd data-push-review="origin">@pushReview.RepositoryUrl</dd>
+                    </div>
+                    <div>
+                        <dt>Branch</dt>
+                        <dd data-push-review="branch">@pushReview.Branch</dd>
+                    </div>
+                    <div>
+                        <dt>Outgoing commit SHA</dt>
+                        <dd class="push-review__sha" data-push-review="sha">@pushReview.OutgoingCommitId</dd>
+                    </div>
+                </dl>
+
+                <form class="push-form" @onsubmit="PushReviewedCommitAsync" @onsubmit:preventDefault="true">
+                    <div class="form-field">
+                        <label for="github-pat">GitHub personal access token</label>
+                        <input id="github-pat"
+                               name="github-pat"
+                               type="password"
+                               autocomplete="off"
+                               spellcheck="false"
+                               @bind="personalAccessToken"
+                               @bind:event="oninput"
+                               disabled="@isPushing" />
+                        <p class="field-help">The token is used only for this push attempt and is cleared afterward.</p>
+                    </div>
+
+                    <label class="push-confirmation" for="confirm-push">
+                        <input id="confirm-push"
+                               type="checkbox"
+                               @bind="pushConfirmed"
+                               disabled="@isPushing" />
+                        <span>I confirm this exact commit may be pushed to the reviewed origin and branch.</span>
+                    </label>
+
+                    <button class="primary-action"
+                            type="submit"
+                            disabled="@(!CanPush)">
+                        @(isPushing ? "Pushing..." : "Push reviewed commit")
+                    </button>
+                </form>
+            }
+            else
+            {
+                <p class="push-panel__placeholder">
+                    Review the active origin, branch, and commit before credentials or confirmation can be entered.
+                </p>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(pushStatusMessage))
+            {
+                <p class="@PushStatusMessageCssClass" role="status" aria-live="polite">@pushStatusMessage</p>
+            }
+        </section>
+
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div>
                 <p class="helper-text">Selected file path</p>
@@ -184,8 +257,21 @@
     private bool commitSucceeded;
     private string? commitStatusMessage;
     private CommitInfo? createdCommit;
+    private PushReview? pushReview;
+    private string personalAccessToken = string.Empty;
+    private bool pushConfirmed;
+    private bool isInspectingPush;
+    private bool isPushing;
+    private bool pushSucceeded;
+    private string? pushStatusMessage;
 
     private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
+
+    private bool CanPush => pushReview is not null
+        && pushConfirmed
+        && !string.IsNullOrWhiteSpace(personalAccessToken)
+        && !isInspectingPush
+        && !isPushing;
 
     private string SaveStatusText => isSavingFile
         ? "Saving changes"
@@ -196,6 +282,8 @@
     private string FileBrowserMessageCssClass => $"status-message {(fileBrowserSucceeded ? "success" : "error")}";
 
     private string SaveStatusMessageCssClass => $"status-message {(saveSucceeded ? "success" : "error")}";
+
+    private string PushStatusMessageCssClass => $"status-message {(pushSucceeded ? "success" : "error")}";
 
     private async Task OpenRepositoryAsync()
     {
@@ -447,6 +535,7 @@
 
             if (commitSucceeded)
             {
+                InvalidatePushReview();
                 await RefreshChangedFilesAsync();
             }
         }
@@ -459,6 +548,96 @@
         {
             isCommitting = false;
         }
+    }
+
+    private async Task InspectPushAsync()
+    {
+        if (currentRepository is null || isInspectingPush || isPushing)
+        {
+            return;
+        }
+
+        isInspectingPush = true;
+        pushReview = null;
+        pushConfirmed = false;
+        pushSucceeded = false;
+        pushStatusMessage = null;
+
+        try
+        {
+            var result = await GitService.InspectPushAsync();
+            if (result.Succeeded && result.Value is not null)
+            {
+                pushReview = result.Value;
+                pushStatusMessage = "Review the GitHub origin, branch, and outgoing commit before confirming the push.";
+            }
+            else
+            {
+                pushStatusMessage = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            pushStatusMessage = "Push details could not be inspected. The local commit remains available; review the workspace and try again.";
+        }
+        finally
+        {
+            isInspectingPush = false;
+        }
+    }
+
+    private async Task PushReviewedCommitAsync()
+    {
+        if (isPushing || pushReview is null || !pushConfirmed || string.IsNullOrWhiteSpace(personalAccessToken))
+        {
+            return;
+        }
+
+        var reviewedPush = new PushRequest(
+            pushReview.RepositoryUrl,
+            pushReview.Branch,
+            pushReview.OutgoingCommitId,
+            pushReview.DestinationRef);
+        var tokenForAttempt = personalAccessToken;
+
+        isPushing = true;
+        pushSucceeded = false;
+        pushStatusMessage = "Pushing the reviewed commit to GitHub...";
+
+        try
+        {
+            var result = await GitService.PushAsync(reviewedPush, tokenForAttempt);
+            pushSucceeded = result.Succeeded && result.Value is not null;
+
+            if (pushSucceeded)
+            {
+                pushStatusMessage = $"Pushed commit {result.Value!.PushedCommitId} to the reviewed GitHub branch.";
+                await RefreshChangedFilesAsync();
+            }
+            else
+            {
+                pushStatusMessage = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            pushStatusMessage = "The push could not be completed. The local commit remains available; review the destination and try again.";
+        }
+        finally
+        {
+            personalAccessToken = string.Empty;
+            pushConfirmed = false;
+            isPushing = false;
+        }
+    }
+
+    private void InvalidatePushReview()
+    {
+        pushReview = null;
+        personalAccessToken = string.Empty;
+        pushConfirmed = false;
+        pushSucceeded = false;
+        pushStatusMessage = null;
     }
 
     private static string CreateWorkspaceName(string repositoryUrl)
@@ -509,6 +688,9 @@
         commitSucceeded = false;
         commitStatusMessage = null;
         createdCommit = null;
+        InvalidatePushReview();
+        isInspectingPush = false;
+        isPushing = false;
         changedFiles = Array.Empty<ChangedFile>();
     }
 }

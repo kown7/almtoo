@@ -138,7 +138,7 @@ test('home page invokes local commit service and refreshes status only after suc
   assert.match(source, /GitService\.CommitAsync\(request\)/);
   assert.match(source, /commitSucceeded = result\.Succeeded && result\.Value is not null/);
   assert.match(source, /createdCommit = commitSucceeded \? result\.Value : null/);
-  assert.match(source, /if \(commitSucceeded\)\s*\{\s*await RefreshChangedFilesAsync\(\)/);
+  assert.match(source, /if \(commitSucceeded\)\s*\{\s*InvalidatePushReview\(\);\s*await RefreshChangedFilesAsync\(\)/);
   assert.match(source, /The local commit could not be created\. Review the changed files and try again\./);
   assert.doesNotMatch(source, /result\.Diagnostic/);
 });
@@ -152,4 +152,54 @@ test('local commit form exposes confirmation and responsive styling', async () =
   assert.match(source, /Pushing is not included/);
   assert.match(styles, /\.commit-form__identity/);
   assert.match(styles, /\.commit-form__confirmation/);
+});
+
+test('push review visibly presents the exact GitHub destination and outgoing commit', async () => {
+  const source = await readHomePage();
+
+  assert.match(source, /GitService\.InspectPushAsync\(\)/);
+  assert.match(source, /GitHub origin/);
+  assert.match(source, /data-push-review="origin">@pushReview\.RepositoryUrl/);
+  assert.match(source, /data-push-review="branch">@pushReview\.Branch/);
+  assert.match(source, /data-push-review="sha">@pushReview\.OutgoingCommitId/);
+  assert.match(source, /new PushRequest\(\s*pushReview\.RepositoryUrl,\s*pushReview\.Branch,\s*pushReview\.OutgoingCommitId,\s*pushReview\.DestinationRef\)/);
+  assert.match(source, /InvalidatePushReview\(\);\s*await RefreshChangedFilesAsync\(\)/);
+  assert.match(source, /private void InvalidatePushReview\(\)[\s\S]*pushReview = null;[\s\S]*pushConfirmed = false;/);
+});
+
+test('push form masks credentials and requires one explicit guarded confirmation', async () => {
+  const source = await readHomePage();
+
+  assert.match(source, /id="github-pat"[\s\S]*type="password"[\s\S]*@bind="personalAccessToken"/);
+  assert.match(source, /id="confirm-push"[\s\S]*type="checkbox"[\s\S]*@bind="pushConfirmed"/);
+  assert.match(source, /disabled="@\(!CanPush\)"/);
+  assert.match(source, /private bool CanPush => pushReview is not null\s*&& pushConfirmed\s*&& !string\.IsNullOrWhiteSpace\(personalAccessToken\)[\s\S]*&& !isPushing;/);
+  assert.match(source, /if \(isPushing \|\| pushReview is null \|\| !pushConfirmed \|\| string\.IsNullOrWhiteSpace\(personalAccessToken\)\)\s*\{\s*return;/);
+  assert.match(source, /var tokenForAttempt = personalAccessToken;\s*\n\s*isPushing = true;/);
+  assert.match(source, /GitService\.PushAsync\(reviewedPush, tokenForAttempt\)/);
+  assert.match(source, /finally\s*\{\s*personalAccessToken = string\.Empty;\s*pushConfirmed = false;\s*isPushing = false;/);
+});
+
+test('push outcomes remain credential-safe, preserve local work, and refresh status only on success', async () => {
+  const source = await readHomePage();
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private void InvalidatePushReview/)?.[0] ?? '';
+
+  assert.match(pushMethod, /pushSucceeded = result\.Succeeded && result\.Value is not null/);
+  assert.match(pushMethod, /Pushed commit \{result\.Value!\.PushedCommitId\}/);
+  assert.match(pushMethod, /if \(pushSucceeded\)[\s\S]*await RefreshChangedFilesAsync\(\)/);
+  assert.match(pushMethod, /The push could not be completed\. The local commit remains available; review the destination and try again\./);
+  assert.doesNotMatch(pushMethod, /createdCommit\s*=/);
+  assert.doesNotMatch(source, /pushStatusMessage\s*=\s*\$"[^"]*(?:personalAccessToken|tokenForAttempt)/);
+  assert.doesNotMatch(source, /@(?:personalAccessToken|tokenForAttempt)(?![^<]*type="password")/);
+  assert.doesNotMatch(source, /result\.Diagnostic/);
+});
+
+test('push review has dedicated responsive and readable styles', async () => {
+  const styles = await readFile(homeStylesUrl, 'utf8');
+
+  assert.match(styles, /\.push-panel/);
+  assert.match(styles, /\.push-review__sha/);
+  assert.match(styles, /overflow-wrap: anywhere/);
+  assert.match(styles, /\.push-confirmation/);
+  assert.match(styles, /\.secondary-action:disabled/);
 });
