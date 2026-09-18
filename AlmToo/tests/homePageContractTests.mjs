@@ -138,7 +138,7 @@ test('home page invokes local commit service and refreshes status only after suc
   assert.match(source, /GitService\.CommitAsync\(request\)/);
   assert.match(source, /commitSucceeded = result\.Succeeded && result\.Value is not null/);
   assert.match(source, /createdCommit = commitSucceeded \? result\.Value : null/);
-  assert.match(source, /if \(commitSucceeded\)\s*\{\s*await RefreshChangedFilesAsync\(\)/);
+  assert.match(source, /if \(commitSucceeded\)\s*\{\s*InvalidatePushReview\(\);\s*await RefreshChangedFilesAsync\(\)/);
   assert.match(source, /The local commit could not be created\. Review the changed files and try again\./);
   assert.doesNotMatch(source, /result\.Diagnostic/);
 });
@@ -152,4 +152,112 @@ test('local commit form exposes confirmation and responsive styling', async () =
   assert.match(source, /Pushing is not included/);
   assert.match(styles, /\.commit-form__identity/);
   assert.match(styles, /\.commit-form__confirmation/);
+});
+
+test('push review visibly presents the exact GitHub destination and outgoing commit', async () => {
+  const source = await readHomePage();
+
+  assert.match(source, /GitService\.InspectPushAsync\(\)/);
+  assert.match(source, /GitHub origin/);
+  assert.match(source, /data-push-review="origin">@pushReview\.RepositoryUrl/);
+  assert.match(source, /data-push-review="branch">@pushReview\.Branch/);
+  assert.match(source, /data-push-review="sha">@pushReview\.OutgoingCommitId/);
+  assert.match(source, /new PushRequest\(\s*pushReview\.RepositoryUrl,\s*pushReview\.Branch,\s*pushReview\.OutgoingCommitId,\s*pushReview\.DestinationRef\)/);
+  assert.match(source, /InvalidatePushReview\(\);\s*await RefreshChangedFilesAsync\(\)/);
+  assert.match(source, /private void InvalidatePushReview\(\)[\s\S]*pushReview = null;[\s\S]*pushConfirmed = false;/);
+});
+
+test('push form masks credential entry and requires stored presence plus explicit confirmation', async () => {
+  const source = await readHomePage();
+
+  assert.match(source, /id="github-pat"[\s\S]*type="password"[\s\S]*value="@credentialInput"/);
+  assert.match(source, /autocomplete="off"/);
+  assert.match(source, /Use token in this tab/);
+  assert.match(source, /id="confirm-push"[\s\S]*type="checkbox"[\s\S]*@bind="pushConfirmed"/);
+  assert.match(source, /disabled="@\(!CanPush\)"/);
+  assert.match(source, /private bool CanPush => pushReview is not null\s*&& pushConfirmed\s*&& hasStoredCredential[\s\S]*&& !isPushing;/);
+  assert.match(source, /if \(isPushing \|\| pushReview is null \|\| !pushConfirmed \|\| !hasStoredCredential\)\s*\{\s*return;/);
+  assert.match(source, /InvokeAsync<string\?>\("getCredentialForPush"\)/);
+  assert.match(source, /GitService\.PushAsync\(reviewedPush, tokenForAttempt\)/);
+  assert.match(source, /finally\s*\{\s*tokenForAttempt = null;\s*pushConfirmed = false;\s*isPushing = false;/);
+});
+
+test('home page restores presence only and supports explicit or rejection-driven forgetting', async () => {
+  const source = await readHomePage();
+  const initialization = source.match(/protected override async Task OnAfterRenderAsync[\s\S]*?private async Task<IJSObjectReference>/)?.[0] ?? '';
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private static GitOperationFailureKind NormalizePushFailureKind/)?.[0] ?? '';
+
+  assert.match(source, /CredentialModulePath = "\.\/js\/pushCredentialSession\.js"/);
+  assert.match(initialization, /InvokeAsync<bool>\("hasCredential"\)/);
+  assert.doesNotMatch(initialization, /getCredentialForPush/);
+  assert.match(source, /credentialInput = string\.Empty;[\s\S]*InvokeAsync<bool>\("storeCredential", credentialForStorage\)/);
+  assert.match(source, /@onclick="ForgetCredentialAsync"/);
+  assert.match(source, /InvokeAsync<bool>\("forgetCredential"\)/);
+  assert.match(source, /data-credential-state="present"/);
+  assert.match(source, /credentialReplacementRequired \? "replacement-required"/);
+  assert.match(pushMethod, /pushFailureKind == GitOperationFailureKind\.CredentialRejected/);
+  assert.match(pushMethod, /ClearCredentialAsync\(replacementRequired: true\)/);
+  assert.doesNotMatch(pushMethod, /else[\s\S]*ClearCredentialAsync\(replacementRequired: false\)/);
+  assert.doesNotMatch(source, /sessionStorage/);
+});
+
+test('push outcomes remain credential-safe, preserve local work, and refresh status only on success', async () => {
+  const source = await readHomePage();
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private static GitOperationFailureKind NormalizePushFailureKind/)?.[0] ?? '';
+
+  assert.match(pushMethod, /pushSucceeded = result\.Succeeded && result\.Value is not null/);
+  assert.match(pushMethod, /Pushed commit \{result\.Value!\.PushedCommitId\}/);
+  assert.match(pushMethod, /if \(pushSucceeded\)[\s\S]*await RefreshChangedFilesAsync\(\)/);
+  assert.match(pushMethod, /pushFailureKind = NormalizePushFailureKind\(result\.FailureKind\)/);
+  assert.match(pushMethod, /pushStatusMessage = GetPushRecoveryGuidance\(pushFailureKind\.Value\)/);
+  assert.match(pushMethod, /catch \(Exception\)[\s\S]*pushFailureKind = GitOperationFailureKind\.Unknown/);
+  assert.doesNotMatch(pushMethod, /pushStatusMessage = result\.Message/);
+  assert.doesNotMatch(pushMethod, /pushReview\s*=\s*null/);
+  assert.doesNotMatch(pushMethod, /createdCommit\s*=/);
+  assert.doesNotMatch(source, /pushStatusMessage\s*=\s*\$"[^"]*(?:personalAccessToken|tokenForAttempt)/);
+  assert.doesNotMatch(source, /@tokenForAttempt/);
+  assert.doesNotMatch(source, /credentialStatusMessage\s*=\s*\$"/);
+  assert.doesNotMatch(source, /result\.Diagnostic/);
+});
+
+test('push rejection guidance is fixed, categorized, accessible, and manually recoverable', async () => {
+  const source = await readHomePage();
+  const pushMethod = source.match(/private async Task PushReviewedCommitAsync\(\)[\s\S]*?\n    private static GitOperationFailureKind NormalizePushFailureKind/)?.[0] ?? '';
+  const normalizer = source.match(/private static GitOperationFailureKind NormalizePushFailureKind[\s\S]*?\n    private static string GetPushRecoveryGuidance/)?.[0] ?? '';
+  const guidance = source.match(/private static string GetPushRecoveryGuidance[\s\S]*?\n    private void InvalidatePushReview/)?.[0] ?? '';
+
+  assert.match(source, /data-push-failure="@PushFailureCategory"/);
+  assert.match(source, /role="@\(pushFailureKind is null \? "status" : "alert"\)"/);
+  assert.match(source, /aria-live="@\(pushFailureKind is null \? "polite" : "assertive"\)"/);
+  assert.match(source, /"credential-rejected"/);
+  assert.match(source, /"remote-ahead"/);
+  assert.match(source, /"network-unavailable"/);
+  assert.match(source, /"unsupported-ref"/);
+  assert.match(source, /"unknown"/);
+
+  assert.match(guidance, /Replace the token[\s\S]*retry manually/);
+  assert.match(guidance, /Refresh the repository, reconcile the remote commits with the preserved local commit[\s\S]*retry manually/);
+  assert.match(guidance, /Resolve the network or CORS issue, then retry this reviewed push manually/);
+  assert.match(guidance, /Check out a local branch, review its destination, and retry manually/);
+  assert.match(guidance, /local commit and reviewed destination remain available[\s\S]*retrying manually/);
+  assert.match(normalizer, /: GitOperationFailureKind\.Unknown/);
+  assert.match(source, /private async Task InspectPushAsync\(\)[\s\S]*pushFailureKind = NormalizePushFailureKind\(result\.FailureKind\)/);
+
+  assert.equal((pushMethod.match(/GitService\.PushAsync\(/g) ?? []).length, 1);
+  assert.match(pushMethod, /if \(isPushing \|\| pushReview is null \|\| !pushConfirmed \|\| !hasStoredCredential\)[\s\S]*return;/);
+  assert.ok(pushMethod.indexOf('isPushing = true;') < pushMethod.indexOf('GetCredentialModuleAsync()'));
+  assert.ok(pushMethod.indexOf('isPushing = true;') < pushMethod.indexOf('GitService.PushAsync('));
+  assert.doesNotMatch(pushMethod, /retry|while\s*\(|for\s*\(/i);
+  assert.doesNotMatch(guidance, /Diagnostic|result\.Message|tokenForAttempt|personalAccessToken/);
+});
+
+test('push review has dedicated responsive and readable styles', async () => {
+  const styles = await readFile(homeStylesUrl, 'utf8');
+
+  assert.match(styles, /\.push-panel/);
+  assert.match(styles, /\.push-review__sha/);
+  assert.match(styles, /overflow-wrap: anywhere/);
+  assert.match(styles, /\.push-confirmation/);
+  assert.match(styles, /\.secondary-action:disabled/);
+  assert.match(styles, /\.status-message\[data-push-failure\]/);
 });

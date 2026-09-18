@@ -1,7 +1,9 @@
 @page "/"
 @using AlmToo.Components
 @using AlmToo.Services.Git
+@implements IAsyncDisposable
 @inject IBrowserGitService GitService
+@inject IJSRuntime JSRuntime
 
 <PageTitle>Repository Browser</PageTitle>
 
@@ -47,6 +49,30 @@
             </p>
         }
     </div>
+
+    @if (currentRepository is null && (hasStoredCredential || !string.IsNullOrWhiteSpace(credentialStatusMessage)))
+    {
+        <section class="credential-reload-state" aria-label="Push credential status">
+            @if (hasStoredCredential)
+            {
+                <p data-credential-state="present">A token is available for an explicit push in this tab.</p>
+                <button class="secondary-action"
+                        type="button"
+                        @onclick="ForgetCredentialAsync"
+                        disabled="@isCredentialBusy">
+                    Forget token
+                </button>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(credentialStatusMessage))
+            {
+                <p class="@CredentialStatusMessageCssClass"
+                   data-credential-state="@CredentialState"
+                   role="status"
+                   aria-live="polite">@credentialStatusMessage</p>
+            }
+        </section>
+    }
 
     @if (currentRepository is not null)
     {
@@ -102,6 +128,130 @@
                               StatusIsError="@(!commitSucceeded)"
                               CreatedCommit="createdCommit"
                               OnCommitRequested="CreateCommitAsync" />
+
+        <section class="push-panel" aria-labelledby="push-heading">
+            <div class="push-panel__heading">
+                <div>
+                    <p class="helper-text">Remote write</p>
+                    <h2 id="push-heading">Push local commit to GitHub</h2>
+                </div>
+                <button class="secondary-action"
+                        type="button"
+                        @onclick="InspectPushAsync"
+                        disabled="@(isInspectingPush || isPushing)">
+                    @(isInspectingPush ? "Reviewing..." : "Review push")
+                </button>
+            </div>
+
+            <section class="push-credential" aria-labelledby="push-credential-heading">
+                <div class="push-credential__heading">
+                    <div>
+                        <h3 id="push-credential-heading">Push credential</h3>
+                        <p class="field-help">The token stays only in this browser tab and its value is never displayed.</p>
+                    </div>
+
+                    @if (hasStoredCredential)
+                    {
+                        <button class="secondary-action"
+                                type="button"
+                                @onclick="ForgetCredentialAsync"
+                                disabled="@(isCredentialBusy || isPushing)">
+                            Forget token
+                        </button>
+                    }
+                </div>
+
+                @if (hasStoredCredential)
+                {
+                    <p class="credential-presence" data-credential-state="present">
+                        A token is available for an explicit push in this tab.
+                    </p>
+                }
+
+                <form class="credential-form" @onsubmit="StoreCredentialAsync" @onsubmit:preventDefault="true">
+                    <div class="form-field">
+                        <label for="github-pat">GitHub personal access token</label>
+                        <input id="github-pat"
+                               name="github-pat"
+                               type="password"
+                               value="@credentialInput"
+                               @oninput="UpdateCredentialInput"
+                               autocomplete="off"
+                               spellcheck="false"
+                               disabled="@(hasStoredCredential || isCredentialBusy || isPushing)" />
+                        <p class="field-help">
+                            @(hasStoredCredential
+                                ? "A retained token is present; its value is not restored to this input."
+                                : "Use in this tab stores the token in tab-scoped session storage. The input is cleared immediately.")
+                        </p>
+                    </div>
+                    @if (!hasStoredCredential)
+                    {
+                        <button class="secondary-action"
+                                type="submit"
+                                disabled="@(isCredentialBusy || string.IsNullOrWhiteSpace(credentialInput))">
+                            @(isCredentialBusy ? "Saving..." : "Use token in this tab")
+                        </button>
+                    }
+                </form>
+
+                @if (!string.IsNullOrWhiteSpace(credentialStatusMessage))
+                {
+                    <p class="@CredentialStatusMessageCssClass"
+                       data-credential-state="@CredentialState"
+                       role="status"
+                       aria-live="polite">@credentialStatusMessage</p>
+                }
+            </section>
+
+            @if (pushReview is not null)
+            {
+                <dl class="push-review" aria-label="Push destination review">
+                    <div>
+                        <dt>GitHub origin</dt>
+                        <dd data-push-review="origin">@pushReview.RepositoryUrl</dd>
+                    </div>
+                    <div>
+                        <dt>Branch</dt>
+                        <dd data-push-review="branch">@pushReview.Branch</dd>
+                    </div>
+                    <div>
+                        <dt>Outgoing commit SHA</dt>
+                        <dd class="push-review__sha" data-push-review="sha">@pushReview.OutgoingCommitId</dd>
+                    </div>
+                </dl>
+
+                <form class="push-form" @onsubmit="PushReviewedCommitAsync" @onsubmit:preventDefault="true">
+                    <label class="push-confirmation" for="confirm-push">
+                        <input id="confirm-push"
+                               type="checkbox"
+                               @bind="pushConfirmed"
+                               disabled="@isPushing" />
+                        <span>I confirm this exact commit may be pushed to the reviewed origin and branch.</span>
+                    </label>
+
+                    <button class="primary-action"
+                            type="submit"
+                            disabled="@(!CanPush)">
+                        @(isPushing ? "Pushing..." : "Push reviewed commit")
+                    </button>
+                </form>
+            }
+            else
+            {
+                <p class="push-panel__placeholder">
+                    Review the active origin, branch, and commit before confirmation can be entered.
+                </p>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(pushStatusMessage))
+            {
+                <p class="@PushStatusMessageCssClass"
+                   data-push-failure="@PushFailureCategory"
+                   role="@(pushFailureKind is null ? "status" : "alert")"
+                   aria-live="@(pushFailureKind is null ? "polite" : "assertive")">@pushStatusMessage</p>
+            }
+        </section>
 
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div>
@@ -183,9 +333,31 @@
     private bool isCommitting;
     private bool commitSucceeded;
     private string? commitStatusMessage;
+    private const string CredentialModulePath = "./js/pushCredentialSession.js";
+
     private CommitInfo? createdCommit;
+    private PushReview? pushReview;
+    private Task<IJSObjectReference>? credentialModuleTask;
+    private string credentialInput = string.Empty;
+    private bool hasStoredCredential;
+    private bool isCredentialBusy;
+    private bool credentialStatusSucceeded;
+    private bool credentialReplacementRequired;
+    private string? credentialStatusMessage;
+    private bool pushConfirmed;
+    private bool isInspectingPush;
+    private bool isPushing;
+    private bool pushSucceeded;
+    private GitOperationFailureKind? pushFailureKind;
+    private string? pushStatusMessage;
 
     private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
+
+    private bool CanPush => pushReview is not null
+        && pushConfirmed
+        && hasStoredCredential
+        && !isInspectingPush
+        && !isPushing;
 
     private string SaveStatusText => isSavingFile
         ? "Saving changes"
@@ -196,6 +368,126 @@
     private string FileBrowserMessageCssClass => $"status-message {(fileBrowserSucceeded ? "success" : "error")}";
 
     private string SaveStatusMessageCssClass => $"status-message {(saveSucceeded ? "success" : "error")}";
+
+    private string PushStatusMessageCssClass => $"status-message {(pushSucceeded ? "success" : pushFailureKind is not null ? "error" : "info")}";
+
+    private string? PushFailureCategory => pushSucceeded || pushFailureKind is null
+        ? null
+        : pushFailureKind switch
+        {
+            GitOperationFailureKind.CredentialRejected => "credential-rejected",
+            GitOperationFailureKind.RemoteAhead => "remote-ahead",
+            GitOperationFailureKind.NetworkUnavailable => "network-unavailable",
+            GitOperationFailureKind.UnsupportedRef => "unsupported-ref",
+            _ => "unknown"
+        };
+
+    private string CredentialStatusMessageCssClass => $"status-message {(credentialStatusSucceeded ? "success" : "error")}";
+
+    private string CredentialState => credentialReplacementRequired ? "replacement-required" : hasStoredCredential ? "present" : "forgotten";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            var module = await GetCredentialModuleAsync();
+            hasStoredCredential = await module.InvokeAsync<bool>("hasCredential");
+        }
+        catch (Exception)
+        {
+            hasStoredCredential = false;
+            credentialStatusSucceeded = false;
+            credentialStatusMessage = "Tab credential storage is unavailable. Enter a token after storage becomes available.";
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task<IJSObjectReference> GetCredentialModuleAsync()
+    {
+        credentialModuleTask ??= JSRuntime.InvokeAsync<IJSObjectReference>("import", CredentialModulePath).AsTask();
+        return await credentialModuleTask;
+    }
+
+    private void UpdateCredentialInput(ChangeEventArgs args)
+    {
+        credentialInput = args.Value?.ToString() ?? string.Empty;
+        credentialStatusMessage = null;
+        credentialReplacementRequired = false;
+    }
+
+    private async Task StoreCredentialAsync()
+    {
+        if (isCredentialBusy || string.IsNullOrWhiteSpace(credentialInput))
+        {
+            return;
+        }
+
+        var credentialForStorage = credentialInput.Trim();
+        credentialInput = string.Empty;
+        isCredentialBusy = true;
+        credentialStatusMessage = null;
+
+        try
+        {
+            var module = await GetCredentialModuleAsync();
+            hasStoredCredential = await module.InvokeAsync<bool>("storeCredential", credentialForStorage);
+            credentialStatusSucceeded = hasStoredCredential;
+            credentialReplacementRequired = !hasStoredCredential;
+            credentialStatusMessage = hasStoredCredential
+                ? "Token saved for this tab."
+                : "The token could not be saved in this tab. Enter a replacement token to continue.";
+        }
+        catch (Exception)
+        {
+            hasStoredCredential = false;
+            credentialStatusSucceeded = false;
+            credentialReplacementRequired = true;
+            credentialStatusMessage = "The token could not be saved in this tab. Enter a replacement token to continue.";
+        }
+        finally
+        {
+            credentialForStorage = string.Empty;
+            isCredentialBusy = false;
+        }
+    }
+
+    private Task ForgetCredentialAsync() => ClearCredentialAsync(replacementRequired: false);
+
+    private async Task ClearCredentialAsync(bool replacementRequired)
+    {
+        credentialInput = string.Empty;
+        hasStoredCredential = false;
+        isCredentialBusy = true;
+
+        var removed = false;
+        try
+        {
+            var module = await GetCredentialModuleAsync();
+            removed = await module.InvokeAsync<bool>("forgetCredential");
+        }
+        catch (Exception)
+        {
+            // The component still fails closed and no credential value enters an error surface.
+        }
+        finally
+        {
+            isCredentialBusy = false;
+        }
+
+        credentialStatusSucceeded = removed && !replacementRequired;
+        credentialReplacementRequired = replacementRequired || !removed;
+        credentialStatusMessage = replacementRequired
+            ? "The remote rejected the credential or repository permission. Enter a replacement token."
+            : removed
+                ? "Token forgotten for this tab."
+                : "The token could not be removed from tab storage. Close this tab before continuing.";
+    }
 
     private async Task OpenRepositoryAsync()
     {
@@ -447,6 +739,7 @@
 
             if (commitSucceeded)
             {
+                InvalidatePushReview();
                 await RefreshChangedFilesAsync();
             }
         }
@@ -459,6 +752,151 @@
         {
             isCommitting = false;
         }
+    }
+
+    private async Task InspectPushAsync()
+    {
+        if (currentRepository is null || isInspectingPush || isPushing)
+        {
+            return;
+        }
+
+        isInspectingPush = true;
+        pushReview = null;
+        pushConfirmed = false;
+        pushSucceeded = false;
+        pushFailureKind = null;
+        pushStatusMessage = null;
+
+        try
+        {
+            var result = await GitService.InspectPushAsync();
+            if (result.Succeeded && result.Value is not null)
+            {
+                pushReview = result.Value;
+                pushStatusMessage = "Review the GitHub origin, branch, and outgoing commit before confirming the push.";
+            }
+            else
+            {
+                pushFailureKind = NormalizePushFailureKind(result.FailureKind);
+                pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
+            }
+        }
+        catch (Exception)
+        {
+            pushFailureKind = GitOperationFailureKind.Unknown;
+            pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
+        }
+        finally
+        {
+            isInspectingPush = false;
+        }
+    }
+
+    private async Task PushReviewedCommitAsync()
+    {
+        if (isPushing || pushReview is null || !pushConfirmed || !hasStoredCredential)
+        {
+            return;
+        }
+
+        isPushing = true;
+        pushSucceeded = false;
+        pushFailureKind = null;
+        pushStatusMessage = "Pushing the reviewed commit to GitHub...";
+
+        var reviewedPush = new PushRequest(
+            pushReview.RepositoryUrl,
+            pushReview.Branch,
+            pushReview.OutgoingCommitId,
+            pushReview.DestinationRef);
+        string? tokenForAttempt = null;
+
+        try
+        {
+            var credentialModule = await GetCredentialModuleAsync();
+            tokenForAttempt = await credentialModule.InvokeAsync<string?>("getCredentialForPush");
+        }
+        catch (Exception)
+        {
+            // Retrieval fails closed without forwarding interop details or a credential value.
+        }
+
+        if (string.IsNullOrWhiteSpace(tokenForAttempt))
+        {
+            tokenForAttempt = null;
+            hasStoredCredential = false;
+            credentialStatusSucceeded = false;
+            credentialReplacementRequired = true;
+            credentialStatusMessage = "The saved token is unavailable. Enter a replacement token to continue.";
+            pushConfirmed = false;
+            isPushing = false;
+            return;
+        }
+
+        try
+        {
+            var result = await GitService.PushAsync(reviewedPush, tokenForAttempt);
+            pushSucceeded = result.Succeeded && result.Value is not null;
+
+            if (pushSucceeded)
+            {
+                pushStatusMessage = $"Pushed commit {result.Value!.PushedCommitId} to the reviewed GitHub branch.";
+                await RefreshChangedFilesAsync();
+            }
+            else
+            {
+                pushFailureKind = NormalizePushFailureKind(result.FailureKind);
+                pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
+                if (pushFailureKind == GitOperationFailureKind.CredentialRejected)
+                {
+                    tokenForAttempt = null;
+                    await ClearCredentialAsync(replacementRequired: true);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            pushFailureKind = GitOperationFailureKind.Unknown;
+            pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
+        }
+        finally
+        {
+            tokenForAttempt = null;
+            pushConfirmed = false;
+            isPushing = false;
+        }
+    }
+
+    private static GitOperationFailureKind NormalizePushFailureKind(GitOperationFailureKind? failureKind) =>
+        failureKind is GitOperationFailureKind.CredentialRejected
+            or GitOperationFailureKind.RemoteAhead
+            or GitOperationFailureKind.NetworkUnavailable
+            or GitOperationFailureKind.UnsupportedRef
+            ? failureKind.Value
+            : GitOperationFailureKind.Unknown;
+
+    private static string GetPushRecoveryGuidance(GitOperationFailureKind failureKind) => failureKind switch
+    {
+        GitOperationFailureKind.CredentialRejected =>
+            "The remote rejected the credential or repository permission. Replace the token, review the same destination again, and retry manually.",
+        GitOperationFailureKind.RemoteAhead =>
+            "The remote branch is ahead. Refresh the repository, reconcile the remote commits with the preserved local commit, then review and retry manually.",
+        GitOperationFailureKind.NetworkUnavailable =>
+            "The browser could not reach the remote. Resolve the network or CORS issue, then retry this reviewed push manually.",
+        GitOperationFailureKind.UnsupportedRef =>
+            "The checked-out ref is not a supported local branch. Check out a local branch, review its destination, and retry manually.",
+        _ =>
+            "The push could not be completed safely. The local commit and reviewed destination remain available; inspect the workspace before retrying manually."
+    };
+
+    private void InvalidatePushReview()
+    {
+        pushReview = null;
+        pushConfirmed = false;
+        pushSucceeded = false;
+        pushFailureKind = null;
+        pushStatusMessage = null;
     }
 
     private static string CreateWorkspaceName(string repositoryUrl)
@@ -509,6 +947,20 @@
         commitSucceeded = false;
         commitStatusMessage = null;
         createdCommit = null;
+        InvalidatePushReview();
+        isInspectingPush = false;
+        isPushing = false;
         changedFiles = Array.Empty<ChangedFile>();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (credentialModuleTask is not { IsCompletedSuccessfully: true })
+        {
+            return;
+        }
+
+        var module = await credentialModuleTask;
+        await module.DisposeAsync();
     }
 }

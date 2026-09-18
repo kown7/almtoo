@@ -108,6 +108,83 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
             request);
     }
 
+    public async ValueTask<GitOperationResult<PushReview>> InspectPushAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await InvokeWithValueAsync<PushReviewDto, PushReview>(
+            "inspectPush",
+            "inspectPush",
+            value => value.ToPushReview(),
+            cancellationToken);
+    }
+
+    public async ValueTask<GitOperationResult<PushResult>> PushAsync(
+        PushRequest request,
+        string personalAccessToken,
+        CancellationToken cancellationToken = default)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(personalAccessToken))
+        {
+            return SanitizedPushFailure(GitOperationFailureKind.Unknown);
+        }
+
+        var result = await InvokeWithValueAsync<PushResultDto, PushResult>(
+            "push",
+            "push",
+            value => value.ToPushResult(),
+            cancellationToken,
+            request,
+            personalAccessToken);
+
+        return SanitizePushFailure(RedactCredential(result, personalAccessToken));
+    }
+
+    private static GitOperationResult<PushResult> SanitizePushFailure(
+        GitOperationResult<PushResult> result)
+    {
+        if (result.Succeeded)
+        {
+            return result with { FailureKind = null };
+        }
+
+        return SanitizedPushFailure(result.FailureKind ?? GitOperationFailureKind.Unknown);
+    }
+
+    private static GitOperationResult<PushResult> SanitizedPushFailure(
+        GitOperationFailureKind failureKind)
+    {
+        var diagnostic = failureKind switch
+        {
+            GitOperationFailureKind.CredentialRejected => "The remote rejected the supplied credentials or repository permission.",
+            GitOperationFailureKind.RemoteAhead => "The remote branch contains commits that are not in the reviewed local history.",
+            GitOperationFailureKind.NetworkUnavailable => "The remote could not be reached from this browser.",
+            GitOperationFailureKind.UnsupportedRef => "The checked-out ref is not a supported local branch.",
+            _ => "The push failed without exposing remote response details."
+        };
+
+        return GitOperationResult<PushResult>.Failure(
+            "push",
+            "The reviewed commit could not be pushed.",
+            diagnostic,
+            failureKind);
+    }
+
+    private static GitOperationResult<PushResult> RedactCredential(
+        GitOperationResult<PushResult> result,
+        string personalAccessToken)
+    {
+        static string? Redact(string? value, string secret) => value?.Replace(
+            secret,
+            "[REDACTED]",
+            StringComparison.Ordinal);
+
+        return result with
+        {
+            Message = Redact(result.Message, personalAccessToken) ?? "The reviewed commit could not be pushed.",
+            Diagnostic = Redact(result.Diagnostic, personalAccessToken)
+        };
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (moduleTask is not { IsCompletedSuccessfully: true })
@@ -130,7 +207,11 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
 
         if (!result.Succeeded)
         {
-            return GitOperationResult<TValue>.Failure(result.Operation, result.Message, result.Diagnostic);
+            return GitOperationResult<TValue>.Failure(
+                result.Operation,
+                result.Message,
+                result.Diagnostic,
+                ParseFailureKind(result.FailureKind));
         }
 
         if (result.Value is null)
@@ -148,12 +229,12 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
                 result.Message,
                 mapValue(result.Value));
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             return GitOperationResult<TValue>.Failure(
-                result.Operation,
-                $"Browser Git operation '{result.Operation}' returned an unexpected response.",
-                exception.ToString());
+                operation,
+                $"Browser Git operation '{operation}' returned an unexpected response.",
+                "The response value did not match the expected contract.");
         }
     }
 
@@ -167,8 +248,22 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
 
         return result.Succeeded
             ? GitOperationResult.Success(result.Operation, result.Message)
-            : GitOperationResult.Failure(result.Operation, result.Message, result.Diagnostic);
+            : GitOperationResult.Failure(
+                result.Operation,
+                result.Message,
+                result.Diagnostic,
+                ParseFailureKind(result.FailureKind));
     }
+
+    private static GitOperationFailureKind? ParseFailureKind(string? failureKind) => failureKind switch
+    {
+        "credentialRejected" => GitOperationFailureKind.CredentialRejected,
+        "remoteAhead" => GitOperationFailureKind.RemoteAhead,
+        "networkUnavailable" => GitOperationFailureKind.NetworkUnavailable,
+        "unsupportedRef" => GitOperationFailureKind.UnsupportedRef,
+        "unknown" => GitOperationFailureKind.Unknown,
+        _ => null
+    };
 
     private async Task<BrowserGitResponse<TValue>> InvokeResponseAsync<TValue>(
         string operation,
@@ -190,24 +285,52 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
                 cancellationToken,
                 args);
 
-            return response ?? BrowserGitResponse<TValue>.Failure(
-                operation,
-                $"Browser Git operation '{operation}' did not return a response.",
-                null);
+            if (response is null)
+            {
+                return BrowserGitResponse<TValue>.Failure(
+                    operation,
+                    $"Browser Git operation '{operation}' did not return a response.",
+                    "The JavaScript operation returned null.");
+            }
+
+            if (!string.Equals(response.Operation, operation, StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(response.Message))
+            {
+                return BrowserGitResponse<TValue>.Failure(
+                    operation,
+                    $"Browser Git operation '{operation}' returned an unexpected response.",
+                    "The JavaScript response envelope did not match the expected contract.");
+            }
+
+            return response;
         }
-        catch (JSException exception)
+        catch (OperationCanceledException)
+        {
+            return BrowserGitResponse<TValue>.Failure(
+                operation,
+                $"Browser Git operation '{operation}' was canceled.",
+                "The operation was canceled before it returned a result.");
+        }
+        catch (JSException)
         {
             return BrowserGitResponse<TValue>.Failure(
                 operation,
                 $"Browser Git operation '{operation}' failed in JavaScript interop.",
-                exception.ToString());
+                "JavaScript interop failed without exposing exception details.");
         }
-        catch (InvalidOperationException exception)
+        catch (InvalidOperationException)
         {
             return BrowserGitResponse<TValue>.Failure(
                 operation,
                 $"Browser Git operation '{operation}' could not be invoked.",
-                exception.ToString());
+                "The JavaScript module was unavailable or could not be invoked.");
+        }
+        catch (Exception)
+        {
+            return BrowserGitResponse<TValue>.Failure(
+                operation,
+                $"Browser Git operation '{operation}' could not be completed.",
+                "An unexpected interop boundary failure occurred.");
         }
     }
 
@@ -238,19 +361,33 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
                 ? GitOperationResult.Success(response.Operation, response.Message)
                 : GitOperationResult.Failure(response.Operation, response.Message, response.Diagnostic);
         }
-        catch (JSException exception)
+        catch (OperationCanceledException)
         {
             return GitOperationResult.Failure(
                 "initialize",
-                "Browser Git storage could not be initialized.",
-                exception.ToString());
+                "Browser Git storage initialization was canceled.",
+                "The operation was canceled before initialization completed.");
         }
-        catch (InvalidOperationException exception)
+        catch (JSException)
         {
             return GitOperationResult.Failure(
                 "initialize",
                 "Browser Git storage could not be initialized.",
-                exception.ToString());
+                "JavaScript initialization failed without exposing exception details.");
+        }
+        catch (InvalidOperationException)
+        {
+            return GitOperationResult.Failure(
+                "initialize",
+                "Browser Git storage could not be initialized.",
+                "The JavaScript module was unavailable or could not be imported.");
+        }
+        catch (Exception)
+        {
+            return GitOperationResult.Failure(
+                "initialize",
+                "Browser Git storage could not be initialized.",
+                "An unexpected initialization boundary failure occurred.");
         }
     }
 
@@ -280,6 +417,9 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
 
         [JsonPropertyName("diagnostic")]
         public string? Diagnostic { get; init; }
+
+        [JsonPropertyName("failureKind")]
+        public string? FailureKind { get; init; }
 
         public static BrowserGitResponse<TValue> Failure(string operation, string message, string? diagnostic) =>
             new()
@@ -377,5 +517,77 @@ public sealed class BrowserGitService : IBrowserGitService, IAsyncDisposable
 
         public CommitInfo ToCommitInfo() =>
             new(CommitId, Message);
+    }
+
+    private sealed record PushReviewDto
+    {
+        [JsonPropertyName("repositoryUrl")]
+        public string RepositoryUrl { get; init; } = string.Empty;
+
+        [JsonPropertyName("branch")]
+        public string Branch { get; init; } = string.Empty;
+
+        [JsonPropertyName("outgoingCommitId")]
+        public string OutgoingCommitId { get; init; } = string.Empty;
+
+        [JsonPropertyName("destinationRef")]
+        public string DestinationRef { get; init; } = string.Empty;
+
+        public PushReview ToPushReview()
+        {
+            ValidatePushCoordinates(RepositoryUrl, Branch, DestinationRef);
+            ValidateCommitId(OutgoingCommitId, nameof(OutgoingCommitId));
+            return new(RepositoryUrl, Branch, OutgoingCommitId, DestinationRef);
+        }
+    }
+
+    private sealed record PushResultDto
+    {
+        [JsonPropertyName("repositoryUrl")]
+        public string RepositoryUrl { get; init; } = string.Empty;
+
+        [JsonPropertyName("branch")]
+        public string Branch { get; init; } = string.Empty;
+
+        [JsonPropertyName("destinationRef")]
+        public string DestinationRef { get; init; } = string.Empty;
+
+        [JsonPropertyName("pushedCommitId")]
+        public string PushedCommitId { get; init; } = string.Empty;
+
+        public PushResult ToPushResult()
+        {
+            ValidatePushCoordinates(RepositoryUrl, Branch, DestinationRef);
+            ValidateCommitId(PushedCommitId, nameof(PushedCommitId));
+            return new(RepositoryUrl, Branch, DestinationRef, PushedCommitId);
+        }
+    }
+
+    private static void ValidatePushCoordinates(
+        string repositoryUrl,
+        string branch,
+        string destinationRef)
+    {
+        if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var repository)
+            || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(repository.UserInfo))
+        {
+            throw new InvalidOperationException("The push repository is not a credential-free GitHub HTTPS URL.");
+        }
+
+        if (string.IsNullOrWhiteSpace(branch)
+            || !string.Equals(destinationRef, $"refs/heads/{branch}", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The push branch and destination ref do not match.");
+        }
+    }
+
+    private static void ValidateCommitId(string commitId, string propertyName)
+    {
+        if (commitId.Length != 40 || !commitId.All(Uri.IsHexDigit))
+        {
+            throw new InvalidOperationException($"{propertyName} is not a full commit SHA.");
+        }
     }
 }

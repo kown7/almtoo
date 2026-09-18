@@ -8,13 +8,18 @@ public record GitOperationResult(
     string Operation,
     bool Succeeded,
     string Message,
-    string? Diagnostic = null)
+    string? Diagnostic = null,
+    GitOperationFailureKind? FailureKind = null)
 {
     public static GitOperationResult Success(string operation, string message) =>
         new(operation, true, message);
 
-    public static GitOperationResult Failure(string operation, string message, string? diagnostic = null) =>
-        new(operation, false, message, diagnostic);
+    public static GitOperationResult Failure(
+        string operation,
+        string message,
+        string? diagnostic = null,
+        GitOperationFailureKind? failureKind = null) =>
+        new(operation, false, message, diagnostic, failureKind);
 }
 
 public record GitOperationResult<T>(
@@ -22,13 +27,30 @@ public record GitOperationResult<T>(
     bool Succeeded,
     string Message,
     T? Value = default,
-    string? Diagnostic = null)
+    string? Diagnostic = null,
+    GitOperationFailureKind? FailureKind = null)
 {
     public static GitOperationResult<T> Success(string operation, string message, T value) =>
         new(operation, true, message, value);
 
-    public static GitOperationResult<T> Failure(string operation, string message, string? diagnostic = null) =>
-        new(operation, false, message, default, diagnostic);
+    public static GitOperationResult<T> Failure(
+        string operation,
+        string message,
+        string? diagnostic = null,
+        GitOperationFailureKind? failureKind = null) =>
+        new(operation, false, message, default, diagnostic, failureKind);
+}
+
+/// <summary>
+/// Allowlisted failure categories that callers may safely act on without inspecting host diagnostics.
+/// </summary>
+public enum GitOperationFailureKind
+{
+    CredentialRejected,
+    RemoteAhead,
+    NetworkUnavailable,
+    UnsupportedRef,
+    Unknown
 }
 
 public record RepositoryOpenRequest(
@@ -82,3 +104,31 @@ public record CommitRequest(
 public record CommitInfo(
     string CommitId,
     string Message);
+
+/// <summary>
+/// Immutable snapshot of the active repository state presented before a push.
+/// </summary>
+public record PushReview(
+    string RepositoryUrl,
+    string Branch,
+    string OutgoingCommitId,
+    string DestinationRef);
+
+/// <summary>
+/// Token-free request containing the exact push state previously reviewed by the user.
+/// Credentials are supplied separately to the service and are never retained by this model.
+/// </summary>
+public record PushRequest(
+    string RepositoryUrl,
+    string Branch,
+    string OutgoingCommitId,
+    string DestinationRef);
+
+/// <summary>
+/// Successful remote push identity returned to callers.
+/// </summary>
+public record PushResult(
+    string RepositoryUrl,
+    string Branch,
+    string DestinationRef,
+    string PushedCommitId);

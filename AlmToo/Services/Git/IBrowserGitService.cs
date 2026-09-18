@@ -48,4 +48,19 @@ public interface IBrowserGitService
     ValueTask<GitOperationResult<CommitInfo>> CommitAsync(
         CommitRequest request,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Inspects the active origin, branch, and local HEAD to create an immutable push review.
+    /// </summary>
+    ValueTask<GitOperationResult<PushReview>> InspectPushAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Pushes the exact reviewed commit to its matching origin branch without force.
+    /// The personal access token is an input-only argument and is not retained in result models.
+    /// </summary>
+    ValueTask<GitOperationResult<PushResult>> PushAsync(
+        PushRequest request,
+        string personalAccessToken,
+        CancellationToken cancellationToken = default);
 }

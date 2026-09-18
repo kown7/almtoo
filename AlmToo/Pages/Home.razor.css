@@ -11,7 +11,8 @@
 
 .repository-hero h1,
 .repository-status h2,
-.file-preview h2 {
+.file-preview h2,
+.push-panel h2 {
     margin: 0;
 }
 
@@ -27,7 +28,9 @@
 
 .repository-card,
 .repository-status,
-.file-preview {
+.file-preview,
+.push-panel,
+.credential-reload-state {
     border: 1px solid #dbe3ef;
     border-radius: 1rem;
     background: #ffffff;
@@ -37,7 +40,8 @@
 
 .repository-form,
 .repository-status,
-.file-preview {
+.file-preview,
+.push-panel {
     display: grid;
     gap: 1rem;
 }
@@ -59,7 +63,8 @@
 }
 
 .form-field input:disabled,
-.primary-action:disabled {
+.primary-action:disabled,
+.secondary-action:disabled {
     cursor: not-allowed;
     opacity: 0.7;
 }
@@ -94,6 +99,23 @@
     background: #1d4ed8;
 }
 
+.secondary-action {
+    align-self: start;
+    border: 1px solid #94a3b8;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #1e293b;
+    cursor: pointer;
+    font-weight: 700;
+    padding: 0.7rem 1rem;
+}
+
+.secondary-action:hover:not(:disabled),
+.secondary-action:focus-visible {
+    background: #f1f5f9;
+    border-color: #64748b;
+}
+
 .status-message {
     border-radius: 0.8rem;
     margin: 1rem 0 0;
@@ -113,6 +135,10 @@
 .status-message.error {
     background: #fef2f2;
     color: #b91c1c;
+}
+
+.status-message[data-push-failure]:not([data-push-failure=""]) {
+    border-left: 0.3rem solid #b91c1c;
 }
 
 .status-grid {
@@ -139,6 +165,111 @@
 .status-grid dd {
     margin: 0.25rem 0 0;
     overflow-wrap: anywhere;
+}
+
+.credential-reload-state {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.credential-reload-state p {
+    color: #047857;
+    font-weight: 700;
+    margin: 0;
+}
+
+.push-panel__heading {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.push-credential {
+    background: #f8fafc;
+    border: 1px solid #dbe3ef;
+    border-radius: 0.8rem;
+    display: grid;
+    gap: 0.8rem;
+    padding: 1rem;
+}
+
+.push-credential__heading,
+.credential-form {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.push-credential__heading h3,
+.credential-presence {
+    margin: 0;
+}
+
+.credential-form .form-field {
+    flex: 1 1 20rem;
+}
+
+.credential-presence {
+    color: #047857;
+    font-weight: 700;
+}
+
+.push-review {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+}
+
+.push-review div {
+    border-left: 0.25rem solid #2563eb;
+    padding-left: 0.8rem;
+}
+
+.push-review dt {
+    color: #64748b;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.push-review dd {
+    margin: 0.2rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+.push-review__sha {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.push-form {
+    border-top: 1px solid #e2e8f0;
+    display: grid;
+    gap: 1rem;
+    padding-top: 1rem;
+}
+
+.push-confirmation {
+    align-items: flex-start;
+    display: flex;
+    gap: 0.65rem;
+}
+
+.push-confirmation input {
+    flex: 0 0 auto;
+    margin-top: 0.2rem;
+}
+
+.push-panel__placeholder {
+    color: #64748b;
+    margin: 0;
 }
 
 .file-editor__field {
@@ -185,7 +316,15 @@
         max-width: 100%;
     }
 
-    .primary-action {
+    .primary-action,
+    .secondary-action {
         width: 100%;
+    }
+
+    .push-panel__heading,
+    .push-credential__heading,
+    .credential-form,
+    .credential-reload-state {
+        align-items: stretch;
     }
 }
