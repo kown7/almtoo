@@ -49,3 +49,7 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# Generated local verification evidence; preserve externally or on evidence branches.
+.artifacts/browser/
+AlmToo/test-results/
