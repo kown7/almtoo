@@ -45,6 +45,9 @@ __pycache__/
 venv/
 target/
 vendor/
+# Browser runtime dependencies are intentionally generated and checked in.
+!AlmToo/wwwroot/js/vendor/
+!AlmToo/wwwroot/js/vendor/**
 *.log
 coverage/
 .cache/

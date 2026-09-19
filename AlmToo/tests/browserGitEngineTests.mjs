@@ -6,6 +6,12 @@ const moduleUrl = new URL('../wwwroot/js/browserGitEngine.js', import.meta.url);
 const serviceUrl = new URL('../Services/Git/BrowserGitService.cs', import.meta.url);
 const serviceContractUrl = new URL('../Services/Git/IBrowserGitService.cs', import.meta.url);
 const resultContractUrl = new URL('../Services/Git/GitOperationResult.cs', import.meta.url);
+const vendorAssetUrls = [
+  new URL('../wwwroot/js/vendor/buffer/buffer.min.js', import.meta.url),
+  new URL('../wwwroot/js/vendor/isomorphic-git/index.umd.min.js', import.meta.url),
+  new URL('../wwwroot/js/vendor/isomorphic-git/http-web.umd.js', import.meta.url),
+  new URL('../wwwroot/js/vendor/lightning-fs/lightning-fs.min.js', import.meta.url)
+];
 
 async function importFreshModule() {
   return import(`${moduleUrl.href}?case=${Date.now()}-${Math.random()}`);
@@ -115,6 +121,13 @@ async function runPushFailure(error, token = 'github_pat_test-sentinel') {
   const review = (await engine.inspectPush()).value;
   return engine.push(review, token);
 }
+
+test('browser Git vendor assets are present in the static web root', async () => {
+  for (const assetUrl of vendorAssetUrls) {
+    const content = await readFile(assetUrl);
+    assert.ok(content.length > 0, `${assetUrl.pathname} must not be empty`);
+  }
+});
 
 test('initialize returns a structured failure when a vendor dependency cannot load', async () => {
   resetBrowserGlobals();
