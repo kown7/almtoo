@@ -59,7 +59,7 @@ function installLoadingDocument({ failFirstScript = false } = {}) {
   return scripts;
 }
 
-function installFakeGitRuntime(gitOverrides = {}) {
+function installFakeGitRuntime(gitOverrides = {}, fsOverrides = {}) {
   class FakeLightningFS {
     constructor() {
       this.promises = {
@@ -79,7 +79,8 @@ function installFakeGitRuntime(gitOverrides = {}) {
         async readFile() {
           return new Uint8Array();
         },
-        async writeFile() {}
+        async writeFile() {},
+        ...fsOverrides
       };
     }
   }
@@ -101,6 +102,20 @@ function installFakeGitRuntime(gitOverrides = {}) {
     ...gitOverrides
   };
   globalThis.GitHttp = { request() {} };
+}
+
+async function openFakeRepository({ gitOverrides = {}, fsOverrides = {} } = {}) {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  installFakeGitRuntime(gitOverrides, fsOverrides);
+
+  const engine = await importFreshModule();
+  const opened = await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'coverage-demo'
+  });
+  assert.equal(opened.succeeded, true);
+  return engine;
 }
 
 async function runPushFailure(error, token = 'github_pat_test-sentinel') {
@@ -679,4 +694,84 @@ test('Blazor push boundary keeps credentials input-only and preserves reviewed a
   assert.match(resultContractSource, /GitOperationFailureKind\? FailureKind = null/);
   assert.match(resultContractSource, /enum GitOperationFailureKind[\s\S]*?CredentialRejected/);
   assert.match(serviceSource, /The response value did not match the expected contract/);
+});
+
+test('listFiles classifies and sorts entries while sampling the editable-size boundary', async () => {
+  const sizes = new Map([
+    ['/almtoo-workspaces/coverage-demo/src', null],
+    ['/almtoo-workspaces/coverage-demo/README.md', 1024 * 1024],
+    ['/almtoo-workspaces/coverage-demo/too-large.txt', 1024 * 1024 + 1],
+    ['/almtoo-workspaces/coverage-demo/image.png', 12]
+  ]);
+  const engine = await openFakeRepository({
+    fsOverrides: {
+      async readdir() { return ['too-large.txt', 'image.png', 'README.md', 'src']; },
+      async stat(path) {
+        if (path.endsWith('/.git')) {
+          const error = new Error('missing repository metadata');
+          error.code = 'ENOENT';
+          throw error;
+        }
+        const size = sizes.get(path);
+        return { isFile: () => size !== null, size: size ?? 0 };
+      }
+    }
+  });
+
+  const result = await engine.listFiles('/');
+
+  assert.equal(result.succeeded, true);
+  assert.deepEqual(result.value.map(({ name, kind, isEditableText }) => ({ name, kind, isEditableText })), [
+    { name: 'src', kind: 'Directory', isEditableText: false },
+    { name: 'image.png', kind: 'File', isEditableText: false },
+    { name: 'README.md', kind: 'File', isEditableText: true },
+    { name: 'too-large.txt', kind: 'File', isEditableText: false }
+  ]);
+});
+
+test('readTextFile and writeTextFile preserve UTF-8 content and normalized repository paths', async () => {
+  const writes = [];
+  const engine = await openFakeRepository({
+    fsOverrides: {
+      async readFile(path) {
+        assert.equal(path, '/almtoo-workspaces/coverage-demo/docs/notes.txt');
+        return new TextEncoder().encode('café');
+      },
+      async writeFile(path, content, encoding) {
+        writes.push({ path, content, encoding });
+      }
+    }
+  });
+
+  const readResult = await engine.readTextFile('/docs/notes.txt');
+  const writeResult = await engine.writeTextFile('/docs/notes.txt', 'updated café');
+
+  assert.deepEqual(readResult.value, {
+    path: '/docs/notes.txt', content: 'café', encoding: 'utf-8', sizeBytes: 5
+  });
+  assert.equal(writeResult.succeeded, true);
+  assert.deepEqual(writes, [{
+    path: '/almtoo-workspaces/coverage-demo/docs/notes.txt', content: 'updated café', encoding: 'utf8'
+  }]);
+});
+
+test('file operation I/O failures remain structured and operation-specific', async () => {
+  const engine = await openFakeRepository({
+    fsOverrides: {
+      async readdir() { throw new Error('storage unavailable'); },
+      async readFile() { throw new Error('read denied'); },
+      async writeFile() { throw new Error('quota exceeded'); }
+    }
+  });
+
+  for (const [operation, result] of [
+    ['listFiles', await engine.listFiles('/')],
+    ['readTextFile', await engine.readTextFile('/README.md')],
+    ['writeTextFile', await engine.writeTextFile('/README.md', 'content')]
+  ]) {
+    assert.equal(result.operation, operation);
+    assert.equal(result.succeeded, false);
+    assert.equal(result.value, null);
+    assert.ok(result.diagnostic);
+  }
 });

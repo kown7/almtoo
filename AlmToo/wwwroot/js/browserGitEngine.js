@@ -7,6 +7,7 @@ const vendorScripts = [
 
 const workspaceRoot = '/almtoo-workspaces';
 const corsProxy = 'https://cors.isomorphic-git.org';
+const maxEditableTextBytes = 1024 * 1024;
 const textDecoder = new TextDecoder('utf-8', { fatal: false });
 const textEncoder = new TextEncoder();
 
@@ -96,7 +97,7 @@ export async function listFiles(path = '/') {
         name,
         kind: isFile ? 'File' : 'Directory',
         sizeBytes: isFile ? stat.size : null,
-        isEditableText: isFile && isEditableTextPath(name)
+        isEditableText: isFile && isEditableTextPath(name, stat.size)
       };
     }));
 
@@ -531,9 +532,13 @@ function joinRepositoryPath(root, relativePath) {
   return relativePath === '/' ? root : `${root}${relativePath}`;
 }
 
-function isEditableTextPath(name) {
+function isEditableTextPath(name, sizeBytes) {
+  if (!Number.isFinite(sizeBytes) || sizeBytes > maxEditableTextBytes) {
+    return false;
+  }
+
   return /\.(cs|css|csv|gitignore|html|js|json|md|razor|sln|svg|txt|xml|yaml|yml)$/i.test(name)
-    || /^[A-Z0-9_-]+(?:\.[A-Z0-9_-]+)?$/i.test(name);
+    || /^[A-Z0-9_-]+$/i.test(name);
 }
 
 function mapChangeKind(head, workdir, stage) {
