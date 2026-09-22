@@ -93,7 +93,7 @@ No new iDesign Engine is required by the baseline: the present deterministic che
 3. The Accessor owns JavaScript interop, module import/disposal, browser filesystem/storage, Git vendor integration, remote transport, DTO translation, and platform failure sanitization. It does not choose multi-step UI workflow.
 4. Resources contain data only. They do not call services or implement I/O or orchestration.
 5. `browserGitEngine.js` is a legacy filename, not an iDesign Engine classification. Both JavaScript modules remain private implementation mechanisms of `BrowserGitAccessor`.
-6. Credential values may cross only the explicit Client input -> Manager push request -> Accessor immediate-use -> credential/transport path. They must never be retained in Resource models or Manager state, returned in results, logged, rendered, serialized for diagnostics, or included in exception text.
+6. Credential values may cross only the explicit Client input -> Manager credential method -> Accessor immediate-use storage path; push retrieval remains entirely inside the Accessor immediately before transport. They must never be retained in Resource models or Manager state, returned in results, logged, rendered, serialized for diagnostics, or included in exception text.
 7. The single Accessor interface protects the JavaScript/browser platform boundary and provides Manager-test substitution; the Manager stays concrete because an interface would be pass-through.
 
 ### Locked decisions D010-D013
@@ -111,13 +111,121 @@ These decisions are locked for this design. A necessary exception must be record
 
 The current public operation set is `initialize`, `cloneOrOpen`, `listFiles`, `readTextFile`, `writeTextFile`, `getStatus`, `commit`, `inspectPush`, and `push`. The refactor preserves the behavior and externally observable state of all operations.
 
+### Target Resource shapes and placement
+
+`AlmToo/Services/Accessors/BrowserGit/Interface/BrowserGitResources.cs` owns the data-only boundary Resources: `GitOperationResult`, `GitOperationResult<T>`, `GitOperationFailureKind`, `RepositoryOpenRequest`, `RepositoryInfo`, `RepositoryFileEntry`, `RepositoryFileKind`, `TextFileContent`, `ChangedFile`, `GitChangeKind`, `CommitRequest`, `CommitInfo`, `PushReview`, `PushRequest`, and `PushResult`. Their fields retain the current shapes in `Services/Git/GitOperationResult.cs`; no record contains a credential, service reference, callback, mutable module handle, or behavior. `AlmToo/Services/Managers/GitWorkspace/Service/GitWorkspaceState.cs` is a separate immutable, data-only Manager snapshot containing the current repository, listing/path/selection/edit buffer, changed files, commit and push-review values, busy flags, safe messages/success flags, push failure kind, and credential presence/replacement flags. It contains no credential value or technical diagnostic.
+
 `GitOperationResult` and `GitOperationResult<T>` expose inspectable `Operation`, `Succeeded`, safe user-facing `Message`, optional technical `Diagnostic`, and optional allowlisted `FailureKind`; generic results additionally carry `Value`. JavaScript responses use the corresponding lower-camel fields. C# rejects null/malformed envelopes, mismatched operation names, missing messages, invalid push coordinates, and malformed commit SHAs as structured failures.
 
-The result signals are the current observability surface: operation and success localize the failed operation, message is UI-safe, diagnostic is technical but must be credential-safe, and push failure classification is limited to credential rejected, remote ahead, network unavailable, unsupported ref, or unknown. UI workflow state (`isOpening`, loading/saving/committing/reviewing/pushing flags, messages, `data-push-failure`, and credential presence/replacement state) remains inspectable without exposing a credential value.
+### Single Accessor contract
 
-Initialization and the Git module import are task-cached and idempotent per scoped Accessor instance. The active JavaScript repository and browser filesystem live for that module/session lifetime. A completed module reference is disposed asynchronously; incomplete/failed imports are not awaited during disposal. Cancellation is accepted at every C# operation boundary and becomes a structured canceled result rather than escaping. Current Home calls do not supply a cancellation token; changing that behavior is outside this baseline.
+The only retained service interface is `AlmToo.Services.Accessors.BrowserGit.Interface.IBrowserGitAccessor` at `AlmToo/Services/Accessors/BrowserGit/Interface/IBrowserGitAccessor.cs`. Its implementation is `AlmToo.Services.Accessors.BrowserGit.Service.BrowserGitAccessor` at `AlmToo/Services/Accessors/BrowserGit/Service/BrowserGitAccessor.cs`; namespaces mirror the required iDesign folder structure. The contract-level shape is:
 
-Push contracts preserve an immutable reviewed `RepositoryUrl`, `Branch`, `OutgoingCommitId`, and `DestinationRef`. The Accessor and JavaScript revalidate those coordinates against current state immediately before one non-force push attempt. The personal access token is a separate input-only argument and never a Resource field.
+```csharp
+public interface IBrowserGitAccessor : IAsyncDisposable
+{
+    ValueTask<GitOperationResult<RepositoryInfo>> CloneOrOpenAsync(RepositoryOpenRequest request, CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<IReadOnlyList<RepositoryFileEntry>>> ListFilesAsync(string path = "/", CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<TextFileContent>> ReadTextFileAsync(string path, CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult> WriteTextFileAsync(string path, string content, CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<PushReview>> InspectPushAsync(CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<bool>> StoreCredentialAsync(string credential, CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<bool>> ForgetCredentialAsync(CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<PushResult>> PushAsync(PushRequest request, CancellationToken cancellationToken = default);
+}
+```
+
+`PushAsync` retrieves the credential from the Accessor-owned credential module immediately before transport and clears its local variable in `finally`; it never returns or accepts a credential Resource. `StoreCredentialAsync` accepts the secret as an input-only argument and must not retain it in C# fields. This is an intentional target signature change from the legacy service and removes credential retrieval from the Client while preserving tab-scoped storage behavior.
+
+### Concrete Manager contract and state ownership
+
+`AlmToo.Services.Managers.GitWorkspace.Service.GitWorkspaceManager` at `AlmToo/Services/Managers/GitWorkspace/Service/GitWorkspaceManager.cs` is a scoped concrete service, with no Manager interface. It owns one `GitWorkspaceState` snapshot and the full workspace use-case sequencing:
+
+```csharp
+public sealed class GitWorkspaceManager : IAsyncDisposable
+{
+    public GitWorkspaceState State { get; }
+    public event Action? StateChanged;
+    public Task OpenRepositoryAsync(string repositoryUrl, CancellationToken cancellationToken = default);
+    public Task BrowseAsync(string path, CancellationToken cancellationToken = default);
+    public Task SelectFileAsync(string path, CancellationToken cancellationToken = default);
+    public void UpdateEditableContent(string content);
+    public Task SaveSelectedFileAsync(CancellationToken cancellationToken = default);
+    public Task RefreshStatusAsync(CancellationToken cancellationToken = default);
+    public Task CommitAsync(CommitRequest request, CancellationToken cancellationToken = default);
+    public Task ReviewPushAsync(CancellationToken cancellationToken = default);
+    public Task StoreCredentialAsync(string credential, CancellationToken cancellationToken = default);
+    public Task ForgetCredentialAsync(CancellationToken cancellationToken = default);
+    public Task PushReviewedCommitAsync(CancellationToken cancellationToken = default);
+}
+```
+
+The Client supplies transient input, invokes one use case, renders `State`, and subscribes/unsubscribes to `StateChanged`; it does not interpret diagnostics or orchestrate follow-up Accessor calls. The Manager maps safe results to the existing UI messages and state transitions. `DisposeAsync` cancels its lifetime token, unsubscribes/releases state notifications, and disposes the scoped Accessor once; the Client disposes only its Manager subscription, not JavaScript modules.
+
+### Initialization, concurrency, cancellation, and error invariants
+
+- Module import, vendor loading, filesystem creation, and initialization remain task-cached and idempotent per scoped Accessor. A failed initialization is stable for that scope; reload/new scope is the retry boundary. Only successfully imported modules are asynchronously disposed.
+- The Manager admits at most one workspace-mutating use case at a time (`open`, save, commit, push, credential store/forget). Existing busy flags make duplicate UI submissions no-ops. Status/list/read may run only against the current workspace generation; a late result from an older open/selection generation is discarded rather than overwriting newer state.
+- Every public async method accepts cancellation. The Manager links caller cancellation with its lifetime token. The Accessor forwards it to import and interop and translates `OperationCanceledException`, `JSException`, unavailable modules, malformed envelopes, and unknown exceptions into safe `GitOperationResult` failures. Cancellation never causes an automatic retry or partial-success state.
+- Retry ownership is explicit: module/storage repair requires a fresh scope/reload; open/read/save/status/commit may be manually retried by the user; authentication rejection forgets the token and requires replacement; network, unknown, unsupported-ref, and remote-ahead push failures preserve review/local work and require a new explicit review/confirmation. Neither Manager nor Accessor automatically retries transport.
+- Error translation is Accessor-owned for platform/interop failures, Manager-owned for workflow-safe recovery state, and Client-owned only for accessible rendering. `Diagnostic` is inspectable by credential-free tests/telemetry but is never rendered by the Client.
+
+The result signals are the observability surface: operation and success localize the failed operation, message is UI-safe, diagnostic is technical but credential-safe, and push failure classification is limited to credential rejected, remote ahead, network unavailable, unsupported ref, or unknown. Manager workflow state (opening/loading/saving/committing/reviewing/pushing flags, messages, `data-push-failure`, and credential presence/replacement state) remains inspectable without exposing a credential value.
+
+Push contracts preserve an immutable reviewed `RepositoryUrl`, `Branch`, `OutgoingCommitId`, and `DestinationRef`. The Accessor and JavaScript revalidate those coordinates against current state immediately before one non-force push attempt. A personal access token is never a Resource field, Manager field, result, diagnostic, event argument, or log value.
+
+## Target workflow sequences
+
+All arrows below are target calls; platform details after `BrowserGitAccessor` remain private Accessor implementation.
+
+### Clone or open
+
+1. Client calls `GitWorkspaceManager.OpenRepositoryAsync(url, ct)`; Manager trims/validates input, creates the same sanitized workspace name, increments the workspace generation, clears stale workspace views, and marks opening.
+2. Manager calls `IBrowserGitAccessor.CloneOrOpenAsync(RepositoryOpenRequest, ct)`.
+3. Accessor performs idempotent import/initialize and calls `browserGitEngine.js`; JS opens persistent lightning-fs state or shallow-clones through the remote/CORS boundary.
+4. On success Manager stores `RepositoryInfo`, then invokes Accessor list `/` and status in the current generation. On failure it publishes the existing safe open message. A stale/canceled generation cannot publish results.
+
+### Browse and read
+
+1. Client calls `BrowseAsync(path)` or `SelectFileAsync(path)`; Manager validates current repository/list membership and updates busy/selection state.
+2. Manager calls Accessor `ListFilesAsync` or `ReadTextFileAsync`; Accessor normalizes envelopes while JS enforces repository-relative paths and editable-file rules.
+3. Manager accepts only the current generation/selection result, stores Resource values and safe messages, and refreshes status after browse as today. Unsupported/stale selections are recoverable and never trigger platform reads.
+
+### Edit and save
+
+1. Client sends text changes to `UpdateEditableContent`; Manager stores the non-secret edit buffer and computes dirty state against the saved snapshot.
+2. `SaveSelectedFileAsync` rejects missing selection or re-entry, snapshots path/content, and calls Accessor `WriteTextFileAsync`.
+3. Success advances the saved snapshot and calls `GetStatusAsync`; failure preserves editable content and publishes the current safe save message. Cancellation follows the same preservation rule.
+
+### Status
+
+1. Client or an owning workflow calls `RefreshStatusAsync`; duplicate refresh for the same generation is coalesced/no-op while busy.
+2. Manager calls Accessor `GetStatusAsync` and accepts only the current workspace generation.
+3. Success replaces changed-file Resources; failure clears only that result view and publishes the operation-specific safe message.
+
+### Commit
+
+1. Client presentation validation creates `CommitRequest` and calls `CommitAsync`; Manager checks repository and mutation gate, clears prior commit result, and calls Accessor.
+2. Accessor/JS validates again, stages additions/removals, rejects no changes, and creates one local commit.
+3. Success stores `CommitInfo`, invalidates push review/confirmation, and refreshes status. Failure/cancellation preserves worktree and existing edit state and exposes fixed recovery text.
+
+### Reviewed push
+
+1. Client calls `ReviewPushAsync`; Manager clears old confirmation/failure state and calls Accessor `InspectPushAsync`.
+2. Accessor returns credential-free immutable `PushReview`; Manager stores it for rendering. Client explicitly confirms that exact identity; confirmation is Manager state, not a platform call.
+3. `PushReviewedCommitAsync` requires review, confirmation, credential presence, and a free mutation gate; Manager copies the review into token-free `PushRequest` and calls Accessor once.
+4. Accessor obtains the token from `pushCredentialSession.js` immediately before transport, revalidates origin/branch/HEAD, performs at most one non-force push, clears the local token variable, and returns a sanitized result.
+5. Success stores pushed SHA and refreshes status. Any failure preserves local HEAD and review, clears confirmation, and maps to manual recovery. No layer automatically retries.
+
+### Credential recovery
+
+1. On first Manager initialization, `HasCredentialAsync` restores presence only. Client never receives the value.
+2. Client clears its password input before calling `StoreCredentialAsync`; Manager forwards the transient string without storing it; Accessor writes only the scoped session key and publishes presence.
+3. Explicit forget calls Accessor `ForgetCredentialAsync`. Credential rejection from push triggers Manager-directed forget and replacement-required state; storage failure fails closed.
+4. Replacement and retry require new user input plus a new review/confirmation. Values never enter Manager state, Resources, events, markup, messages, diagnostics, logs, or serialized errors.
 
 ## Current workflow and data flows
 
@@ -171,19 +279,20 @@ The C# Accessor forwards cancellation to import, initialization, and JS invocati
 
 ## Failure Modes
 
-| Dependency or boundary | Failure path | Current owner and observable behavior | Recovery invariant |
-|---|---|---|---|
-| JavaScript module or vendor asset load | Missing asset, script error, import failure, malformed/null envelope | C# Accessor returns `initialize` or operation failure with safe message and technical non-secret diagnostic. | Reopen/reload after assets are restored; no partial success is claimed. |
-| Browser storage/filesystem | unavailable IndexedDB/sessionStorage, quota, missing file/worktree, denied read/write | Git JS returns operation-specific failure; credential JS returns false/null and never throws. UI clears only result views, preserving editable text where possible. | Reopen workspace or restore storage; credential path fails closed. |
-| Network, CORS proxy, or remote Git | connection loss/timeout/CORS failure, malformed host response | Push is classified `NetworkUnavailable` or safe `Unknown`; clone/open returns safe failure. | Local work/review remain; only manual retry after network repair. |
-| Authentication or permission | 401/403/auth rejection | Fixed `CredentialRejected` result; Home forgets session token and requests replacement. | No credential remains in input/result/diagnostic/DOM; explicit replacement and retry required. |
-| Non-fast-forward remote | remote advances after review | `RemoteAhead`, one attempt maximum, local HEAD and review preserved. | Reconcile remote manually, review again, confirm again; never force or auto-retry. |
-| Cancellation or disposal | canceled interop, navigation/disposal before/after import | Accessor returns structured cancellation; only successfully completed module tasks are disposed. | No exception details reach UI; a later owner may create a fresh scoped instance. |
-| Malformed interop payload | null envelope, wrong operation, absent message/value, invalid DTO/SHA/ref | Accessor rejects it as an unexpected response and supplies stable operation/message/error signals. | Fix boundary/runtime and retry; do not accept malformed state. |
-| Unsafe/malformed input | unsupported URL, credential-bearing GitHub origin, parent path, missing path/worktree, invalid commit/review | Validation fails before unsafe filesystem/transport use where implemented. | Correct input or reopen; no transport for invalid push review. |
-| Secret-bearing external failure | host/error contains PAT or auth headers | JavaScript push classification returns fixed allowlisted diagnostics; C# redacts then sanitizes; UI never consumes raw diagnostics. | Credential persistence, logging, rendering, serialization, and error leakage are prohibited. |
+| Dependency or boundary | Failure path | Target owner and stable observable outcome | Retry or recovery boundary | S02 rollback checkpoint |
+|---|---|---|---|---|
+| JavaScript module or vendor asset load | missing asset, script error, import failure, malformed/null envelope | Accessor returns `initialize` or operation failure with safe message plus non-secret diagnostic; Manager remains unopened. | Repair assets and create a fresh scope/reload; cached failed initialization is not retried in-place. | Keep legacy module path/import alias through checkpoints 2-6. |
+| Browser Git storage/filesystem | unavailable IndexedDB, quota, missing file/worktree, denied read/write | Accessor returns operation-specific failure; Manager clears only the failed result view and preserves editable text/local state where possible. | User reopens/restores storage and manually retries; no hidden retry. | Revert Accessor move while Resources remain source-compatible. |
+| Credential session storage | unavailable/corrupt `sessionStorage`, set/get/remove failure | Accessor returns false/failure without a value; Manager publishes absent/replacement-required state and fails closed. | Restore storage/new tab; explicit store/forget action. If removal cannot be proved, user must close the tab. | Restore Home-owned module calls until Manager/Client cutover checkpoint. |
+| Network, CORS proxy, or remote Git | timeout, connection loss, CORS rejection, malformed host response | Accessor maps push to `NetworkUnavailable` or safe `Unknown`; clone/open is an operation failure. Manager preserves local work/review and fixed guidance. | Repair network/CORS and explicitly review/confirm/retry; never automatic. | Restore old names/imports; wire operation names remain unchanged. |
+| Authentication or permission | 401/403/auth rejection or malformed auth response | Accessor returns fixed `CredentialRejected`; Manager invokes forget and replacement-required state. | New credential input, new review, confirmation, and one explicit push. | Compatibility adapter preserves current Home rejection flow until Client cutover. |
+| Non-fast-forward remote | remote advances after review or rejects non-force update | Accessor returns `RemoteAhead`; Manager preserves local HEAD/review, clears confirmation, and renders fixed guidance. | Reconcile remote manually, review again, confirm again; never force or auto-retry. | Roll back Manager/Client wiring without changing JS push implementation. |
+| Cancellation, disposal, or re-entry | canceled interop, navigation during operation, duplicate click, stale completion | Manager serializes mutations and discards stale generations; Accessor returns structured cancellation and disposes only completed module imports. | Caller initiates a new action or a fresh scoped instance after disposal. | Revert the Manager checkpoint as one unit; legacy busy flags remain until cutover. |
+| Malformed interop payload | null envelope, wrong operation, absent message/value, invalid DTO/SHA/ref | Accessor rejects it as an unexpected response with stable `Operation`, `Succeeded=false`, safe `Message`, and credential-free `Diagnostic`; Manager does not mutate success state. | Fix boundary/runtime then manually retry; malformed state is never accepted. | Revert Accessor implementation while retaining compatible Resources/interface. |
+| Unsafe/malformed input | unsupported URL, credential-bearing GitHub origin, parent path, missing path/worktree, invalid commit/review | Client provides presentation validation; Manager checks sequence; Accessor validates trust-boundary input before filesystem/transport and returns operation-specific failure. | Correct input or reopen; no transport for invalid review. | Each layer can revert to the previous compatible caller at its checkpoint. |
+| Secret-bearing external failure | host/error includes PAT, auth header, throwing accessor, or hostile serialization | Accessor allowlists classifications and fixed diagnostics after redaction; Manager/Client never receive or render raw host error. | Forget/replace if auth-related; otherwise repair boundary and manually retry. | Stop migration and revert current checkpoint if any credential-safety suite fails. |
 
-The design introduces no new external dependency. Future failure localization belongs to the Accessor for platform/interop faults, the Manager for workflow/recovery state, and the Client for accessible presentation of safe signals.
+The design introduces no new external dependency. Failure localization belongs to the Accessor for platform/interop faults, the Manager for workflow/recovery state, and the Client for accessible presentation of safe signals. Each checkpoint must fail closed and pass the existing redaction suite before it can become a rollback baseline.
 
 ## Security and trust boundaries
 
@@ -219,33 +328,47 @@ S02/S03 measurement points are operation duration and safe operation/failure-kin
 | Module/asset, filesystem, and storage failure | `browserGitEngineTests.mjs` vendor load and file/status I/O failures; `pushCredentialSessionTests.mjs` storage failures. |
 | Cancellation, disposal, and async re-entry | C# source contract confirms cancellation translation and completed-module disposal; behavioral concurrency/cancellation coverage is an explicit S02/S03 gap. |
 
+The explicit test gaps are implementation-owned rather than silently accepted: **S02** adds C# Accessor cases for module import, malformed envelope, cancellation, and disposal plus Manager workflow cases for duplicate/re-entry, stale completion, cancellation, storage/auth/network mapping, empty state, preserved edits, and rejection-driven credential cleanup. **S03** adds source-contract negative fixtures for every forbidden dependency edge, Resource behavior/credential fields, duplicate interfaces, and surviving legacy names; it also runs the clean build and focused credential UAT. Existing Node/browser cases remain the behavior oracle throughout migration.
+
 `AlmToo/tests/browserGitDesignContractTests.mjs` additionally fails on missing architecture sections, unmapped tracked source surfaces, absent target assignments, changed D010-D013 constraints, missing credential/redaction/migration/testing coverage, incomplete review results, or malformed approval metadata.
 
 ## Migration sequence
 
-The implementation sequence is intentionally high level for T01; T02 must turn each item into buildable and rollback-safe checkpoints without changing behavior:
+S02 executes these ordered, buildable, rollback-safe checkpoints. Before advancing, commit a clean build plus full Node-suite baseline; if a checkpoint fails, revert only that checkpoint because the prior contract remains compiling. Every checkpoint preserves wire operation names, messages, review identity, one-attempt push, local-work preservation, tab-scoped credentials, redaction, and manual retry.
 
-1. Establish data-only Git Resources and keep compatibility with current C# names.
-2. Rename/move `BrowserGitService` and its single interface to the Accessor location; keep JavaScript and static assets Accessor-owned and preserve wire operation names.
-3. Move credential-session interop behind the Accessor while preserving tab-only presence/value rules.
-4. Introduce the concrete `GitWorkspaceManager` and move workflow state/sequencing from Home without changing messages, review confirmation, retry, or failure behavior.
-5. Update DI composition and rewire Clients to the Manager; remove Client-to-Accessor and Git-related Client-to-`IJSRuntime` edges.
-6. Relocate/update tests and asset naming only after each compatibility checkpoint passes the existing suite.
-7. Remove legacy service names only after source-contract, build, Node, and focused browser checks prove no callers remain.
+1. **Resources first.** Move current requests/results/enums unchanged into `Services/Accessors/BrowserGit/Interface/BrowserGitResources.cs`; add `Services/Managers/GitWorkspace/Service/GitWorkspaceState.cs`. Temporarily retain namespace forwarding/global aliases only where needed so every existing Client and service still compiles. Prove records are data-only and run build/full Node. Rollback: restore the original Resource file and aliases without behavior changes.
+2. **Accessor rename and move.** Add `IBrowserGitAccessor` and `BrowserGitAccessor` under `Services/Accessors/BrowserGit/Interface` and `Services/Accessors/BrowserGit/Service`, preserving all operation strings, DTO validation, cancellation, task-cached initialization, redaction, and module disposal. Keep a temporary `IBrowserGitService`/`BrowserGitService` compatibility adapter for old callers. Rename `browserGitEngine.js` only if the import path, asset copier, and tests change atomically; otherwise document the legacy filename as Accessor-owned. Run Accessor tests/build. Rollback: rebind the adapter to legacy implementation.
+3. **Credential integration behind the Accessor.** Import/cache/dispose `pushCredentialSession.js` in `BrowserGitAccessor`; add presence/store/forget methods and make target `PushAsync` retrieve the token internally immediately before the existing JS push. Keep Home on the compatibility surface until all credential tests pass. Rollback: restore Home-owned credential module path and the legacy push-token adapter; never duplicate token storage.
+4. **Concrete Manager extraction.** Add scoped `GitWorkspaceManager` under `Services/Managers/GitWorkspace/Service` and workflow tests. Move one use case and its state at a time in the order open, browse/read, edit/save, status, commit, review/push, credential recovery. During this checkpoint Home may still use the legacy implementation, but the new Manager tests must prove state transitions, mutation serialization, stale-generation rejection, cancellation, result mapping, disposal, and exact credential recovery. Rollback: remove the unreferenced Manager; legacy behavior is untouched.
+5. **DI composition.** Register `IBrowserGitAccessor -> BrowserGitAccessor` and concrete scoped `GitWorkspaceManager` in `Program.cs`; keep the compatibility service registration only while a legacy Client caller exists. Prove one scoped Manager owns one scoped Accessor and no duplicate module owner is created. Rollback: restore prior registrations.
+6. **Client rewiring.** Rewire `Home.razor` atomically to inject only `GitWorkspaceManager`, render `GitWorkspaceState`, dispatch use cases, and subscribe/unsubscribe to state notifications. Child components remain presentation Clients consuming Resources/callbacks. Remove Git-related `IJSRuntime`, Accessor, token retrieval, and orchestration from Home. Run build, Manager/Client contracts, full Node, and focused credential browser UAT. Rollback: restore the legacy Home file and compatibility registrations as a unit.
+7. **Test relocation and asset naming.** Split legacy `homePageContractTests.mjs` expectations into presentation/source rules and Manager workflow tests; update Accessor source paths after the production cutover. Relocate/rename JS or assets only in one atomic patch with `copy-git-browser-assets.mjs`, import constants, package scripts, and tests. Run the entire suite after each move. Rollback: restore prior tracked paths/imports; do not leave dual generated assets.
+8. **Legacy-name removal.** Delete `Services/Git/IBrowserGitService.cs`, `BrowserGitService.cs`, compatibility adapters/aliases, old namespaces, and obsolete Home orchestration only after repository-wide source-contract checks prove zero callers. Run clean Blazor build, full Node suite, architecture checks, and focused browser UAT. Rollback: restore the compatibility adapter, not duplicated logic.
 
-At every checkpoint, preserve a compiling rollback point and run the relevant existing suite. No checkpoint may weaken credential redaction, exact-reviewed push, local-work preservation, or manual-retry behavior.
+A checkpoint cannot be accepted merely because it builds. Its relevant behavior and negative tests must pass, and credential/redaction failure blocks advancement. Temporary compatibility code may delegate across old/new names but may not own workflow, fork implementations, introduce a second service interface beyond the temporary rename bridge, or survive checkpoint 8.
 
 ## Verification strategy
 
-- **Architecture contract:** `node --test AlmToo/tests/browserGitDesignContractTests.mjs` validates the tracked design/source baseline and approval gate without reading `.gsd`, `.planning`, or `.audits`.
-- **Accessor behavior:** `AlmToo/tests/browserGitEngineTests.mjs` and `AlmToo/tests/pushCredentialSessionTests.mjs` protect JS/browser integration, envelopes, failures, push invariants, and credential safety.
-- **Current Client contract:** `AlmToo/tests/homePageContractTests.mjs` protects the existing user-visible flow until Manager workflow tests assume orchestration proof.
-- **Full Node regression:** `npm test --prefix AlmToo` must retain all behavioral suites while adding the architecture contract.
-- **Build:** S02/S03 must run a clean Blazor build after each structural checkpoint.
-- **Browser UAT:** `AlmToo/e2e/credentialSafety.spec.mjs` is focused credential/recovery proof; `AlmToo/e2e/liveGitHubPush.spec.mjs` is opt-in real-remote proof when its fixture is explicitly available.
-- **S03 source enforcement:** add non-brittle checks forbidding Client-to-Accessor, Git-related Client-to-`IJSRuntime`, Manager-to-Manager, Accessor-to-Manager/Engine, platform I/O outside the Accessor, and behavior in Resources.
+- **Architecture contract:** `node --test AlmToo/tests/browserGitDesignContractTests.mjs` validates the tracked design/source baseline, complete target contract, review, and approval gate without reading `.gsd`, `.planning`, or `.audits`.
+- **Accessor behavior:** `AlmToo/tests/browserGitEngineTests.mjs` and `AlmToo/tests/pushCredentialSessionTests.mjs` protect JS/browser integration, envelopes, module/storage/I/O failures, push invariants, and credential safety. S02 adds C# Accessor contract tests around both modules and malformed interop responses.
+- **Manager workflow:** S02 introduces deterministic tests with one substitute `IBrowserGitAccessor` for all state transitions, ordering, duplicate/re-entry, stale completion, cancellation, disposal, error mapping, retry boundaries, and credential-rejection cleanup. This is owned by S02 and must pass before Client cutover.
+- **Client contract:** `AlmToo/tests/homePageContractTests.mjs` protects the current flow; at cutover it must instead assert Manager-only injection, presentation mapping, explicit confirmation, accessibility, fixed recovery messages, and absence of Git `IJSRuntime`/Accessor calls.
+- **Full Node regression:** `npm test --prefix AlmToo` must retain all behavioral suites and the architecture contract at every checkpoint.
+- **Clean build:** S02 and S03 run `dotnet clean AlmToo/AlmToo.csproj && dotnet build AlmToo/AlmToo.csproj --no-restore` (restore first only when required by the environment). Warnings/errors from old namespaces or duplicate registrations block legacy removal.
+- **Browser UAT:** `AlmToo/e2e/credentialSafety.spec.mjs` is required focused credential/recovery proof after Client cutover; `AlmToo/e2e/liveGitHubPush.spec.mjs` remains opt-in real-remote proof when its disposable fixture is explicitly available.
 
-Focused assertion messages are required so a missing section, mapping, decision constraint, review result, or approval field can be repaired without interpreting one aggregate failure.
+### S03 architecture enforcement and final verification
+
+S03 converts the target rules into tracked source-contract checks. Checks inspect production C#/Razor/JS source (not ignored planning artifacts) and fail with the offending path and edge:
+
+1. Client files under `Pages` and repository components must have no `IBrowserGitAccessor`, `BrowserGitAccessor`, legacy `IBrowserGitService`, or Git-related `IJSRuntime` injection/import/invocation; `Home.razor` must call concrete `GitWorkspaceManager` only.
+2. `GitWorkspaceManager` must not import/call another Manager, `IJSRuntime`, browser storage, vendor modules, remote clients, or JS module paths. This is the explicit Manager-to-Manager prohibition; its one integration dependency is `IBrowserGitAccessor`.
+3. The Accessor may depend on `IJSRuntime`, browser Git/credential modules/assets, and Resources, but cannot reference Clients, Managers, or any iDesign Engine. This enforces Accessor ownership of all platform I/O: browser storage/filesystem, credential-session, asset-module, and remote Git I/O is reachable only beneath this Accessor boundary.
+4. Resource source files may contain records/enums/data validation only: no service injection, `IJSRuntime`, module handles, filesystem/network calls, callbacks/events, orchestration methods, or credential fields.
+5. Repository search must find exactly one non-temporary production service interface for Browser Git and no legacy service names after checkpoint 8. JavaScript legacy filename text is allowed only as an Accessor-owned implementation path.
+6. Final executable proof is clean Blazor build, full `npm test --prefix AlmToo`, focused credential browser UAT, and opt-in live push UAT when fixtures exist. Source-contract success alone cannot substitute for build or behavior proof.
+
+Focused assertion messages are required so a missing section, mapping, forbidden dependency, incomplete review, malformed approval field, or violating source path can be repaired without interpreting one aggregate failure.
 
 ## Risks and extension points
 
@@ -261,7 +384,7 @@ Focused assertion messages are required so a missing section, mapping, decision 
 
 ## Embedded iDesign review
 
-This is the required review for the T01 source baseline and target direction. It reviews the proposed architecture, while recording present Client-to-Accessor and Client-to-JS edges as migration gaps rather than approving them as target dependencies.
+This is the completed T02 review of the implementation-ready target and migration proof. It copies every applicable section from `docs/IDESIGN-REVIEW.md`; present Client-to-Accessor and Client-to-JS edges are time-bounded S02 migration gaps, not approved target dependencies.
 
 ### 1. Layer assignments
 
@@ -320,7 +443,7 @@ This is the required review for the T01 source baseline and target direction. It
 - [x] Manager behavior has an explicit S02 workflow-test destination.
 - [x] Client and Resource behavior is covered by source contracts and browser UAT.
 
-**Result:** PASS — verification is assigned to owning boundaries; the missing Manager suite is planned with the extraction, not silently claimed as current evidence.
+**Result:** PASS — verification is assigned to owning boundaries. Manager workflow coverage is explicitly deferred to owner **S02 implementation**, required before Client cutover; S03 owns final source enforcement and cross-layer proof. No future evidence is claimed as current.
 
 ### 6. Exceptions
 
