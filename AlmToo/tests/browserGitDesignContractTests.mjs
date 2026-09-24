@@ -5,334 +5,240 @@ import { test } from 'node:test';
 const designUrl = new URL('../Accessors/Git/DESIGN.md', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
 
-const trackedSources = [
-  ['AlmToo/Pages/Home.razor', 'Client'],
-  ['AlmToo/Components/RepositoryFileBrowser.razor', 'Client'],
-  ['AlmToo/Components/RepositoryChangedFiles.razor', 'Client'],
-  ['AlmToo/Components/RepositoryCommitForm.razor', 'Client'],
-  ['AlmToo/Program.cs', 'Resource'],
-  ['AlmToo/Services/Git/IBrowserGitService.cs', 'Accessor'],
-  ['AlmToo/Services/Git/BrowserGitService.cs', 'Accessor'],
-  ['AlmToo/Services/Git/GitOperationResult.cs', 'Resource'],
-  ['AlmToo/wwwroot/js/browserGitEngine.js', 'Accessor'],
-  ['AlmToo/wwwroot/js/pushCredentialSession.js', 'Accessor'],
-  ['AlmToo/tools/copy-git-browser-assets.mjs', 'Resource'],
-  ['AlmToo/package.json', 'Resource'],
-  ['AlmToo/tests/browserGitEngineTests.mjs', 'Accessor'],
-  ['AlmToo/tests/pushCredentialSessionTests.mjs', 'Accessor'],
-  ['AlmToo/tests/homePageContractTests.mjs', 'Client'],
-  ['AlmToo/tests/browserGitDesignContractTests.mjs', 'Resource'],
-  ['AlmToo/e2e/credentialSafety.spec.mjs', 'Resource'],
-  ['AlmToo/e2e/liveGitHubPush.spec.mjs', 'Resource']
-];
-
-const sourceUrls = trackedSources
-  .filter(([path]) => !path.endsWith('browserGitDesignContractTests.mjs'))
-  .map(([path]) => new URL(`../../${path}`, import.meta.url));
-
 async function readDesign() {
   return readFile(designUrl, 'utf8');
 }
 
-function section(source, heading) {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const endOfDocument = '(?![\\s\\S])';
-  return source.match(new RegExp(`^## ${escaped}[ \\t]*\\r?\\n([\\s\\S]*?)(?=^##[ \\t]|${endOfDocument})`, 'm'))?.[1] ?? '';
+function extractHeading(document, marker, heading, stoppingPrefixes) {
+  const lines = document.split('\n');
+  const start = lines.findIndex(line => line === `${marker} ${heading}`);
+  assert.notEqual(start, -1, `design must contain "${marker} ${heading}"`);
+
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (stoppingPrefixes.some(prefix => lines[index].startsWith(prefix))) {
+      end = index;
+      break;
+    }
+  }
+
+  return lines.slice(start + 1, end).join('\n');
 }
 
-function tableValue(source, field) {
-  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return source.match(new RegExp(`^\\| ${escaped} \\| ([^|]+) \\|$`, 'mi'))?.[1]?.trim() ?? '';
+function section(document, heading) {
+  return extractHeading(document, '##', heading, ['## ']);
 }
 
-test('design contract reads only explicit tracked project sources', async () => {
-  const forbidden = /(?:^|[/\\])(?:\.gsd|\.planning|\.audits)(?:[/\\]|$)/;
-  for (const url of [designUrl, packageUrl, ...sourceUrls]) {
-    assert.doesNotMatch(url.pathname, forbidden, `design contract read target must be tracked project source: ${url.pathname}`);
-  }
+function subsection(document, heading) {
+  return extractHeading(document, '###', heading, ['### ', '## ']);
+}
 
-  await Promise.all([designUrl, packageUrl, ...sourceUrls].map(url => readFile(url)));
-});
-
-test('design contains every durable architecture section', async () => {
+test('design is scoped to the Browser Git Resource Access contract', async () => {
   const design = await readDesign();
+
   for (const heading of [
-    'Purpose and scope',
-    'Design status and approval gate',
-    'Current-state inventory',
-    'Current call and dependency graph',
-    'Target layer map',
-    'Responsibilities and dependency rules',
-    'Contracts',
-    'Target workflow sequences',
-    'Current workflow and data flows',
-    'Failure Modes',
-    'Security and trust boundaries',
-    'Load Profile',
-    'Negative Tests',
-    'Migration sequence',
-    'Verification strategy',
-    'Risks and extension points',
-    'Embedded iDesign review'
+    'Status and approval',
+    'Contract ownership',
+    'Operation facets',
+    'Operations',
+    'DTO catalogue',
+    'Contract invariants',
+    'iDesign review'
   ]) {
-    assert.ok(section(design, heading).trim().length > 40, `DESIGN.md section "${heading}" must be present and populated`);
-  }
-});
-
-test('current source inventory maps every affected tracked surface to a target layer', async () => {
-  const inventory = section(await readDesign(), 'Current-state inventory');
-
-  for (const [path, expectedLayer] of trackedSources) {
-    const row = inventory.split('\n').find(line => line.includes(`\`${path}\``));
-    assert.ok(row, `current-state inventory must map ${path}`);
-    assert.match(row, new RegExp(`\\b${expectedLayer}\\b`, 'i'), `${path} must have intended ${expectedLayer} ownership`);
+    section(design, heading);
   }
 
-  assert.match(
-    inventory,
-    /JavaScript modules are implementation details of the \*\*Accessor boundary\*\*, not separate workflow services/i,
-    'inventory must classify both JavaScript modules as private Accessor implementation details');
+  assert.doesNotMatch(design, /^## Repository workspace operations$/m);
+  assert.doesNotMatch(design, /RepositoryWorkspaceManager|RepositoryWorkspaceState/);
+  assert.doesNotMatch(design, /Home\.razor/);
+  assert.match(design, /Manager workflows, Manager state, Client behavior[\s\S]*do not belong in this contract/);
+  assert.ok(design.length < 25_000, 'Accessor contract should remain concise');
 });
 
-test('target map and dependency rules enforce D010 through D013', async () => {
+test('approval gate requires a genuine human approval record', async () => {
+  const approval = section(await readDesign(), 'Status and approval');
+
+  for (const field of ['Design status', 'Implementation authorization', 'Reviewer', 'Review date', 'Source revision', 'Disposition']) {
+    assert.match(approval, new RegExp(`\\| ${field} \\|`), `approval must record ${field}`);
+  }
+
+  assert.match(approval, /Design status \| Approved/);
+  assert.match(approval, /Implementation authorization \| Authorized for S02/);
+  assert.match(approval, /Reviewer \| Project owner \(human reviewer\)/);
+  assert.match(approval, /Review date \| \d{4}-\d{2}-\d{2}/);
+  assert.match(approval, /Source revision \| Git `[0-9a-f]{40}`; reviewed design SHA-256 `[0-9a-f]{64}`/);
+  assert.match(approval, /Disposition \| Approved as currently designed/);
+  assert.doesNotMatch(approval, /Not recorded|Pending human approval/);
+  assert.match(approval, /Automated checks cannot approve/i);
+});
+
+test('generic contracts follow the iDesign namespace nomenclature without a Context segment', async () => {
   const design = await readDesign();
-  const target = section(design, 'Target layer map');
-  const rules = section(design, 'Responsibilities and dependency rules');
+  const ownership = section(design, 'Contract ownership');
+  const catalogue = section(design, 'DTO catalogue');
 
-  assert.match(target, /`GitWorkspaceManager` \| Manager \(concrete\)/, 'target must name one concrete GitWorkspaceManager');
-  assert.match(target, /`IBrowserGitAccessor` \| Accessor interface/, 'target must name the single Accessor interface');
-  assert.match(target, /`BrowserGitAccessor` \| Accessor implementation/, 'target must name the renamed Accessor implementation');
-  assert.match(target, /Git requests\/results\/state records and enums \| Resource/, 'target must assign Git data contracts to Resources');
-  assert.match(target, /`browserGitEngine\.js` and `pushCredentialSession\.js` \| Accessor implementation detail/, 'target must keep both JavaScript modules inside the Accessor boundary');
+  assert.match(ownership, /Git interface \| `AlmToo\.Accessor\.BrowserGitAccessor\.Interface\.IBrowserGitAccessor`/);
+  assert.match(ownership, /File interface \| `AlmToo\.Accessor\.BrowserGitAccessor\.Interface\.IBrowserFileAccessor`/);
+  assert.match(ownership, /Service \| `AlmToo\.Accessor\.BrowserGitAccessor\.Service\.BrowserGitAccessor`/);
+  assert.match(ownership, /DTO namespace \| `AlmToo\.Accessor\.BrowserGitAccessor\.Interface`/);
+  assert.match(ownership, /DTOs are data-transfer contracts adjacent to the Resource Access interfaces/);
+  assert.match(catalogue, /generic `AlmToo\.Accessor\.BrowserGitAccessor\.Interface` namespace/);
+  assert.match(catalogue, /No Context segment is present because the application currently has only the generic UI context/);
 
-  for (const decision of ['D010', 'D011', 'D012', 'D013']) {
-    assert.match(rules, new RegExp(`\\| ${decision} \\|`), `${decision} constraint must be recorded`);
-  }
-  assert.match(rules, /Clients do not call the Accessor or Git-related `IJSRuntime` directly/i, 'D011 Client dependency prohibition must be explicit');
-  assert.match(rules, /Retain exactly one Accessor interface/i, 'D012 single-interface constraint must be explicit');
-  assert.match(rules, /Manager concrete and reject a pass-through Manager interface/i, 'D012 concrete Manager constraint must be explicit');
-  assert.match(rules, /`AlmToo\/Accessors\/Git\/DESIGN\.md`[\s\S]*explicit human approval/i, 'D013 location and approval constraint must be explicit');
+  assert.doesNotMatch(design, /AlmToo\.Accessors(?:\.|`)/);
+  assert.doesNotMatch(design, /AlmToo\.Resources(?:\.|`)/);
+  assert.doesNotMatch(design, /Resources\/Git|Resources\.Git/);
+  assert.doesNotMatch(design, /^## Resource catalogue$/m);
+  assert.match(design, /do not constitute a separate Resource layer or namespace/i);
 });
 
-test('design preserves current workflows and result observability', async () => {
-  const design = await readDesign();
-  const flows = section(design, 'Current workflow and data flows');
-  for (const heading of [
-    'Clone or open and initialization',
-    'Browse and read',
-    'Edit and write',
-    'Status refresh',
-    'Commit',
-    'Push review and confirmation',
-    'Session credential acquisition, forget, and retry',
-    'Cancellation, module lifetime, disposal, and result propagation'
+test('operation facets separate Git and file caller capabilities on one Service', async () => {
+  const facets = section(await readDesign(), 'Operation facets');
+
+  for (const facet of [
+    'Repository workspace',
+    'Working tree',
+    'Reviewed push',
+    'Credential storage',
+    'File query',
+    'File update',
+    'Lifetime'
   ]) {
-    assert.match(flows, new RegExp(`^### ${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), `workflow must document ${heading}`);
+    assert.match(facets, new RegExp(`\\| ${facet} \\|`), `facet ${facet} must be described`);
   }
 
-  const contracts = section(design, 'Contracts');
-  for (const signal of ['Operation', 'Succeeded', 'Message', 'Diagnostic', 'FailureKind']) {
-    assert.match(contracts, new RegExp(`\\b${signal}\\b`), `contracts must preserve GitOperationResult.${signal}`);
-  }
-  assert.match(contracts, /initialization[\s\S]*idempotent/i, 'contracts must cover idempotent initialization');
-  assert.match(contracts, /disposed asynchronously|successfully imported modules[\s\S]*disposed/i, 'contracts must cover module disposal');
+  assert.match(facets, /`IBrowserGitAccessor`/);
+  assert.match(facets, /`IBrowserFileAccessor`/);
+  assert.match(facets, /Service \| Lifetime/);
 });
 
-test('target contracts define concrete ownership, signatures, and every ordered use-case flow', async () => {
-  const design = await readDesign();
-  const contracts = section(design, 'Contracts');
-  const flows = section(design, 'Target workflow sequences');
+test('Accessor operations hide initialization and state text-only file semantics', async () => {
+  const operations = section(await readDesign(), 'Operations');
 
-  for (const targetPath of [
-    'Services/Accessors/BrowserGit/Interface/IBrowserGitAccessor.cs',
-    'Services/Accessors/BrowserGit/Interface/BrowserGitResources.cs',
-    'Services/Accessors/BrowserGit/Service/BrowserGitAccessor.cs',
-    'Services/Managers/GitWorkspace/Service/GitWorkspaceManager.cs',
-    'Services/Managers/GitWorkspace/Service/GitWorkspaceState.cs'
-  ]) {
-    assert.match(contracts, new RegExp(targetPath.replaceAll('/', '\\/')), `target contracts must identify ${targetPath}`);
-  }
-
-  assert.match(contracts, /only retained service interface/i, 'target must retain exactly one production service interface');
-  assert.match(contracts, /scoped concrete service[\s\S]*no Manager interface/i, 'Manager must stay concrete without a pass-through interface');
   for (const operation of [
-    'CloneOrOpenAsync', 'ListFilesAsync', 'ReadTextFileAsync', 'WriteTextFileAsync',
-    'GetStatusAsync', 'CommitAsync', 'InspectPushAsync', 'HasCredentialAsync',
-    'StoreCredentialAsync', 'ForgetCredentialAsync', 'PushAsync'
+    'CloneOrOpenAsync',
+    'FilterFilesAsync',
+    'UpdateFilesAsync',
+    'GetStatusAsync',
+    'CommitAsync',
+    'InspectPushAsync',
+    'HasCredentialAsync',
+    'StoreCredentialAsync',
+    'ForgetCredentialAsync',
+    'PushAsync',
+    'DisposeAsync'
   ]) {
-    assert.match(contracts, new RegExp(`\\b${operation}\\b`), `Accessor contract must define ${operation}`);
-  }
-  for (const useCase of [
-    'OpenRepositoryAsync', 'BrowseAsync', 'SelectFileAsync', 'UpdateEditableContent',
-    'SaveSelectedFileAsync', 'RefreshStatusAsync', 'CommitAsync', 'ReviewPushAsync',
-    'StoreCredentialAsync', 'ForgetCredentialAsync', 'PushReviewedCommitAsync'
-  ]) {
-    assert.match(contracts, new RegExp(`\\b${useCase}\\b`), `Manager contract must define ${useCase}`);
-  }
-  for (const invariant of ['state ownership', 'at most one', 'generation', 'cancellation', 'retry ownership', 'error translation', 'credential']) {
-    assert.match(contracts, new RegExp(invariant, 'i'), `contracts must specify ${invariant}`);
+    assert.match(operations, new RegExp('\\| `' + operation + '`'), `Accessor contract must describe ${operation}`);
   }
 
-  for (const heading of ['Clone or open', 'Browse and read', 'Edit and save', 'Status', 'Commit', 'Reviewed push', 'Credential recovery']) {
-    assert.match(flows, new RegExp(`^### ${heading.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}$`, 'm'), `target workflow must define ordered ${heading} flow`);
-  }
-  assert.match(flows, /at most one non-force push|one non-force push/i, 'reviewed push must remain a single non-force attempt');
-  assert.match(flows, /new review\/confirmation|new review[\s\S]*confirmation/i, 'push recovery must require a new explicit review and confirmation');
-  assert.match(flows, /never enter Manager state, Resources, events, markup, messages, diagnostics, logs, or serialized errors/i, 'credential recovery must enumerate prohibited secret sinks');
+  assert.match(operations, /`initialize` is not a public operation/);
+  assert.match(operations, /privately and idempotently imports[\s\S]*initializes browser storage/i);
+  assert.match(operations, /invalid[\s\S]*oversized content fails/i);
+  assert.match(operations, /force-with-lease/i);
 });
 
-test('failure, trust, credential, redaction, and load contracts are explicit', async () => {
-  const design = await readDesign();
-  const failures = section(design, 'Failure Modes');
-  for (const boundary of [
-    'JavaScript module or vendor asset load',
-    'Browser Git storage/filesystem',
-    'Credential session storage',
-    'Network, CORS proxy, or remote Git',
-    'Authentication or permission',
-    'Non-fast-forward remote',
-    'Cancellation, disposal, or re-entry',
-    'Malformed interop payload',
-    'Secret-bearing external failure'
-  ]) {
-    assert.match(failures, new RegExp(boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), `failure model must cover ${boundary}`);
-  }
+test('interface signatures match the separated Git and file operation surfaces', async () => {
+  const operations = section(await readDesign(), 'Operations');
+  const signatureBlock = operations.match(/```csharp([\s\S]*?)```/)?.[1];
+  assert.ok(signatureBlock, 'Accessor contract must include a C# signature block');
 
-  const security = section(design, 'Security and trust boundaries');
-  for (const subject of ['Repository URL', 'repository paths', 'repository content', 'commit message/author metadata', 'session credentials', 'Browser storage', 'remote Git']) {
-    assert.match(security, new RegExp(subject.replace('/', '\\/'), 'i'), `security model must classify ${subject}`);
-  }
-  for (const prohibition of ['persist', 'logs', 'rendered markup', 'diagnostics', 'serialized errors']) {
-    assert.match(security, new RegExp(prohibition, 'i'), `credential safety must prohibit leakage through ${prohibition}`);
-  }
-  assert.match(security, /redacted|redaction/i, 'security model must require redacted failures');
-
-  const load = section(design, 'Load Profile');
-  for (const axis of ['browser memory', 'repository size/file count', 'interop payload', 'status/diff', 'remote latency', '10x']) {
-    assert.match(load, new RegExp(axis.replace('/', '\\/'), 'i'), `load profile must cover ${axis}`);
-  }
-  assert.match(load, /does not invent|No supported numeric/i, 'load profile must not fabricate numeric limits');
+  assert.match(signatureBlock, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface/);
+  assert.match(signatureBlock, /public interface IBrowserGitAccessor : IAsyncDisposable/);
+  assert.match(signatureBlock, /public interface IBrowserFileAccessor/);
+  assert.match(signatureBlock, /FilterFilesAsync\([\s\S]*FilterFilesRequest request/);
+  assert.match(signatureBlock, /UpdateFilesAsync\([\s\S]*UpdateFilesRequest request/);
+  assert.equal((signatureBlock.match(/ValueTask</g) ?? []).length, 10);
+  assert.equal((signatureBlock.match(/ValueTask<GitOperationResult>/g) ?? []).length, 0);
+  assert.doesNotMatch(signatureBlock, /ListFilesAsync|ReadTextFileAsync|WriteTextFileAsync/);
+  assert.doesNotMatch(signatureBlock, /InitializeAsync/);
+  assert.doesNotMatch(signatureBlock, /personalAccessToken|password/i);
 });
 
-test('negative, migration, and verification coverage is implementation-ready', async () => {
-  const design = await readDesign();
-  const negatives = section(design, 'Negative Tests');
-  for (const scenario of [
-    'Malformed/unsupported repository',
-    'Unsafe/missing repository path',
-    'Absent repository/worktree',
-    'Invalid commit input and no changes',
-    'Absent/invalid/corrupt credential',
-    'Rejected/non-fast-forward push',
-    'Secret-bearing/throwing/malformed external failures',
-    'Cancellation, disposal, and async re-entry'
+test('DTO catalogue documents every Accessor boundary type', async () => {
+  const catalogue = section(await readDesign(), 'DTO catalogue');
+
+  for (const dto of [
+    'GitOperationResult',
+    'GitOperationFailureKind',
+    'RepositoryOpenRequest',
+    'RepositoryInfo',
+    'FilterFilesRequest',
+    'FileFilterKind',
+    'FilterFilesResult',
+    'UpdateFilesRequest',
+    'TextFileUpdate',
+    'UpdateFilesResult',
+    'RepositoryFileEntry',
+    'TextFileContent',
+    'ChangedFile',
+    'CommitRequest',
+    'CommitInfo',
+    'PushReview',
+    'PushRequest',
+    'PushResult'
   ]) {
-    assert.match(negatives, new RegExp(scenario.replaceAll('/', '\\/'), 'i'), `negative-test matrix must cover ${scenario}`);
+    assert.match(catalogue, new RegExp('^#{3,4} `' + dto + '(?:<T>)?`', 'm'), `DTO catalogue must describe ${dto}`);
   }
-  assert.match(negatives, /S02[\s\S]*module import[\s\S]*re-entry[\s\S]*credential cleanup/i, 'negative-test gaps must have an S02 owner and concrete scope');
-  assert.match(negatives, /S03[\s\S]*forbidden dependency[\s\S]*legacy names/i, 'architecture-negative gaps must have an S03 owner and concrete scope');
 
-  const migration = section(design, 'Migration sequence');
-  const checkpoints = [
-    'Resources first',
-    'Accessor rename and move',
-    'Credential integration behind the Accessor',
-    'Concrete Manager extraction',
-    'DI composition',
-    'Client rewiring',
-    'Test relocation and asset naming',
-    'Legacy-name removal'
-  ];
-  let previousIndex = -1;
-  for (const checkpoint of checkpoints) {
-    const index = migration.indexOf(`**${checkpoint}.**`);
-    assert.ok(index > previousIndex, `migration checkpoint ${checkpoint} must exist in order`);
-    previousIndex = index;
+  for (const enumValue of ['CredentialRejected', 'RemoteAhead', 'NetworkUnavailable', 'UnsupportedRef', 'Unknown']) {
+    assert.match(catalogue, new RegExp('\\| `' + enumValue + '` \\|'));
   }
-  assert.match(migration, /rollback/gi, 'migration must define rollback behavior');
-  assert.ok((migration.match(/Rollback:/g) ?? []).length >= checkpoints.length, 'every migration checkpoint must name its rollback');
-  assert.match(migration, /temporary compatibility[\s\S]*may not[\s\S]*survive checkpoint 8/i, 'temporary compatibility must be bounded and removable');
-  assert.match(migration, /full Node|full `npm test --prefix AlmToo`/i, 'every migration phase must preserve the behavioral suite');
-
-  const verification = section(design, 'Verification strategy');
-  for (const proof of ['browserGitDesignContractTests.mjs', 'browserGitEngineTests.mjs', 'pushCredentialSessionTests.mjs', 'homePageContractTests.mjs', 'npm test --prefix AlmToo', 'dotnet build', 'credentialSafety.spec.mjs', 'liveGitHubPush.spec.mjs']) {
-    assert.match(verification, new RegExp(proof.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), `verification strategy must retain ${proof}`);
-  }
-  for (const prohibition of ['Client files', 'Manager-to-Manager', 'platform I/O', 'Resource source files', 'exactly one', 'clean Blazor build']) {
-    assert.match(verification, new RegExp(prohibition, 'i'), `S03 enforcement must cover ${prohibition}`);
-  }
-  assert.match(verification, /Client[\s\S]*Git-related `IJSRuntime`/i, 'S03 must prohibit Client Git interop');
-  assert.match(verification, /Accessor[\s\S]*cannot reference Clients, Managers/i, 'S03 must enforce Accessor dependency direction');
 });
 
-test('embedded iDesign review is complete and has no unexplained failure', async () => {
-  const review = section(await readDesign(), 'Embedded iDesign review');
+test('DTO semantics prevent secret and binary-content ambiguity', async () => {
+  const catalogue = section(await readDesign(), 'DTO catalogue');
+
+  assert.match(catalogue, /`Message`[\s\S]*safe to render/i);
+  assert.match(catalogue, /`Diagnostic`[\s\S]*must never render it/i);
+  assert.match(catalogue, /`Value` is meaningful only when `Succeeded` is true/i);
+  assert.match(catalogue, /Invalid UTF-8 fails rather than silently replacing bytes/i);
+  assert.match(catalogue, /General binary access requires separate byte-oriented operations and DTOs/i);
+});
+
+test('invariants cover lifecycle, cancellation, paths, push, and credentials', async () => {
+  const invariants = section(await readDesign(), 'Contract invariants');
+
   for (const heading of [
-    '1. Layer assignments',
-    '2. Dependency direction',
-    '3. Interface justification',
-    '4. Cohesion and decomposition',
-    '5. Verification placement',
-    '6. Exceptions',
-    'Compliance statement'
+    'Initialization and lifetime',
+    'Cancellation',
+    'Paths and editable text',
+    'Push coordinates',
+    'Credentials and safe failures'
   ]) {
-    assert.match(review, new RegExp(`^### ${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), `embedded iDesign review must include ${heading}`);
+    subsection(invariants, heading);
   }
 
-  assert.equal((review.match(/\*\*Result:\*\* PASS/g) ?? []).length, 5, 'all five applicable iDesign review result rows must PASS');
-  assert.match(review, /### 6\. Exceptions\s+\nNone\./, 'review exceptions must explicitly be None or documented');
-  assert.doesNotMatch(review, /\*\*(?:Result|Overall result):\*\* FAIL\b/, 'embedded review must contain no unexplained FAIL result');
-  assert.match(review, /\*\*Overall result:\*\* PASS/, 'embedded iDesign review must have a PASS overall result');
-  assert.match(review, /single Accessor interface protects the JavaScript\/browser platform boundary[\s\S]*Manager stays concrete because an interface would be pass-through/i, 'D012 interface justification must name the boundary, substitution seam, and concrete Manager rationale');
+  assert.match(invariants, /Initialization is private, lazy, idempotent/i);
+  assert.match(invariants, /Cancellation is forwarded/i);
+  assert.match(invariants, /`\.\.`[\s\S]*encoded traversal[\s\S]*rejected/i);
+  assert.match(invariants, /force-with-lease/i);
+  assert.match(invariants, /Credentials never enter DTOs, instance fields, rendered markup, URLs, logs, diagnostics, exception text/i);
+  assert.match(invariants, /Failed pushes are never replayed automatically/i);
 });
 
-test('approval metadata distinguishes pending review from genuine approval', async () => {
-  const approval = section(await readDesign(), 'Design status and approval gate');
-  const status = tableValue(approval, 'Design status');
-  const authorization = tableValue(approval, 'Implementation authorization');
-  const reviewer = tableValue(approval, 'Reviewer');
-  const reviewDate = tableValue(approval, 'Review date');
-  const sourceRevision = tableValue(approval, 'Source revision');
-  const disposition = tableValue(approval, 'Disposition');
+test('embedded iDesign review has no unexplained failure', async () => {
+  const review = section(await readDesign(), 'iDesign review');
 
-  assert.ok(status, 'approval gate must record Design status');
-  assert.ok(authorization, 'approval gate must record Implementation authorization');
-  assert.ok(reviewer, 'approval gate must record Reviewer');
-  assert.ok(reviewDate, 'approval gate must record Review date');
-  assert.ok(sourceRevision, 'approval gate must record Source revision');
-  assert.ok(disposition, 'approval gate must record Disposition');
-
-  if (/^Pending human approval$/i.test(status)) {
-    assert.match(authorization, /^Blocked$/i, 'pending human approval must keep implementation blocked');
-    assert.match(disposition, /^Pending human approval$/i, 'pending status must have a pending disposition');
-    for (const [field, value] of [['Reviewer', reviewer], ['Review date', reviewDate], ['Source revision', sourceRevision]]) {
-      assert.match(value, /^Not recorded$/i, `pending approval ${field} must honestly remain Not recorded`);
-    }
-  } else if (/^Approved$/i.test(status)) {
-    assert.match(authorization, /^Granted$/i, 'approved design must explicitly grant implementation authorization');
-    assert.match(disposition, /^Approved$/i, 'approved design must have an approved disposition');
-    for (const [field, value] of [['Reviewer', reviewer], ['Review date', reviewDate], ['Source revision', sourceRevision]]) {
-      assert.doesNotMatch(value, /^(?:Not recorded|Pending|TBD|N\/A)$/i, `approved design requires a real ${field}`);
-    }
-    assert.match(reviewDate, /^\d{4}-\d{2}-\d{2}$/, 'approved design review date must be ISO YYYY-MM-DD');
-  } else {
-    assert.match(status, /^Rejected$/i, 'design status must be Pending human approval, Approved, or Rejected');
-    assert.match(authorization, /^Blocked$/i, 'rejected design must keep implementation blocked');
+  for (const check of ['Layer assignment', 'Dependency direction', 'Interface justification', 'Cohesion', 'Failure ownership']) {
+    assert.match(review, new RegExp(`\\| ${check} \\| PASS \\|`), `${check} must pass`);
   }
 
-  assert.match(approval, /Passing automated contract tests proves document completeness only; it never grants implementation authorization/i, 'approval gate must not treat automated success as human approval');
+  assert.match(review, /DTOs are adjacent contract data, not a separate service layer/);
+  assert.match(review, /Managers or Engines may call the Accessor/);
+  assert.match(review, /Exceptions \| None/);
+  assert.doesNotMatch(review, /\| FAIL \|/);
 });
 
-test('package test script includes the design contract without dropping behavioral suites', async () => {
+test('package test script includes the design contract and behavioral suites', async () => {
   const packageJson = JSON.parse(await readFile(packageUrl, 'utf8'));
-  const script = packageJson.scripts?.test ?? '';
+  const testScript = packageJson.scripts?.test ?? '';
 
   for (const suite of [
-    'tests/browserGitEngineTests.mjs',
-    'tests/pushCredentialSessionTests.mjs',
-    'tests/homePageContractTests.mjs',
-    'tests/browserGitDesignContractTests.mjs'
+    'browserGitEngineTests.mjs',
+    'pushCredentialSessionTests.mjs',
+    'homePageContractTests.mjs',
+    'browserGitDesignContractTests.mjs'
   ]) {
-    assert.match(script, new RegExp(suite.replaceAll('.', '\\.')), `npm test must include ${suite}`);
+    assert.match(testScript, new RegExp(suite.replaceAll('.', '\\.')), `npm test must include ${suite}`);
   }
 });

@@ -8,7 +8,7 @@ const vendorScripts = [
 const workspaceRoot = '/almtoo-workspaces';
 const corsProxy = 'https://cors.isomorphic-git.org';
 const maxEditableTextBytes = 1024 * 1024;
-const textDecoder = new TextDecoder('utf-8', { fatal: false });
+const textDecoder = new TextDecoder('utf-8', { fatal: true });
 const textEncoder = new TextEncoder();
 
 let dependenciesPromise;
@@ -123,6 +123,12 @@ export async function readTextFile(path) {
     const relativePath = normalizeRepositoryPath(requireText(path, 'path'));
     const filePath = joinRepositoryPath(dir, relativePath);
     const contentBytes = await fs.promises.readFile(filePath);
+    const sizeBytes = typeof contentBytes === 'string'
+      ? textEncoder.encode(contentBytes).byteLength
+      : contentBytes.byteLength;
+    if (!isEditableTextPath(relativePath, sizeBytes)) {
+      throw new Error('The requested file is not an allowlisted text file within the 1 MiB limit.');
+    }
     const content = typeof contentBytes === 'string'
       ? contentBytes
       : textDecoder.decode(contentBytes);
@@ -131,7 +137,7 @@ export async function readTextFile(path) {
       path: relativePath,
       content,
       encoding: 'utf-8',
-      sizeBytes: typeof contentBytes === 'string' ? textEncoder.encode(contentBytes).byteLength : contentBytes.byteLength
+      sizeBytes
     });
   } catch (error) {
     return failure(operation, 'The file could not be read from browser-local storage.', error);
@@ -144,11 +150,16 @@ export async function writeTextFile(path, content) {
   try {
     const { fs, dir } = await getActiveWorkspace(operation);
     const relativePath = normalizeRepositoryPath(requireText(path, 'path'));
+    const text = requireString(content, 'content');
+    const encoded = textEncoder.encode(text);
+    if (!isEditableTextPath(relativePath, encoded.byteLength)) {
+      throw new Error('The requested file is not an allowlisted text file within the 1 MiB limit.');
+    }
     const filePath = joinRepositoryPath(dir, relativePath);
     const parentPath = filePath.slice(0, filePath.lastIndexOf('/'));
 
     await mkdirp(fs, parentPath);
-    await fs.promises.writeFile(filePath, content ?? '', 'utf8');
+    await fs.promises.writeFile(filePath, text, 'utf8');
 
     return success(operation, 'The file was written to browser-local storage.');
   } catch (error) {
@@ -499,12 +510,21 @@ async function mkdirp(fs, path) {
   }
 }
 
+function requireString(value, name) {
+  if (typeof value !== 'string') {
+    throw new Error(`${name} must be text.`);
+  }
+
+  return value;
+}
+
 function requireText(value, name) {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+  const text = requireString(value, name);
+  if (text.trim().length === 0) {
     throw new Error(`${name} is required.`);
   }
 
-  return value.trim();
+  return text.trim();
 }
 
 function sanitizeWorkspaceName(workspaceName) {
@@ -517,15 +537,21 @@ function sanitizeWorkspaceName(workspaceName) {
 }
 
 function normalizeRepositoryPath(path) {
-  const normalized = path.replaceAll('\\', '/').trim();
-  const withLeadingSlash = normalized.startsWith('/') ? normalized : `/${normalized}`;
-  const segments = withLeadingSlash.split('/').filter(Boolean);
-
-  if (segments.some((segment) => segment === '..')) {
-    throw new Error('Repository paths cannot contain parent directory segments.');
+  const normalized = path.trim();
+  if (normalized !== path || !normalized.startsWith('/') || normalized.includes('\\') || normalized.includes('%') || /[\0\r\n]/u.test(normalized)) {
+    throw new Error('Repository paths must be normalized repository-relative paths.');
   }
-
-  return segments.length === 0 ? '/' : `/${segments.join('/')}`;
+  if (normalized === '/') {
+    return normalized;
+  }
+  if (normalized.endsWith('/')) {
+    throw new Error('Repository paths cannot contain empty segments.');
+  }
+  const segments = normalized.slice(1).split('/');
+  if (segments.some((segment) => segment.length === 0 || segment.trim().length === 0 || segment === '.' || segment === '..')) {
+    throw new Error('Repository paths cannot contain empty, current, or parent directory segments.');
+  }
+  return `/${segments.join('/')}`;
 }
 
 function joinRepositoryPath(root, relativePath) {
@@ -537,8 +563,8 @@ function isEditableTextPath(name, sizeBytes) {
     return false;
   }
 
-  return /\.(cs|css|csv|gitignore|html|js|json|md|razor|sln|svg|txt|xml|yaml|yml)$/i.test(name)
-    || /^[A-Z0-9_-]+$/i.test(name);
+  return /\.(cjs|cs|csproj|css|csv|go|html|ini|java|js|json|jsx|markdown|md|mjs|py|razor|rs|scss|sh|sln|svg|toml|ts|tsx|txt|xml|yaml|yml)$/i.test(name)
+    || /^(README|LICENSE|Dockerfile|Makefile|\.gitignore|\.editorconfig)$/i.test(name);
 }
 
 function mapChangeKind(head, workdir, stage) {

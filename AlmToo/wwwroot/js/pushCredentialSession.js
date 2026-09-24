@@ -8,10 +8,10 @@ function getSessionStorage() {
   }
 }
 
-export function hasCredential() {
+export function credentialPresence() {
   const storage = getSessionStorage();
   if (!storage) {
-    return false;
+    return -1;
   }
 
   try {
@@ -20,13 +20,17 @@ export function hasCredential() {
       if (credential !== null) {
         storage.removeItem(credentialStorageKey);
       }
-      return false;
+      return 0;
     }
 
-    return true;
+    return 1;
   } catch {
-    return false;
+    return -1;
   }
+}
+
+export function hasCredential() {
+  return credentialPresence() === 1;
 }
 
 export function storeCredential(credential) {
@@ -73,7 +77,7 @@ export function getCredentialForPush() {
 export function forgetCredential() {
   const storage = getSessionStorage();
   if (!storage) {
-    return true;
+    return false;
   }
 
   try {

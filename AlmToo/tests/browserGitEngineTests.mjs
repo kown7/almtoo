@@ -211,7 +211,7 @@ test('repository paths reject parent directory traversal as structured operation
   assert.equal(result.operation, 'listFiles');
   assert.equal(result.succeeded, false);
   assert.match(result.message, /could not be listed/i);
-  assert.match(result.diagnostic, /parent directory segments/);
+  assert.match(result.diagnostic, /normalized repository-relative paths|parent directory segments/);
 });
 
 test('getStatus returns a structured failure when git status cannot be read', async () => {
