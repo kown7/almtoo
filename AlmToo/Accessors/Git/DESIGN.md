@@ -4,7 +4,7 @@
 
 This document defines the target contract for browser-local Git Resource Access. It contains the operation facets, operation signatures, DTOs, and invariants owned by `IBrowserGitAccessor` and `BrowserGitAccessor`.
 
-Manager workflows, Manager state, Client behavior, migration steps, test plans, and historical source layout do not belong in this contract.
+Manager workflows, Manager state, Client behavior, migration steps, test plans, and historical source layout do not belong in the Accessor contract itself. The implementation-state iDesign review at the end maps those adjacent layers only to verify the complete dependency graph.
 
 | Field | Value |
 |---|---|
@@ -310,13 +310,81 @@ A successful result must match the request coordinates.
 
 ## iDesign review
 
-| Check | Result | Rationale |
-|---|---|---|
-| Layer assignment | PASS | `BrowserGitAccessor` owns browser and remote integration only. DTOs are adjacent contract data, not a separate service layer. |
-| Dependency direction | PASS | Managers or Engines may call the Accessor; the Accessor depends only on platform APIs, utilities, and its DTOs. It never calls upward. |
-| Interface justification | PASS | `IBrowserGitAccessor` and `IBrowserFileAccessor` isolate the JavaScript/browser platform boundary while separating version-control callers from file-operation callers. Both are implemented by one Service over the shared active workspace, so neither is a pass-through interface. |
-| Cohesion | PASS | The Git interface owns repository lifecycle and version-control operations; the file interface owns filtering and updating workspace files. The Service cohesively owns their shared browser storage, error translation, and module lifetime. |
-| Failure ownership | PASS | The Accessor translates platform failures into credential-free technical results without owning caller workflow or presentation state. |
-| Exceptions | None | No exception to `docs/IDESIGN.md` is required. |
+This implementation-state review applies every section of `docs/IDESIGN-REVIEW.md` to the production tree after the S02 refactor.
 
-This review must be repeated if implementation changes an operation facet, signature, DTO, dependency direction, or interface.
+### 1. Layer assignments
+
+| Component | Layer | Cohesive responsibility | Allowed dependencies | Forbidden dependencies |
+|---|---|---|---|---|
+| `Pages/Home.razor` and `Components/Repository*.razor` | Client | Render repository state, collect user input, and delegate user actions. | `RepositoryWorkspaceManager`, its state contract, Blazor presentation utilities. | Accessors, JavaScript interop, Git workflow policy. |
+| `RepositoryWorkspaceManager` and `RepositoryWorkspaceState` | Manager | Coordinate one repository use case and expose its credential-free observable state as one cohesive Manager contract. | Browser Git and file Accessor contracts, framework utilities. | Other Managers, direct JavaScript interop, presentation rendering. |
+| `IBrowserGitAccessor`, `IBrowserFileAccessor`, `BrowserGitAccessor`, `browserGitEngine.js`, and `pushCredentialSession.js` | Accessor | Own browser filesystem, Git transport, tab credential storage, interop lifetime, and platform-failure translation. | Browser and JavaScript platform APIs, vendor libraries, adjacent Accessor DTOs. | Managers, Clients, UI state, workflow ownership. |
+| `Program.cs` | Client composition root | Select scoped implementations and start the Blazor Client. | Client, Manager, and Accessor registration types. | Repository workflow or integration behavior. |
+| Static host/configuration assets under `wwwroot` and configuration files | Resource | Supply immutable hosting, style, script, and configuration inputs. | None beyond host/tool processing. | Orchestration, policy, integration services. |
+| Request, result, and value DTOs in `BrowserGitContracts.cs` | Accessor contract data | Carry typed data across the browser integration boundary. | Data types only. | Service behavior or a speculative Resource service/namespace. |
+
+No Engine participates in this integration-focused change; deterministic repository workflow remains simple enough to reside in the Manager and boundary validation in the Accessor.
+
+**Result:** PASS
+
+### 2. Dependency direction
+
+- [x] Calls follow `Client -> Manager -> Accessor`; `Program.cs` is the composition-only exception to runtime call flow, not a service dependency.
+- [x] The concrete `RepositoryWorkspaceManager` calls no other Manager.
+- [x] Engine dependency rules are **NOT APPLICABLE** because this subsystem introduces no Engine.
+- [x] The Accessor owns I/O, validation at its trust boundary, safe failure translation, and lifetime only; it owns no UI state or use-case sequence.
+- [x] Clients render and delegate, while static Resources contain no domain algorithm.
+
+**Result:** PASS
+
+### 3. Interface justification
+
+| Interface | Implementations | Callers | Current boundary or substitution need | Keep, remove, or defer |
+|---|---:|---:|---|---|
+| `IBrowserGitAccessor` | 1: `BrowserGitAccessor` | 1: `RepositoryWorkspaceManager` | Protects the browser/JavaScript Git and credential platform boundary and provides the focused substitution seam used to verify Manager workflows without browser transport. | Keep |
+| `IBrowserFileAccessor` | 1: `BrowserGitAccessor` | 1: `RepositoryWorkspaceManager` | Protects the browser filesystem/JavaScript platform boundary and provides the focused substitution seam used to verify file workflow behavior without browser storage. | Keep |
+
+The interfaces represent capability facets of one genuine external platform boundary; they are not interface-per-class wrappers. The cohesive concrete `RepositoryWorkspaceManager` remains interface-free because it has no external boundary, credible alternate implementation, or otherwise unavailable testing seam.
+
+**Result:** PASS
+
+### 4. Cohesion and decomposition
+
+- [x] The Manager owns the complete open, browse, edit, commit, review, credential, push, cancellation, and recovery workflow for one workspace.
+- [x] The Accessor does more than pass through: it validates trust-boundary inputs, maps contracts, normalizes failures, redacts credentials, and owns shared module lifetime.
+- [x] Orchestration is not fragmented across Managers; child components are presentation-only.
+- [x] Both Accessor facets remain on one concrete service because browser filesystem, Git state, credential module, and disposal lifetime change together.
+- [x] DTOs stay adjacent to the interfaces as Accessor contracts rather than becoming method services or a speculative Resource layer.
+
+**Result:** PASS
+
+### 5. Verification placement
+
+| Behavior | Owning layer | Verification type | Evidence |
+|---|---|---|---|
+| Client delegation and state rendering | Client | contract and UAT | `tests/homePageContractTests.mjs`; required browser workflow suite |
+| Repository workflow, cancellation, stale-review, and recovery | Manager | workflow unit | `AlmToo.Tests/Managers/Repositories/RepositoryWorkspaceManagerTests.cs` |
+| Browser Git, file, credential, and failure contracts | Accessor | contract and integration | `tests/browserGitAccessorContractTests.mjs`, `tests/browserGitEngineTests.mjs`, `tests/pushCredentialSessionTests.mjs` |
+| Layer graph, naming, composition, and review coverage | Cross-layer | architecture contract | `tests/browserGitArchitectureGateTests.mjs` |
+| Static assets and application composition | Resource and Client composition | build and UAT | warning-free `dotnet build`; required browser workflow suite |
+
+- [x] Engine unit verification is **NOT APPLICABLE** because no Engine is present.
+- [x] Accessor behavior is checked at its JavaScript and .NET contract boundaries.
+- [x] Manager behavior is checked as complete use-case workflows.
+- [x] Client and Resource behavior is checked by source contracts, build, and browser UAT.
+
+**Result:** PASS
+
+### 6. Exceptions
+
+None. `Program.cs` references each layer solely as the Client composition root; it performs no runtime repository workflow and therefore requires no architectural exception.
+
+**Result:** NOT APPLICABLE — there are no intentional exceptions.
+
+## Compliance statement
+
+> This change follows the project iDesign policy. Layer assignments and dependency direction were reviewed. Every interface has a current architectural justification, and no unexplained interface-per-class or pass-through decomposition remains.
+
+**Overall result:** PASS
+
+This review must be repeated if implementation changes an operation facet, signature, DTO, dependency direction, interface, composition lifetime, or layer ownership.

@@ -33,7 +33,9 @@
         }
         else if (State.Repository is null && State.Result is not null)
         {
-            <p class="@ResultCssClass" role="status" aria-live="polite">@State.Result.Message</p>
+            <p class="@ResultCssClass"
+               role="@(State.Result.Succeeded ? "status" : "alert")"
+               aria-live="@(State.Result.Succeeded ? "polite" : "assertive")">@State.Result.Message</p>
         }
     </div>
 
@@ -48,7 +50,7 @@
             @if (State.HasCredential)
             {
                 <p data-credential-state="present">A token is available for an explicit push in this tab.</p>
-                <button class="secondary-action" type="button" @onclick="Workspace.ForgetCredentialAsync" disabled="@State.IsBusy">Forget token</button>
+                <button class="secondary-action" type="button" @onclick="ForgetCredentialAsync" disabled="@State.IsBusy">Forget token</button>
             }
             @if (State.Result?.Operation is RepositoryWorkspaceOperation.InitializeCredential
                 or RepositoryWorkspaceOperation.StoreCredential
@@ -74,17 +76,17 @@
         </section>
 
         <RepositoryFileBrowser State="State"
-                               OnDirectorySelected="Workspace.LoadDirectoryAsync"
-                               OnFileSelected="Workspace.SelectFileAsync" />
+                               OnDirectorySelected="LoadDirectoryAsync"
+                               OnFileSelected="SelectFileAsync" />
 
-        <RepositoryChangedFiles State="State" OnRefreshRequested="Workspace.RefreshStatusAsync" />
+        <RepositoryChangedFiles State="State" OnRefreshRequested="RefreshStatusAsync" />
 
-        <RepositoryCommitForm State="State" OnCommitRequested="Workspace.CommitAsync" />
+        <RepositoryCommitForm State="State" OnCommitRequested="CommitAsync" />
 
         <section class="push-panel" aria-labelledby="push-heading">
             <div class="push-panel__heading">
                 <div><p class="helper-text">Remote write</p><h2 id="push-heading">Push local commit to GitHub</h2></div>
-                <button class="secondary-action" type="button" @onclick="Workspace.InspectPushAsync" disabled="@State.IsBusy">
+                <button class="secondary-action" type="button" @onclick="InspectPushAsync" disabled="@State.IsBusy">
                     @(IsOperation(RepositoryWorkspaceOperation.InspectPush) ? "Reviewing..." : "Review push")
                 </button>
             </div>
@@ -94,7 +96,7 @@
                     <div><h3 id="push-credential-heading">Push credential</h3><p class="field-help">The token stays only in this browser tab and its value is never displayed.</p></div>
                     @if (State.HasCredential)
                     {
-                        <button class="secondary-action" type="button" @onclick="Workspace.ForgetCredentialAsync" disabled="@State.IsBusy">Forget token</button>
+                        <button class="secondary-action" type="button" @onclick="ForgetCredentialAsync" disabled="@State.IsBusy">Forget token</button>
                     }
                 </div>
                 @if (State.HasCredential)
@@ -171,7 +173,7 @@
                               value="@State.EditableFileContent" @oninput="EditSelectedFile" disabled="@State.IsBusy"></textarea>
                 </div>
                 <div class="file-editor__actions">
-                    <button class="primary-action" type="button" @onclick="Workspace.SaveSelectedFileAsync" disabled="@(State.IsBusy || !State.HasUnsavedChanges)">
+                    <button class="primary-action" type="button" @onclick="SaveSelectedFileAsync" disabled="@(State.IsBusy || !State.HasUnsavedChanges)">
                         @(IsOperation(RepositoryWorkspaceOperation.SaveFile) ? "Saving..." : "Save changes")
                     </button>
                     <p class="file-editor__dirty-state">@(State.HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits")</p>
@@ -205,7 +207,14 @@
         }
     }
 
-    private Task<bool> OpenRepositoryAsync() => Workspace.OpenRepositoryAsync(repositoryUrl);
+    private async Task OpenRepositoryAsync() => await Workspace.OpenRepositoryAsync(repositoryUrl);
+    private async Task LoadDirectoryAsync(string path) => await Workspace.LoadDirectoryAsync(path);
+    private async Task SelectFileAsync(string path) => await Workspace.SelectFileAsync(path);
+    private async Task SaveSelectedFileAsync() => await Workspace.SaveSelectedFileAsync();
+    private async Task RefreshStatusAsync() => await Workspace.RefreshStatusAsync();
+    private async Task CommitAsync(RepositoryCommitInput input) => await Workspace.CommitAsync(input);
+    private async Task InspectPushAsync() => await Workspace.InspectPushAsync();
+    private async Task ForgetCredentialAsync() => await Workspace.ForgetCredentialAsync();
     private void EditSelectedFile(ChangeEventArgs args) => Workspace.EditSelectedFile(args.Value?.ToString() ?? string.Empty);
     private void ConfirmPushReview(ChangeEventArgs args) => Workspace.ConfirmPushReview(args.Value is true || string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase));
     private void UpdateCredentialInput(ChangeEventArgs args) => credentialInput = args.Value?.ToString() ?? string.Empty;

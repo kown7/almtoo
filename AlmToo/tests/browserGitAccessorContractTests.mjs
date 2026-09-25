@@ -33,7 +33,9 @@ test('one scoped Service implements both facets and both DI contracts resolve th
   assert.match(program, /AddScoped<BrowserGitAccessor>\(\)/);
   assert.match(program, /AddScoped<IBrowserGitAccessor>\(services => services\.GetRequiredService<BrowserGitAccessor>\(\)\)/);
   assert.match(program, /AddScoped<IBrowserFileAccessor>\(services => services\.GetRequiredService<BrowserGitAccessor>\(\)\)/);
+  assert.match(program, /AddScoped<RepositoryWorkspaceManager>\(\)/);
   assert.doesNotMatch(program, /AddScoped<IBrowserGitAccessor, BrowserGitAccessor>|AddScoped<IBrowserFileAccessor, BrowserGitAccessor>/);
+  assert.doesNotMatch(program, /IRepositoryWorkspaceManager|IVersionControlAccessor|Resources/);
 });
 
 test('Accessor validates paths and text as a unit before mutation', async () => {
@@ -77,5 +79,4 @@ test('Accessor normalizes cancellation, interop failures, initialization, and pa
   assert.doesNotMatch(service, /exception\.ToString|catch \([^)]* exception\)/i);
   assert.match(service, /moduleTask is \{ IsCompletedSuccessfully: true \}/);
   assert.match(service, /credentialModuleTask is \{ IsCompletedSuccessfully: true \}/);
-}
-);
+});

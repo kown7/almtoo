@@ -1,4 +1,4 @@
-@using AlmToo.Services.Git
+@using AlmToo.Managers.Repositories
 
 <section class="commit-form" aria-labelledby="commit-form-heading">
     <div>
@@ -31,38 +31,28 @@
         <p class="@StatusCssClass" role="status" aria-live="polite">@EffectiveStatusMessage</p>
     }
 
-    @if (CreatedCommit is not null)
+    @if (State.CreatedCommit is not null)
     {
         <dl class="commit-form__confirmation">
-            <div><dt>Commit</dt><dd><code>@CreatedCommit.CommitId</code></dd></div>
-            <div><dt>Message</dt><dd>@CreatedCommit.Message</dd></div>
+            <div><dt>Commit</dt><dd><code>@State.CreatedCommit.CommitId</code></dd></div>
+            <div><dt>Message</dt><dd>@State.CreatedCommit.Message</dd></div>
         </dl>
     }
 </section>
 
 @code {
-    [Parameter, EditorRequired]
-    public EventCallback<CommitRequest> OnCommitRequested { get; set; }
-
-    [Parameter]
-    public bool IsCommitting { get; set; }
-
-    [Parameter]
-    public string? StatusMessage { get; set; }
-
-    [Parameter]
-    public bool StatusIsError { get; set; }
-
-    [Parameter]
-    public CommitInfo? CreatedCommit { get; set; }
+    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter, EditorRequired] public EventCallback<RepositoryCommitInput> OnCommitRequested { get; set; }
 
     private string CommitMessage { get; set; } = string.Empty;
     private string AuthorName { get; set; } = "AlmToo User";
     private string AuthorEmail { get; set; } = "user@almtoo.local";
     private string? ValidationMessage { get; set; }
-
-    private string? EffectiveStatusMessage => ValidationMessage ?? StatusMessage;
-    private string StatusCssClass => $"status-message {(ValidationMessage is not null || StatusIsError ? "error" : "success")}";
+    private bool IsCommitting => State.Operation == RepositoryWorkspaceOperation.Commit;
+    private RepositoryWorkspaceResult? CommitResult =>
+        State.Result?.Operation == RepositoryWorkspaceOperation.Commit ? State.Result : null;
+    private string? EffectiveStatusMessage => ValidationMessage ?? CommitResult?.Message;
+    private string StatusCssClass => $"status-message {(ValidationMessage is not null || CommitResult?.Succeeded == false ? "error" : "success")}";
 
     private async Task CreateCommitAsync()
     {
@@ -76,7 +66,7 @@
             return;
         }
 
-        await OnCommitRequested.InvokeAsync(new CommitRequest(message, authorName, authorEmail));
+        await OnCommitRequested.InvokeAsync(new RepositoryCommitInput(message, authorName, authorEmail));
         ValidationMessage = null;
     }
 

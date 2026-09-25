@@ -33,7 +33,7 @@ function subsection(document, heading) {
   return extractHeading(document, '###', heading, ['### ', '## ']);
 }
 
-test('design is scoped to the Browser Git Resource Access contract', async () => {
+test('design keeps the Accessor contract focused and includes the implementation-state review', async () => {
   const design = await readDesign();
 
   for (const heading of [
@@ -49,10 +49,9 @@ test('design is scoped to the Browser Git Resource Access contract', async () =>
   }
 
   assert.doesNotMatch(design, /^## Repository workspace operations$/m);
-  assert.doesNotMatch(design, /RepositoryWorkspaceManager|RepositoryWorkspaceState/);
-  assert.doesNotMatch(design, /Home\.razor/);
-  assert.match(design, /Manager workflows, Manager state, Client behavior[\s\S]*do not belong in this contract/);
-  assert.ok(design.length < 25_000, 'Accessor contract should remain concise');
+  assert.match(design, /Manager workflows, Manager state, Client behavior[\s\S]*do not belong in the Accessor contract itself/);
+  assert.match(design, /implementation-state iDesign review[\s\S]*complete dependency graph/);
+  assert.ok(design.length < 30_000, 'Accessor contract and implementation review should remain concise');
 });
 
 test('approval gate requires a genuine human approval record', async () => {
@@ -216,17 +215,27 @@ test('invariants cover lifecycle, cancellation, paths, push, and credentials', a
   assert.match(invariants, /Failed pushes are never replayed automatically/i);
 });
 
-test('embedded iDesign review has no unexplained failure', async () => {
-  const review = section(await readDesign(), 'iDesign review');
+test('embedded implementation-state iDesign review covers every checklist section without unexplained failure', async () => {
+  const design = await readDesign();
+  const review = section(design, 'iDesign review');
 
-  for (const check of ['Layer assignment', 'Dependency direction', 'Interface justification', 'Cohesion', 'Failure ownership']) {
-    assert.match(review, new RegExp(`\\| ${check} \\| PASS \\|`), `${check} must pass`);
+  for (const heading of [
+    '1. Layer assignments',
+    '2. Dependency direction',
+    '3. Interface justification',
+    '4. Cohesion and decomposition',
+    '5. Verification placement',
+    '6. Exceptions'
+  ]) {
+    const body = subsection(review, heading);
+    assert.match(body, /\*\*Result:\*\* (?:PASS|NOT APPLICABLE)/, `${heading} must record its result`);
   }
 
-  assert.match(review, /DTOs are adjacent contract data, not a separate service layer/);
-  assert.match(review, /Managers or Engines may call the Accessor/);
-  assert.match(review, /Exceptions \| None/);
-  assert.doesNotMatch(review, /\| FAIL \|/);
+  assert.match(review, /DTOs stay adjacent to the interfaces as Accessor contracts/);
+  assert.match(review, /Client -> Manager -> Accessor/);
+  assert.match(review, /concrete `RepositoryWorkspaceManager` remains interface-free/);
+  assert.match(section(design, 'Compliance statement'), /\*\*Overall result:\*\* PASS/);
+  assert.doesNotMatch(design, /\*\*Result:\*\* FAIL|\*\*Overall result:\*\* FAIL/);
 });
 
 test('package test script includes the design contract and behavioral suites', async () => {
@@ -237,7 +246,9 @@ test('package test script includes the design contract and behavioral suites', a
     'browserGitEngineTests.mjs',
     'pushCredentialSessionTests.mjs',
     'homePageContractTests.mjs',
-    'browserGitDesignContractTests.mjs'
+    'browserGitDesignContractTests.mjs',
+    'browserGitAccessorContractTests.mjs',
+    'browserGitArchitectureGateTests.mjs'
   ]) {
     assert.match(testScript, new RegExp(suite.replaceAll('.', '\\.')), `npm test must include ${suite}`);
   }
