@@ -1,45 +1,38 @@
-@using AlmToo.Services.Git
+@using AlmToo.Managers.Repositories
 
 <section class="file-browser" aria-labelledby="file-browser-heading">
     <div class="file-browser__header">
-        <div>
-            <p class="helper-text">Repository files</p>
-            <h2 id="file-browser-heading">Browse workspace</h2>
-        </div>
-        <p class="file-browser__path" aria-label="Current repository path">@CurrentPath</p>
+        <div><p class="helper-text">Repository files</p><h2 id="file-browser-heading">Browse workspace</h2></div>
+        <p class="file-browser__path" aria-label="Current repository path">@State.CurrentPath</p>
     </div>
 
-    @if (IsLoading)
+    @if (State.Operation == RepositoryWorkspaceOperation.LoadDirectory)
     {
         <p class="status-message info" role="status" aria-live="polite">Loading repository files...</p>
     }
-    else if (Entries.Count == 0)
+    else if (State.Entries.Count == 0)
     {
         <p class="file-browser__empty">No files were found at this path.</p>
     }
     else
     {
         <ul class="file-browser__list" aria-label="Repository file list">
-            @foreach (var entry in Entries)
+            @foreach (var entry in State.Entries)
             {
                 <li class="file-browser__item">
-                    @if (entry.Kind == RepositoryFileKind.Directory)
+                    @if (entry.Kind.ToString() == "Directory")
                     {
-                        <button class="file-browser__entry file-browser__entry--directory"
-                                type="button"
+                        <button class="file-browser__entry file-browser__entry--directory" type="button"
                                 @onclick="() => OnDirectorySelected.InvokeAsync(entry.Path)">
-                            <span aria-hidden="true">📁</span>
-                            <span>@entry.Name</span>
+                            <span aria-hidden="true">📁</span><span>@entry.Name</span>
                         </button>
                     }
                     else if (entry.IsEditableText)
                     {
-                        <button class="file-browser__entry file-browser__entry--file @(entry.Path == SelectedPath ? "is-selected" : null)"
-                                type="button"
-                                aria-current="@(entry.Path == SelectedPath ? "true" : null)"
+                        <button class="file-browser__entry file-browser__entry--file @(entry.Path == State.SelectedFilePath ? "is-selected" : null)"
+                                type="button" aria-current="@(entry.Path == State.SelectedFilePath ? "true" : null)"
                                 @onclick="() => OnFileSelected.InvokeAsync(entry.Path)">
-                            <span aria-hidden="true">📄</span>
-                            <span>@entry.Name</span>
+                            <span aria-hidden="true">📄</span><span>@entry.Name</span>
                             @if (entry.SizeBytes is not null)
                             {
                                 <span class="file-browser__meta">@FormatSize(entry.SizeBytes.Value)</span>
@@ -49,8 +42,7 @@
                     else
                     {
                         <div class="file-browser__entry file-browser__entry--unsupported" aria-disabled="true">
-                            <span aria-hidden="true">🚫</span>
-                            <span>@entry.Name</span>
+                            <span aria-hidden="true">🚫</span><span>@entry.Name</span>
                             <span class="file-browser__meta">Binary or oversized file not available for text editing</span>
                         </div>
                     }
@@ -61,37 +53,14 @@
 </section>
 
 @code {
-    [Parameter]
-    public IReadOnlyList<RepositoryFileEntry> Entries { get; set; } = Array.Empty<RepositoryFileEntry>();
-
-    [Parameter]
-    public string CurrentPath { get; set; } = "/";
-
-    [Parameter]
-    public string? SelectedPath { get; set; }
-
-    [Parameter]
-    public bool IsLoading { get; set; }
-
-    [Parameter]
-    public EventCallback<string> OnDirectorySelected { get; set; }
-
-    [Parameter]
-    public EventCallback<string> OnFileSelected { get; set; }
+    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter] public EventCallback<string> OnDirectorySelected { get; set; }
+    [Parameter] public EventCallback<string> OnFileSelected { get; set; }
 
     private static string FormatSize(long sizeBytes)
     {
-        if (sizeBytes < 1024)
-        {
-            return $"{sizeBytes} B";
-        }
-
+        if (sizeBytes < 1024) return $"{sizeBytes} B";
         var kibibytes = sizeBytes / 1024d;
-        if (kibibytes < 1024)
-        {
-            return $"{kibibytes:0.#} KiB";
-        }
-
-        return $"{kibibytes / 1024d:0.#} MiB";
+        return kibibytes < 1024 ? $"{kibibytes:0.#} KiB" : $"{kibibytes / 1024d:0.#} MiB";
     }
 }

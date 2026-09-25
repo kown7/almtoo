@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using AlmToo;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 using AlmToo.Accessor.BrowserGitAccessor.Service;
-using AlmToo.Services.Git;
+using AlmToo.Managers.Repositories;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
@@ -13,8 +13,6 @@ builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.
 builder.Services.AddScoped<BrowserGitAccessor>();
 builder.Services.AddScoped<IBrowserGitAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
 builder.Services.AddScoped<IBrowserFileAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
-
-// Temporary compatibility registration until T03 cuts Home over to RepositoryWorkspaceManager.
-builder.Services.AddScoped<IBrowserGitService, BrowserGitService>();
+builder.Services.AddScoped<RepositoryWorkspaceManager>();
 
 await builder.Build().RunAsync();

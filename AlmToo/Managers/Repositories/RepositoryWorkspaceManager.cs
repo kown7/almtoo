@@ -147,6 +147,9 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     public Task<bool> RefreshStatusAsync(CancellationToken cancellationToken = default) =>
         RunAsync(RepositoryWorkspaceOperation.RefreshStatus, RefreshStatusCoreAsync, cancellationToken);
 
+    public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
+        CommitAsync(new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
+
     public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
         RunAsync(RepositoryWorkspaceOperation.Commit, async token =>
         {
