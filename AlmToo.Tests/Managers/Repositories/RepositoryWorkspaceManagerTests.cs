@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Resource.BrowserGitResource.Data;
 using AlmToo.Managers.Repositories;
 using Xunit;
 
@@ -55,8 +56,7 @@ public sealed class RepositoryWorkspaceManagerTests
         using var manager = CreateManager(fake);
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         fake.Filter = request => request.Path.Contains("..", StringComparison.Ordinal)
-            ? GitOperationResult<FilterFilesResult>.Failure(
-                "filter-files", "Repository paths cannot traverse the workspace.", "path-containment", GitOperationFailureKind.Unknown)
+            ? new GitOperationResult<FilterFilesResult>("filter-files", false, "Repository paths cannot traverse the workspace.", Value: default, Diagnostic: "path-containment", FailureKind: GitOperationFailureKind.Unknown)
             : fake.DefaultFilter(request);
 
         var succeeded = await manager.LoadDirectoryAsync("../secrets");
@@ -129,7 +129,7 @@ public sealed class RepositoryWorkspaceManagerTests
         {
             entered.SetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
-            return GitOperationResult<IReadOnlyList<ChangedFile>>.Success("status", "impossible", []);
+            return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "impossible", []);
         };
 
         var operation = manager.RefreshStatusAsync();
@@ -156,7 +156,7 @@ public sealed class RepositoryWorkspaceManagerTests
         {
             entered.SetResult();
             await release.Task.WaitAsync(token);
-            return GitOperationResult<IReadOnlyList<ChangedFile>>.Success("status", "Status refreshed.", []);
+            return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Status refreshed.", []);
         };
 
         var active = manager.RefreshStatusAsync();
@@ -193,8 +193,7 @@ public sealed class RepositoryWorkspaceManagerTests
         var fake = new FakeBrowserAccessor();
         using var manager = CreateManager(fake);
         await PreparePushAsync(manager);
-        fake.InspectResults.Enqueue(GitOperationResult<PushReview>.Success(
-            "inspect-push", "Changed.", Review with { OutgoingCommitId = "def456" }));
+        fake.InspectResults.Enqueue(new GitOperationResult<PushReview>("inspect-push", true, "Changed.", Review with { OutgoingCommitId = "def456" }));
 
         var succeeded = await manager.PushReviewedCommitAsync(Review);
 
@@ -211,12 +210,11 @@ public sealed class RepositoryWorkspaceManagerTests
     {
         var fake = new FakeBrowserAccessor
         {
-            Push = _ => GitOperationResult<PushResult>.Failure(
-                "push", "Credential rejected.", failureKind: GitOperationFailureKind.CredentialRejected)
+            Push = _ => new GitOperationResult<PushResult>("push", false, "Credential rejected.", FailureKind: GitOperationFailureKind.CredentialRejected)
         };
         using var manager = CreateManager(fake);
         await PreparePushAsync(manager);
-        fake.InspectResults.Enqueue(GitOperationResult<PushReview>.Success("inspect-push", "Still current.", Review));
+        fake.InspectResults.Enqueue(new GitOperationResult<PushReview>("inspect-push", true, "Still current.", Review));
 
         Assert.False(await manager.PushReviewedCommitAsync(Review));
         Assert.Equal(1, fake.PushCalls);
@@ -227,12 +225,11 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.False(await manager.PushReviewedCommitAsync(Review));
         Assert.Equal(1, fake.PushCalls);
 
-        fake.Push = request => GitOperationResult<PushResult>.Success(
-            "push", "Pushed.", new(request.RepositoryUrl, request.Branch, request.DestinationRef, request.OutgoingCommitId));
+        fake.Push = request => new GitOperationResult<PushResult>("push", true, "Pushed.", new(request.RepositoryUrl, request.Branch, request.DestinationRef, request.OutgoingCommitId));
         Assert.True(await manager.StoreCredentialAsync("replacement-token"));
         Assert.True(await manager.InspectPushAsync());
         manager.ConfirmPushReview(true);
-        fake.InspectResults.Enqueue(GitOperationResult<PushReview>.Success("inspect-push", "Still current.", Review));
+        fake.InspectResults.Enqueue(new GitOperationResult<PushReview>("inspect-push", true, "Still current.", Review));
 
         Assert.True(await manager.PushReviewedCommitAsync(Review));
         Assert.Equal(2, fake.PushCalls);
@@ -245,8 +242,7 @@ public sealed class RepositoryWorkspaceManagerTests
         const string secret = "ghp_DO_NOT_RETAIN_123";
         var fake = new FakeBrowserAccessor
         {
-            StoreCredential = credential => GitOperationResult<bool>.Failure(
-                "store-credential", $"unsafe {credential}", $"unsafe {credential}", GitOperationFailureKind.Unknown)
+            StoreCredential = credential => new GitOperationResult<bool>("store-credential", false, $"unsafe {credential}", Value: default, Diagnostic: $"unsafe {credential}", FailureKind: GitOperationFailureKind.Unknown)
         };
         using var manager = CreateManager(fake);
 
@@ -306,10 +302,9 @@ public sealed class RepositoryWorkspaceManagerTests
         public Func<FilterFilesRequest, CancellationToken, ValueTask<GitOperationResult<FilterFilesResult>>>? FilterAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<IReadOnlyList<ChangedFile>>>>? StatusAsync { get; set; }
         public Func<string, GitOperationResult<bool>> StoreCredential { get; set; } = _ =>
-            GitOperationResult<bool>.Success("store-credential", "Stored.", true);
+            new GitOperationResult<bool>("store-credential", true, "Stored.", true);
         public Func<PushRequest, GitOperationResult<PushResult>> Push { get; set; } = request =>
-            GitOperationResult<PushResult>.Success(
-                "push", "Pushed.", new(request.RepositoryUrl, request.Branch, request.DestinationRef, request.OutgoingCommitId));
+            new GitOperationResult<PushResult>("push", true, "Pushed.", new(request.RepositoryUrl, request.Branch, request.DestinationRef, request.OutgoingCommitId));
 
         public FakeBrowserAccessor()
         {
@@ -318,17 +313,15 @@ public sealed class RepositoryWorkspaceManagerTests
 
         public GitOperationResult<FilterFilesResult> DefaultFilter(FilterFilesRequest request) => request.Kind switch
         {
-            FileFilterKind.DirectoryEntries => GitOperationResult<FilterFilesResult>.Success(
-                "filter-files", "Files loaded.", new(request.Path, [Readme])),
-            _ => GitOperationResult<FilterFilesResult>.Success(
-                "filter-files", "File loaded.", new(request.Path, [], new(request.Path, "original\n", SizeBytes: 9)))
+            FileFilterKind.DirectoryEntries => new GitOperationResult<FilterFilesResult>("filter-files", true, "Files loaded.", new(request.Path, [Readme])),
+            _ => new GitOperationResult<FilterFilesResult>("filter-files", true, "File loaded.", new(request.Path, [], new(request.Path, "original\n", SizeBytes: 9)))
         };
 
         public ValueTask<GitOperationResult<RepositoryInfo>> CloneOrOpenAsync(RepositoryOpenRequest request, CancellationToken cancellationToken = default)
         {
             Calls.Add("open");
             OpenRequests.Add(request);
-            return ValueTask.FromResult(GitOperationResult<RepositoryInfo>.Success("open", "Repository ready.", Repository));
+            return ValueTask.FromResult(new GitOperationResult<RepositoryInfo>("open", true, "Repository ready.", Repository));
         }
 
         public async ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(CancellationToken cancellationToken = default)
@@ -338,14 +331,13 @@ public sealed class RepositoryWorkspaceManagerTests
             {
                 return await StatusAsync(cancellationToken);
             }
-            return GitOperationResult<IReadOnlyList<ChangedFile>>.Success(
-                "status", "Status refreshed.", [new("/README.md", GitChangeKind.Modified)]);
+            return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Status refreshed.", [new("/README.md", GitChangeKind.Modified)]);
         }
 
         public ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default)
         {
             Calls.Add("commit");
-            return ValueTask.FromResult(GitOperationResult<CommitInfo>.Success("commit", "Committed.", new("abc123", request.Message)));
+            return ValueTask.FromResult(new GitOperationResult<CommitInfo>("commit", true, "Committed.", new("abc123", request.Message)));
         }
 
         public ValueTask<GitOperationResult<PushReview>> InspectPushAsync(CancellationToken cancellationToken = default)
@@ -354,11 +346,11 @@ public sealed class RepositoryWorkspaceManagerTests
             InspectCalls++;
             return ValueTask.FromResult(InspectResults.Count > 0
                 ? InspectResults.Dequeue()
-                : GitOperationResult<PushReview>.Success("inspect-push", "Ready.", Review));
+                : new GitOperationResult<PushReview>("inspect-push", true, "Ready.", Review));
         }
 
         public ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(GitOperationResult<bool>.Success("has-credential", "Checked.", false));
+            ValueTask.FromResult(new GitOperationResult<bool>("has-credential", true, "Checked.", false));
 
         public ValueTask<GitOperationResult<bool>> StoreCredentialAsync(string credential, CancellationToken cancellationToken = default)
         {
@@ -367,7 +359,7 @@ public sealed class RepositoryWorkspaceManagerTests
         }
 
         public ValueTask<GitOperationResult<bool>> ForgetCredentialAsync(CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(GitOperationResult<bool>.Success("forget-credential", "Forgotten.", true));
+            ValueTask.FromResult(new GitOperationResult<bool>("forget-credential", true, "Forgotten.", true));
 
         public ValueTask<GitOperationResult<PushResult>> PushAsync(PushRequest request, CancellationToken cancellationToken = default)
         {
@@ -387,8 +379,7 @@ public sealed class RepositoryWorkspaceManagerTests
         {
             Calls.Add("update");
             UpdateRequests.Add(request);
-            return ValueTask.FromResult(GitOperationResult<UpdateFilesResult>.Success(
-                "update-files", "Saved.", new(request.Updates.Select(update => update.Path).ToArray())));
+            return ValueTask.FromResult(new GitOperationResult<UpdateFilesResult>("update-files", true, "Saved.", new(request.Updates.Select(update => update.Path).ToArray())));
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

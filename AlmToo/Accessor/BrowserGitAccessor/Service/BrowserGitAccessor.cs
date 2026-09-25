@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Resource.BrowserGitResource.Data;
 using Microsoft.JSInterop;
 
 namespace AlmToo.Accessor.BrowserGitAccessor.Service;
@@ -37,10 +38,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             || request.WorkspaceName.Length > 80
             || request.WorkspaceName.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-')))
         {
-            return GitOperationResult<RepositoryInfo>.Failure(
-                "cloneOrOpen",
-                "The repository could not be cloned or opened.",
-                "A credential-free HTTPS URL and a normalized workspace name are required.");
+            return new GitOperationResult<RepositoryInfo>("cloneOrOpen", false, "The repository could not be cloned or opened.", Value: default, Diagnostic: "A credential-free HTTPS URL and a normalized workspace name are required.");
         }
 
         return await InvokeWithValueAsync<RepositoryInfoDto, RepositoryInfo>(
@@ -60,7 +58,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             || !Enum.IsDefined(request.Kind)
             || !TryNormalizeRepositoryPath(request.Path, request.Kind == FileFilterKind.DirectoryEntries, out var path))
         {
-            return GitOperationResult<FilterFilesResult>.Failure(operation, "The requested repository path is not valid.", "The path must be normalized and contained in the active checkout.");
+            return new GitOperationResult<FilterFilesResult>(operation, false, "The requested repository path is not valid.", Value: default, Diagnostic: "The path must be normalized and contained in the active checkout.");
         }
 
         if (request.Kind == FileFilterKind.DirectoryEntries)
@@ -68,20 +66,20 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             var entries = await InvokeWithValueAsync<List<RepositoryFileEntryDto>, IReadOnlyList<RepositoryFileEntry>>(
                 "listFiles", "listFiles", values => values.Select(value => value.ToRepositoryFileEntry()).ToArray(), cancellationToken, path);
             return entries.Succeeded
-                ? GitOperationResult<FilterFilesResult>.Success(operation, entries.Message, new(path, entries.Value!))
-                : GitOperationResult<FilterFilesResult>.Failure(operation, entries.Message, entries.Diagnostic, entries.FailureKind);
+                ? new GitOperationResult<FilterFilesResult>(operation, true, entries.Message, new(path, entries.Value!))
+                : new GitOperationResult<FilterFilesResult>(operation, false, entries.Message, Value: default, Diagnostic: entries.Diagnostic, FailureKind: entries.FailureKind);
         }
 
         if (!IsSupportedTextPath(path))
         {
-            return GitOperationResult<FilterFilesResult>.Failure(operation, "The requested file is not supported text.", "Only allowlisted UTF-8 text files can be read.");
+            return new GitOperationResult<FilterFilesResult>(operation, false, "The requested file is not supported text.", Value: default, Diagnostic: "Only allowlisted UTF-8 text files can be read.");
         }
 
         var text = await InvokeWithValueAsync<TextFileContentDto, TextFileContent>(
             "readTextFile", "readTextFile", value => value.ToTextFileContent(), cancellationToken, path);
         return text.Succeeded
-            ? GitOperationResult<FilterFilesResult>.Success(operation, text.Message, new(path, Array.Empty<RepositoryFileEntry>(), text.Value))
-            : GitOperationResult<FilterFilesResult>.Failure(operation, text.Message, text.Diagnostic, text.FailureKind);
+            ? new GitOperationResult<FilterFilesResult>(operation, true, text.Message, new(path, Array.Empty<RepositoryFileEntry>(), text.Value))
+            : new GitOperationResult<FilterFilesResult>(operation, false, text.Message, Value: default, Diagnostic: text.Diagnostic, FailureKind: text.FailureKind);
     }
 
     public async ValueTask<GitOperationResult<UpdateFilesResult>> UpdateFilesAsync(
@@ -91,7 +89,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         const string operation = "updateFiles";
         if (request?.Updates is not { Count: > 0 })
         {
-            return GitOperationResult<UpdateFilesResult>.Failure(operation, "No file updates were supplied.", "At least one text update is required.");
+            return new GitOperationResult<UpdateFilesResult>(operation, false, "No file updates were supplied.", Value: default, Diagnostic: "At least one text update is required.");
         }
 
         var validated = new List<TextFileUpdate>(request.Updates.Count);
@@ -105,7 +103,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 || byteCount > MaxEditableTextBytes
                 || !uniquePaths.Add(path))
             {
-                return GitOperationResult<UpdateFilesResult>.Failure(operation, "The requested file updates are not valid.", "Paths must be unique, contained text-file paths with valid UTF-8 content no larger than 1 MiB.");
+                return new GitOperationResult<UpdateFilesResult>(operation, false, "The requested file updates are not valid.", Value: default, Diagnostic: "Paths must be unique, contained text-file paths with valid UTF-8 content no larger than 1 MiB.");
             }
             validated.Add(new(path, update.Content));
         }
@@ -115,11 +113,11 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             var result = await InvokeAsync("writeTextFile", "writeTextFile", cancellationToken, update.Path, update.Content);
             if (!result.Succeeded)
             {
-                return GitOperationResult<UpdateFilesResult>.Failure(operation, result.Message, result.Diagnostic, result.FailureKind);
+                return new GitOperationResult<UpdateFilesResult>(operation, false, result.Message, Value: default, Diagnostic: result.Diagnostic, FailureKind: result.FailureKind);
             }
         }
 
-        return GitOperationResult<UpdateFilesResult>.Success(operation, "The browser-local files were updated.", new(validated.Select(update => update.Path).ToArray()));
+        return new GitOperationResult<UpdateFilesResult>(operation, true, "The browser-local files were updated.", new(validated.Select(update => update.Path).ToArray()));
     }
 
     public async ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(
@@ -144,10 +142,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             || request.AuthorName.IndexOfAny(['\0', '\r', '\n']) >= 0
             || request.AuthorEmail.IndexOfAny(['\0', '\r', '\n']) >= 0)
         {
-            return GitOperationResult<CommitInfo>.Failure(
-                "commit",
-                "A browser-local commit could not be created.",
-                "A non-empty message and valid author metadata are required.");
+            return new GitOperationResult<CommitInfo>("commit", false, "A browser-local commit could not be created.", Value: default, Diagnostic: "A non-empty message and valid author metadata are required.");
         }
 
         return await InvokeWithValueAsync<CommitInfoDto, CommitInfo>(
@@ -177,18 +172,18 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             var presence = await module.InvokeAsync<int>("credentialPresence", cancellationToken);
             return presence switch
             {
-                0 => GitOperationResult<bool>.Success(operation, CredentialSuccessMessage(operation), false),
-                1 => GitOperationResult<bool>.Success(operation, CredentialSuccessMessage(operation), true),
-                _ => GitOperationResult<bool>.Failure(operation, CredentialFailureMessage(operation), "Tab-scoped credential storage is unavailable.", GitOperationFailureKind.Unknown)
+                0 => new GitOperationResult<bool>(operation, true, CredentialSuccessMessage(operation), false),
+                1 => new GitOperationResult<bool>(operation, true, CredentialSuccessMessage(operation), true),
+                _ => new GitOperationResult<bool>(operation, false, CredentialFailureMessage(operation), Value: default, Diagnostic: "Tab-scoped credential storage is unavailable.", FailureKind: GitOperationFailureKind.Unknown)
             };
         }
         catch (OperationCanceledException)
         {
-            return GitOperationResult<bool>.Failure(operation, CredentialFailureMessage(operation), "The credential operation was canceled.", GitOperationFailureKind.Unknown);
+            return new GitOperationResult<bool>(operation, false, CredentialFailureMessage(operation), Value: default, Diagnostic: "The credential operation was canceled.", FailureKind: GitOperationFailureKind.Unknown);
         }
         catch (Exception)
         {
-            return GitOperationResult<bool>.Failure(operation, CredentialFailureMessage(operation), "The tab-scoped credential module could not complete the operation.", GitOperationFailureKind.Unknown);
+            return new GitOperationResult<bool>(operation, false, CredentialFailureMessage(operation), Value: default, Diagnostic: "The tab-scoped credential module could not complete the operation.", FailureKind: GitOperationFailureKind.Unknown);
         }
     }
 
@@ -198,8 +193,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     {
         if (string.IsNullOrWhiteSpace(credential))
         {
-            return ValueTask.FromResult(GitOperationResult<bool>.Failure(
-                "storeCredential", "The credential could not be stored.", "A non-empty credential is required."));
+            return ValueTask.FromResult(new GitOperationResult<bool>("storeCredential", false, "The credential could not be stored.", Value: default, Diagnostic: "A non-empty credential is required."));
         }
 
         return InvokeCredentialAsync("storeCredential", "storeCredential", credential, falseIsFailure: true, cancellationToken);
@@ -291,11 +285,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             _ => "The push failed without exposing remote response details."
         };
 
-        return GitOperationResult<PushResult>.Failure(
-            "push",
-            "The reviewed commit could not be pushed.",
-            diagnostic,
-            failureKind);
+        return new GitOperationResult<PushResult>("push", false, "The reviewed commit could not be pushed.", Value: default, Diagnostic: diagnostic, FailureKind: failureKind);
     }
 
     private static GitOperationResult<PushResult> RedactCredential(
@@ -340,16 +330,16 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 ? await module.InvokeAsync<bool>(identifier, cancellationToken)
                 : await module.InvokeAsync<bool>(identifier, cancellationToken, credential);
             return !value && falseIsFailure
-                ? GitOperationResult<bool>.Failure(operation, CredentialFailureMessage(operation), "Tab-scoped credential storage was unavailable or rejected the operation.", GitOperationFailureKind.Unknown)
-                : GitOperationResult<bool>.Success(operation, CredentialSuccessMessage(operation), value);
+                ? new GitOperationResult<bool>(operation, false, CredentialFailureMessage(operation), Value: default, Diagnostic: "Tab-scoped credential storage was unavailable or rejected the operation.", FailureKind: GitOperationFailureKind.Unknown)
+                : new GitOperationResult<bool>(operation, true, CredentialSuccessMessage(operation), value);
         }
         catch (OperationCanceledException)
         {
-            return GitOperationResult<bool>.Failure(operation, CredentialFailureMessage(operation), "The credential operation was canceled.", GitOperationFailureKind.Unknown);
+            return new GitOperationResult<bool>(operation, false, CredentialFailureMessage(operation), Value: default, Diagnostic: "The credential operation was canceled.", FailureKind: GitOperationFailureKind.Unknown);
         }
         catch (Exception)
         {
-            return GitOperationResult<bool>.Failure(operation, CredentialFailureMessage(operation), "The tab-scoped credential module could not complete the operation.", GitOperationFailureKind.Unknown);
+            return new GitOperationResult<bool>(operation, false, CredentialFailureMessage(operation), Value: default, Diagnostic: "The tab-scoped credential module could not complete the operation.", FailureKind: GitOperationFailureKind.Unknown);
         }
     }
 
@@ -378,34 +368,21 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
 
         if (!result.Succeeded)
         {
-            return GitOperationResult<TValue>.Failure(
-                result.Operation,
-                result.Message,
-                result.Diagnostic,
-                ParseFailureKind(result.FailureKind));
+            return new GitOperationResult<TValue>(result.Operation, false, result.Message, Value: default, Diagnostic: result.Diagnostic, FailureKind: ParseFailureKind(result.FailureKind));
         }
 
         if (result.Value is null)
         {
-            return GitOperationResult<TValue>.Failure(
-                result.Operation,
-                result.Message,
-                $"Browser Git operation '{result.Operation}' succeeded without a value.");
+            return new GitOperationResult<TValue>(result.Operation, false, result.Message, Value: default, Diagnostic: $"Browser Git operation '{result.Operation}' succeeded without a value.");
         }
 
         try
         {
-            return GitOperationResult<TValue>.Success(
-                result.Operation,
-                result.Message,
-                mapValue(result.Value));
+            return new GitOperationResult<TValue>(result.Operation, true, result.Message, mapValue(result.Value));
         }
         catch (Exception)
         {
-            return GitOperationResult<TValue>.Failure(
-                operation,
-                $"Browser Git operation '{operation}' returned an unexpected response.",
-                "The response value did not match the expected contract.");
+            return new GitOperationResult<TValue>(operation, false, $"Browser Git operation '{operation}' returned an unexpected response.", Value: default, Diagnostic: "The response value did not match the expected contract.");
         }
     }
 
@@ -418,12 +395,8 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         var result = await InvokeResponseAsync<object>(operation, identifier, cancellationToken, args);
 
         return result.Succeeded
-            ? GitOperationResult.Success(result.Operation, result.Message)
-            : GitOperationResult.Failure(
-                result.Operation,
-                result.Message,
-                result.Diagnostic,
-                ParseFailureKind(result.FailureKind));
+            ? new GitOperationResult(result.Operation, true, result.Message)
+            : new GitOperationResult(result.Operation, false, result.Message, Diagnostic: result.Diagnostic, FailureKind: ParseFailureKind(result.FailureKind));
     }
 
     private static GitOperationFailureKind? ParseFailureKind(string? failureKind) => failureKind switch
@@ -522,43 +495,28 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
 
             if (response is null)
             {
-                return GitOperationResult.Failure(
-                    "initialize",
-                    "Browser Git storage could not be initialized.",
-                    "The JavaScript initialize operation did not return a response.");
+                return new GitOperationResult("initialize", false, "Browser Git storage could not be initialized.", Diagnostic: "The JavaScript initialize operation did not return a response.");
             }
 
             return response.Succeeded
-                ? GitOperationResult.Success(response.Operation, response.Message)
-                : GitOperationResult.Failure(response.Operation, response.Message, response.Diagnostic);
+                ? new GitOperationResult(response.Operation, true, response.Message)
+                : new GitOperationResult(response.Operation, false, response.Message, Diagnostic: response.Diagnostic);
         }
         catch (OperationCanceledException)
         {
-            return GitOperationResult.Failure(
-                "initialize",
-                "Browser Git storage initialization was canceled.",
-                "The operation was canceled before initialization completed.");
+            return new GitOperationResult("initialize", false, "Browser Git storage initialization was canceled.", Diagnostic: "The operation was canceled before initialization completed.");
         }
         catch (JSException)
         {
-            return GitOperationResult.Failure(
-                "initialize",
-                "Browser Git storage could not be initialized.",
-                "JavaScript initialization failed without exposing exception details.");
+            return new GitOperationResult("initialize", false, "Browser Git storage could not be initialized.", Diagnostic: "JavaScript initialization failed without exposing exception details.");
         }
         catch (InvalidOperationException)
         {
-            return GitOperationResult.Failure(
-                "initialize",
-                "Browser Git storage could not be initialized.",
-                "The JavaScript module was unavailable or could not be imported.");
+            return new GitOperationResult("initialize", false, "Browser Git storage could not be initialized.", Diagnostic: "The JavaScript module was unavailable or could not be imported.");
         }
         catch (Exception)
         {
-            return GitOperationResult.Failure(
-                "initialize",
-                "Browser Git storage could not be initialized.",
-                "An unexpected initialization boundary failure occurred.");
+            return new GitOperationResult("initialize", false, "Browser Git storage could not be initialized.", Diagnostic: "An unexpected initialization boundary failure occurred.");
         }
     }
 

@@ -2,18 +2,18 @@
 
 ## Status and scope
 
-This document is the durable architecture baseline for Browser Git. It describes the implemented browser-local repository workflow, the D018 target Resource boundary, and the controlled migration between them. It is intentionally broader than an Accessor API catalogue: a contributor should be able to trace ownership, dependencies, composition, every supported workflow, failures, verification, risks, and extension rules from this document.
+This document is the durable architecture baseline for Browser Git. It describes the implemented browser-local repository workflow and its D018 Resource boundary. It is intentionally broader than an Accessor API catalogue: a contributor should be able to trace ownership, dependencies, composition, every supported workflow, failures, verification, risks, and extension rules from this document.
 
 | Field | Value |
 |---|---|
-| Architecture status | Approved target design |
-| Current implementation baseline | Browser Git workflow through Client, Manager, and Accessor is implemented |
-| D018 Resource relocation | Designed here; production source relocation is assigned to S04 T02 and is not claimed by this documentation task |
-| Runtime behavior | Unchanged by S04 T01 |
+| Architecture status | Implemented architecture |
+| Current implementation baseline | Browser Git workflow through Client, Manager, Accessor, and passive Resource contracts is implemented |
+| D018 Resource relocation | Implemented by S04 T02 and enforced by source-path-specific architecture contracts |
+| Runtime behavior | Payload shapes, scoped composition, cancellation, credentials, and workflow behavior are unchanged |
 | Review date | 2026-09-25 |
 | Governing policy | `docs/IDESIGN.md` and `docs/IDESIGN-REVIEW.md` |
 
-The operation signatures and behavioral invariants below remain authoritative during relocation. “Current” means the source tree before T02. “Target” means the required final source tree after T02. Documentation checks can prove that the design names the target; only compile, architecture, Manager, and browser verification after the move can prove that production uses it.
+The operation signatures and behavioral invariants below are authoritative. “Current” describes the final source tree after T02. “Target” documents the same required topology so future changes can be compared against it. Compile, architecture, Manager, and browser verification jointly prove the implementation rather than relying on documentation claims.
 
 ## Architecture overview
 
@@ -39,7 +39,7 @@ RepositoryWorkspaceManager + RepositoryWorkspaceState       Manager
 
 `Program.cs` is the Client composition root. It creates one scoped `BrowserGitAccessor` and exposes that same instance through both Accessor capability interfaces. The scoped `RepositoryWorkspaceManager` receives both facets. The Manager owns use-case order and observable UI state; the Accessor owns browser/platform integration, trust-boundary validation, response translation, credential redaction, and JavaScript module lifetime.
 
-The current source keeps shared request, result, value, and failure records in `Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs` under `AlmToo.Accessor.BrowserGitAccessor.Interface`. That placement is transitional, not the target architecture.
+The current source keeps shared request, result, value, and failure records in `Resource/BrowserGitResource/Data/BrowserGitContracts.cs` under `AlmToo.Resource.BrowserGitResource.Data`. The Accessor Interface directory now contains only the two capability interfaces; the former Accessor-owned DTO file no longer exists.
 
 ### Target topology
 
@@ -76,8 +76,7 @@ The singular `Resource` and `BrowserGitResource` nomenclature is exact. The targ
 | `IBrowserFileAccessor` | Accessor interface | Define browser-workspace file capabilities | Implemented; retained |
 | `BrowserGitAccessor` | Accessor service | Integrate .NET with browser filesystem, Git, remote transport, and credential storage | Implemented |
 | `browserGitEngine.js`, `pushCredentialSession.js` | Accessor implementation | Execute browser Git/filesystem and tab credential operations | Implemented |
-| Current `Accessor/.../BrowserGitContracts.cs` | Transitional Accessor contract data | Carry shared passive values | Implemented but superseded as target ownership |
-| Target `Resource/BrowserGitResource/Data/BrowserGitContracts.cs` | Resource | Carry shared passive records and enums with no behavior | Designed; T02 migration pending |
+| `Resource/BrowserGitResource/Data/BrowserGitContracts.cs` | Resource | Carry shared passive records and enums with no behavior | Implemented and enforced |
 
 No Engine service is required. Workflow sequencing belongs to the Manager, while integration and trust-boundary checks belong to the Accessor. There is no independent deterministic domain algorithm substantial enough to justify an Engine.
 
@@ -87,7 +86,7 @@ No Engine service is required. Workflow sequencing belongs to the Manager, while
 
 - Client repository components call the concrete `RepositoryWorkspaceManager` and read `RepositoryWorkspaceState`.
 - The Manager calls `IBrowserGitAccessor` and `IBrowserFileAccessor`.
-- After T02, Client-facing Manager state, the Manager, Accessor interfaces, and Accessor service may reference passive types in `AlmToo.Resource.BrowserGitResource.Data`.
+- Client-facing Manager state, the Manager, Accessor interfaces, and Accessor service may reference passive types in `AlmToo.Resource.BrowserGitResource.Data`.
 - `BrowserGitAccessor` calls browser JavaScript modules and platform/vendor APIs.
 - `Program.cs` references Client, Manager, and Accessor registration types solely to compose the scoped object graph.
 - Tests may substitute the two Accessor interfaces to verify Manager workflows.
@@ -99,7 +98,7 @@ No Engine service is required. Workflow sequencing belongs to the Manager, while
 - Accessors must not depend on Clients, Managers, `RepositoryWorkspaceState`, or presentation behavior.
 - Accessors must not choose workflow order, automatic retry, push confirmation, or UI recovery guidance.
 - Resources must not call any service or contain algorithms, methods, validation, I/O, mutable workflow state, or executable bodies.
-- The passive contracts must not remain declared in an Accessor interface file after T02 and must not move to plural `Resources`, global `Models`, or generic `Common` placement.
+- The passive contracts must not be declared in an Accessor interface file and must not move to plural `Resources`, global `Models`, or generic `Common` placement.
 - Composition must not create separate concrete Accessor instances for the Git and file facets.
 
 The runtime call direction is `Client -> Manager -> Accessor -> platform`. Resource references carry data laterally and do not reverse the runtime call graph.
@@ -151,7 +150,7 @@ Every public operation except disposal accepts an optional `CancellationToken`. 
 
 ### Interface signatures
 
-After T02 the interfaces import `AlmToo.Resource.BrowserGitResource.Data`; operation shapes remain unchanged.
+The interfaces import `AlmToo.Resource.BrowserGitResource.Data`; operation shapes remain unchanged.
 
 ```csharp
 using AlmToo.Resource.BrowserGitResource.Data;
@@ -179,7 +178,7 @@ public interface IBrowserFileAccessor
 
 ## Resource contract catalogue
 
-The canonical target contract file is `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` in namespace `AlmToo.Resource.BrowserGitResource.Data`. It contains only the passive records and enums listed below. Public payload field order, names, nullability, and JSON behavior remain unchanged during relocation.
+The canonical contract file is `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` in namespace `AlmToo.Resource.BrowserGitResource.Data`. It contains only the passive records and enums listed below. Public payload field order, names, nullability, and JSON behavior remained unchanged during relocation.
 
 ### Result and failure contracts
 
@@ -187,7 +186,7 @@ The canonical target contract file is `AlmToo/Resource/BrowserGitResource/Data/B
 
 Fields are `Operation`, `Succeeded`, `Message`, optional `Value`, optional `Diagnostic`, and optional `FailureKind`. `Message` is always credential-free and safe to render. `Diagnostic` is credential-free technical detail that the presentation must not render. `Value` is meaningful only when `Succeeded` is true.
 
-Static `Success` and `Failure` factory methods are transitional executable helpers and are removed in T02. Callers construct records explicitly so the Resource has no methods or executable bodies.
+The former static `Success` and `Failure` factory methods were removed in T02. Callers construct records explicitly so the Resource has no methods or executable bodies.
 
 #### `GitOperationFailureKind`
 
@@ -337,13 +336,13 @@ Cancellation publishes `WasCancelled`, a failed result, and credential-free text
 |---:|---|---|
 | 1 | Establish Client -> Manager -> Accessor workflow, split Git/file capability interfaces, and scoped shared composition | Implemented |
 | 2 | Document complete current/target architecture and D018 ownership | Implemented by S04 T01 |
-| 3 | Create `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` with namespace `AlmToo.Resource.BrowserGitResource.Data` | Pending S04 T02 |
-| 4 | Move only passive records/enums; remove `GitOperationResult` factory methods and use explicit construction | Pending S04 T02 |
-| 5 | Import Resource contracts from Accessor interfaces/service, Manager/state, and tests; delete old Accessor DTO declarations | Pending S04 T02 |
-| 6 | Enforce singular placement, Resource purity, legal dependencies, and unchanged composition with negative fixtures | Pending S04 T02 |
-| 7 | Run Node, xUnit, warning-as-error build, and autonomous browser workflows | Pending S04 T02/T03 |
+| 3 | Create `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` with namespace `AlmToo.Resource.BrowserGitResource.Data` | Implemented by S04 T02 |
+| 4 | Move only passive records/enums; remove `GitOperationResult` factory methods and use explicit construction | Implemented by S04 T02 |
+| 5 | Import Resource contracts from Accessor interfaces/service, Manager/state, and tests; delete old Accessor DTO declarations | Implemented by S04 T02 |
+| 6 | Enforce singular placement, Resource purity, legal dependencies, and unchanged composition with negative fixtures | Implemented by S04 T02 |
+| 7 | Run Node, xUnit, warning-as-error build, and autonomous browser workflows | Node, xUnit, and build complete in S04 T02; autonomous browser re-proof remains S04 T03 |
 
-The migration is a source ownership change, not a payload redesign. It must preserve record shapes, serialization, operation names, cancellation, credential handling, scoped composition, and browser behavior. Compiler errors are the intended detector for stale namespace consumers. T01 does not claim that steps 3–7 have happened.
+The migration was a source ownership change, not a payload redesign. It preserved record shapes, serialization, operation names, cancellation, credential handling, scoped composition, and browser behavior. Compiler errors and source-path architecture rules detect stale namespace consumers.
 
 ## Testing and observability strategy
 
@@ -396,7 +395,7 @@ Every extension must update layer assignment, dependency rules, interface justif
 
 ## iDesign review
 
-This implementation-state review copies every section of `docs/IDESIGN-REVIEW.md`. It evaluates the production tree at S04 T01 and the approved D018 migration boundary. The pending source relocation is explicitly tracked above and is not represented as runtime-complete.
+This implementation-state review copies every section of `docs/IDESIGN-REVIEW.md`. It evaluates the final production tree after the S04 T02 D018 Resource relocation.
 
 ### 1. Layer assignments
 
@@ -407,8 +406,7 @@ This implementation-state review copies every section of `docs/IDESIGN-REVIEW.md
 | `RepositoryWorkspaceState` | Manager | Hold credential-free observable workflow state | passive Resource values | Accessor implementation, platform I/O |
 | `IBrowserGitAccessor`, `IBrowserFileAccessor` | Accessor | Define browser/platform capability boundaries | passive Resource records, framework cancellation/lifetime | Manager, Client, workflow state |
 | `BrowserGitAccessor` and JS modules | Accessor | Integrate browser filesystem, Git transport, credential storage, and translate failures | browser/vendor APIs, passive Resource records | Manager, Client, workflow sequencing |
-| Current `BrowserGitContracts.cs` | Accessor contract data | Transitional shared values before T02 | data types | target ownership after T02 |
-| Target `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` | Resource | Passive cross-boundary records and enums | data types only | methods, policy, validation, I/O, mutable Manager state |
+| `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` | Resource | Passive cross-boundary records and enums | data types only | methods, policy, validation, I/O, mutable Manager state |
 | `Program.cs` | Client composition root | Compose one scoped Accessor instance and concrete Manager | registration types | repository workflow or integration behavior |
 
 No Engine is present because there is no independent deterministic domain algorithm in this integration-focused subsystem.
@@ -421,9 +419,9 @@ No Engine is present because there is no independent deterministic domain algori
 - [x] The concrete Manager calls no other Manager.
 - [x] Engine constraints are NOT APPLICABLE because no Engine participates.
 - [x] Accessors own integration, boundary validation, translation, and lifetime but not workflow or presentation.
-- [x] Clients contain no integration behavior, and the target Resource contains no domain algorithm.
+- [x] Clients contain no integration behavior, and the implemented Resource contains no domain algorithm.
 - [x] Passive Resource references do not reverse the runtime call graph.
-- [x] The current DTO location is identified as transitional and the exact D018 move is scheduled rather than falsely claimed.
+- [x] The exact D018 source path and namespace are implemented, and no Accessor Interface DTO declaration remains.
 
 **Result:** PASS
 
@@ -469,7 +467,7 @@ These are capability facets of one genuine external platform boundary, not inter
 
 ### 6. Exceptions
 
-None. `Program.cs` references registration types solely as the Client composition root and owns no runtime repository workflow. The transitional DTO source location is scheduled migration work, not an accepted architectural exception or a claim that the target is already implemented.
+None. `Program.cs` references registration types solely as the Client composition root and owns no runtime repository workflow. The Resource contract uses the required singular placement and contains only passive data.
 
 **Result:** NOT APPLICABLE — there are no intentional exceptions.
 

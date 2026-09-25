@@ -112,8 +112,8 @@ export function inspectDesign(document) {
     [resource, /No credential field exists/i, 'credential-free Resource contract'],
     [failuresSection, /JavaScript module import[\s\S]*Browser filesystem[\s\S]*GitHub clone[\s\S]*GitHub push[\s\S]*sessionStorage[\s\S]*Cancellation/i, 'external dependency failure paths'],
     [failuresSection, /Node architecture tests report rule and source path[\s\S]*Playwright retains failure-only trace\/screenshots/i, 'failure localization surfaces'],
-    [migration, /Pending S04 T02[\s\S]*Pending S04 T02\/T03/, 'truthful staged implementation status'],
-    [migration, /T01 does not claim that steps 3[–-]7 have happened/i, 'no premature runtime migration claim'],
+    [migration, /Implemented by S04 T02[\s\S]*autonomous browser re-proof remains S04 T03/, 'truthful staged implementation status'],
+    [migration, /source ownership change[\s\S]*preserved record shapes[\s\S]*source-path architecture rules detect stale namespace consumers/i, 'completed Resource migration contract'],
     [testing, /browserGitDesignContractTests\.mjs[\s\S]*browserGitArchitectureGateTests\.mjs[\s\S]*RepositoryWorkspaceManagerTests\.cs[\s\S]*Playwright/i, 'layered verification strategy'],
     [load, /10x[\s\S]*SemaphoreSlim[\s\S]*fail fast/i, '10x breakpoint and protection'],
     [risks, /storage quotas[\s\S]*CORS[\s\S]*Large repositories[\s\S]*credential leak/i, 'known operational and security risks'],
@@ -209,15 +209,16 @@ test('negative fixtures require a platform-boundary justification for both retai
   assertRule(inspectDesign(unjustified), 'DESIGN_CONTENT_MISSING');
 });
 
-test('the document is truthful about current and target ownership rather than claiming runtime migration proof', async () => {
+test('the document is truthful about implemented Resource ownership and remaining browser re-proof', async () => {
   const design = await readDesign();
   const status = headingBody(design, 'Status and scope');
   const current = headingBody(design, 'Current-state topology');
   const migration = headingBody(design, 'Migration sequence and implementation status');
 
-  assert.match(status, /production source relocation[\s\S]*not claimed by this documentation task/i);
-  assert.match(current, /current source keeps[\s\S]*Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs[\s\S]*transitional, not the target architecture/i);
-  assert.match(migration, /Create `AlmToo\/Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs`[\s\S]*Pending S04 T02/);
+  assert.match(status, /D018 Resource relocation[\s\S]*Implemented by S04 T02/i);
+  assert.match(current, /current source keeps[\s\S]*Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs[\s\S]*former Accessor-owned DTO file no longer exists/i);
+  assert.match(migration, /Create `AlmToo\/Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs`[\s\S]*Implemented by S04 T02/);
+  assert.match(migration, /autonomous browser re-proof remains S04 T03/);
 });
 
 test('package test script includes design, architecture, Accessor, engine, credential, and Client contracts', async () => {

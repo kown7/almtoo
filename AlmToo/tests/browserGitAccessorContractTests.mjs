@@ -5,22 +5,26 @@ import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
 const source = name => readFile(new URL(name, root), 'utf8');
 
-test('Browser Git contracts use the approved adjacent generic namespace and exact facets', async () => {
+test('Browser Git interfaces and passive Resource contracts use their exact separated namespaces', async () => {
   const [git, file, contracts] = await Promise.all([
     source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
     source('Accessor/BrowserGitAccessor/Interface/IBrowserFileAccessor.cs'),
-    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs')
+    source('Resource/BrowserGitResource/Data/BrowserGitContracts.cs')
   ]);
-  for (const text of [git, file, contracts]) {
-    assert.match(text, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface;/);
-    assert.doesNotMatch(text, /\.Context|Resources/);
+  for (const facet of [git, file]) {
+    assert.match(facet, /using AlmToo\.Resource\.BrowserGitResource\.Data;/);
+    assert.match(facet, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface;/);
   }
+  assert.match(contracts, /namespace AlmToo\.Resource\.BrowserGitResource\.Data;/);
+  assert.doesNotMatch(git + file + contracts, /AlmToo\.Resources|\.Context\b/);
+  for (const facet of [git, file]) assert.doesNotMatch(facet, /\b(?:record|enum)\s+(?:GitOperationResult|PushRequest|FilterFilesRequest)\b/);
   assert.match(git, /interface IBrowserGitAccessor : IAsyncDisposable/);
   for (const operation of ['CloneOrOpenAsync', 'GetStatusAsync', 'CommitAsync', 'InspectPushAsync', 'HasCredentialAsync', 'StoreCredentialAsync', 'ForgetCredentialAsync', 'PushAsync']) assert.match(git, new RegExp(operation));
   assert.match(file, /FilterFilesAsync\(FilterFilesRequest request/);
   assert.match(file, /UpdateFilesAsync\(UpdateFilesRequest request/);
   assert.doesNotMatch(git + file, /personalAccessToken|InitializeAsync|ListFilesAsync|ReadTextFileAsync|WriteTextFileAsync/);
-  for (const dto of ['FilterFilesRequest', 'FilterFilesResult', 'UpdateFilesRequest', 'UpdateFilesResult', 'PushReview', 'PushRequest', 'PushResult']) assert.match(contracts, new RegExp(`record ${dto}\\b`));
+  for (const dto of ['GitOperationResult', 'FilterFilesRequest', 'FilterFilesResult', 'UpdateFilesRequest', 'UpdateFilesResult', 'PushReview', 'PushRequest', 'PushResult']) assert.match(contracts, new RegExp(`record ${dto}\\b`));
+  assert.doesNotMatch(contracts, /\b(?:static|class|interface)\b|\b(?:Success|Failure)\s*\(|=>/);
 });
 
 test('one scoped Service implements both facets and both DI contracts resolve that instance', async () => {

@@ -1,3 +1,5 @@
+using AlmToo.Resource.BrowserGitResource.Data;
+
 namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 /// <summary>Isolates browser-workspace file operations behind a capability-specific platform seam.</summary>
