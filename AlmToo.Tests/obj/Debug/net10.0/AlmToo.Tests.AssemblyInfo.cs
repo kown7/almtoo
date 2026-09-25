@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AlmToo.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a19a79156543fc750986d4d48c9778debc64455d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6a7b9cea0b02906abf69202dead944478efd5a8f")]
 [assembly: System.Reflection.AssemblyProductAttribute("AlmToo.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AlmToo.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
