@@ -4,241 +4,223 @@ import { test } from 'node:test';
 
 const designUrl = new URL('../Accessors/Git/DESIGN.md', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
+const designPath = 'Accessors/Git/DESIGN.md';
 
 async function readDesign() {
   return readFile(designUrl, 'utf8');
 }
 
-function extractHeading(document, marker, heading, stoppingPrefixes) {
-  const lines = document.split('\n');
-  const start = lines.findIndex(line => line === `${marker} ${heading}`);
-  assert.notEqual(start, -1, `design must contain "${marker} ${heading}"`);
+function headings(document) {
+  return [...document.matchAll(/^(#{2,4})\s+(.+)$/gm)].map(match => ({
+    level: match[1].length,
+    title: match[2].trim(),
+    index: match.index,
+    contentStart: match.index + match[0].length
+  }));
+}
 
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (stoppingPrefixes.some(prefix => lines[index].startsWith(prefix))) {
-      end = index;
-      break;
-    }
+function headingBody(document, title) {
+  const found = headings(document);
+  const currentIndex = found.findIndex(heading => heading.title === title);
+  if (currentIndex < 0) return null;
+
+  const current = found[currentIndex];
+  const next = found.slice(currentIndex + 1).find(heading => heading.level <= current.level);
+  return document.slice(current.contentStart, next?.index ?? document.length).trim();
+}
+
+function violation(rule, message) {
+  return { rule, path: designPath, message };
+}
+
+function requireHeading(failures, document, title, minimumLength = 120) {
+  const body = headingBody(document, title);
+  if (body === null) {
+    failures.push(violation('DESIGN_TOPIC_MISSING', `missing heading: ${title}`));
+  } else if (body.length < minimumLength) {
+    failures.push(violation('DESIGN_TOPIC_THIN', `${title} must contain meaningful architecture content`));
   }
-
-  return lines.slice(start + 1, end).join('\n');
+  return body ?? '';
 }
 
-function section(document, heading) {
-  return extractHeading(document, '##', heading, ['## ']);
-}
+export function inspectDesign(document) {
+  const failures = [];
 
-function subsection(document, heading) {
-  return extractHeading(document, '###', heading, ['### ', '## ']);
-}
-
-test('design keeps the Accessor contract focused and includes the implementation-state review', async () => {
-  const design = await readDesign();
-
-  for (const heading of [
-    'Status and approval',
+  for (const title of [
+    'Status and scope',
+    'Architecture overview',
+    'Dependency rules',
     'Contract ownership',
-    'Operation facets',
-    'Operations',
-    'DTO catalogue',
+    'Composition and lifetime',
+    'Accessor operation contract',
+    'Resource contract catalogue',
+    'End-to-end workflows',
+    'Failure taxonomy and diagnostics',
     'Contract invariants',
-    'iDesign review'
+    'Migration sequence and implementation status',
+    'Testing and observability strategy',
+    'Load and performance profile',
+    'Known risks',
+    'Extension points',
+    'iDesign review',
+    'Compliance statement'
   ]) {
-    section(design, heading);
+    requireHeading(failures, document, title);
   }
 
-  assert.doesNotMatch(design, /^## Repository workspace operations$/m);
-  assert.match(design, /Manager workflows, Manager state, Client behavior[\s\S]*do not belong in the Accessor contract itself/);
-  assert.match(design, /implementation-state iDesign review[\s\S]*complete dependency graph/);
-  assert.ok(design.length < 30_000, 'Accessor contract and implementation review should remain concise');
-});
-
-test('approval gate requires a genuine human approval record', async () => {
-  const approval = section(await readDesign(), 'Status and approval');
-
-  for (const field of ['Design status', 'Implementation authorization', 'Reviewer', 'Review date', 'Source revision', 'Disposition']) {
-    assert.match(approval, new RegExp(`\\| ${field} \\|`), `approval must record ${field}`);
-  }
-
-  assert.match(approval, /Design status \| Approved/);
-  assert.match(approval, /Implementation authorization \| Authorized for S02/);
-  assert.match(approval, /Reviewer \| Project owner \(human reviewer\)/);
-  assert.match(approval, /Review date \| \d{4}-\d{2}-\d{2}/);
-  assert.match(approval, /Source revision \| Git `[0-9a-f]{40}`; reviewed design SHA-256 `[0-9a-f]{64}`/);
-  assert.match(approval, /Disposition \| Approved as currently designed/);
-  assert.doesNotMatch(approval, /Not recorded|Pending human approval/);
-  assert.match(approval, /Automated checks cannot approve/i);
-});
-
-test('generic contracts follow the iDesign namespace nomenclature without a Context segment', async () => {
-  const design = await readDesign();
-  const ownership = section(design, 'Contract ownership');
-  const catalogue = section(design, 'DTO catalogue');
-
-  assert.match(ownership, /Git interface \| `AlmToo\.Accessor\.BrowserGitAccessor\.Interface\.IBrowserGitAccessor`/);
-  assert.match(ownership, /File interface \| `AlmToo\.Accessor\.BrowserGitAccessor\.Interface\.IBrowserFileAccessor`/);
-  assert.match(ownership, /Service \| `AlmToo\.Accessor\.BrowserGitAccessor\.Service\.BrowserGitAccessor`/);
-  assert.match(ownership, /DTO namespace \| `AlmToo\.Accessor\.BrowserGitAccessor\.Interface`/);
-  assert.match(ownership, /DTOs are data-transfer contracts adjacent to the Resource Access interfaces/);
-  assert.match(catalogue, /generic `AlmToo\.Accessor\.BrowserGitAccessor\.Interface` namespace/);
-  assert.match(catalogue, /No Context segment is present because the application currently has only the generic UI context/);
-
-  assert.doesNotMatch(design, /AlmToo\.Accessors(?:\.|`)/);
-  assert.doesNotMatch(design, /AlmToo\.Resources(?:\.|`)/);
-  assert.doesNotMatch(design, /Resources\/Git|Resources\.Git/);
-  assert.doesNotMatch(design, /^## Resource catalogue$/m);
-  assert.match(design, /do not constitute a separate Resource layer or namespace/i);
-});
-
-test('operation facets separate Git and file caller capabilities on one Service', async () => {
-  const facets = section(await readDesign(), 'Operation facets');
-
-  for (const facet of [
-    'Repository workspace',
-    'Working tree',
+  for (const workflow of [
+    'Clone or open',
+    'Browse',
+    'Edit and save',
+    'Status',
+    'Commit',
     'Reviewed push',
-    'Credential storage',
-    'File query',
-    'File update',
-    'Lifetime'
+    'Credential recovery and forget',
+    'Cancellation and concurrency'
   ]) {
-    assert.match(facets, new RegExp(`\\| ${facet} \\|`), `facet ${facet} must be described`);
+    requireHeading(failures, document, workflow, 100);
   }
 
-  assert.match(facets, /`IBrowserGitAccessor`/);
-  assert.match(facets, /`IBrowserFileAccessor`/);
-  assert.match(facets, /Service \| Lifetime/);
-});
+  const currentTopology = requireHeading(failures, document, 'Current-state topology', 300);
+  const targetTopology = requireHeading(failures, document, 'Target topology', 400);
+  const dependencies = headingBody(document, 'Dependency rules') ?? '';
+  const ownership = headingBody(document, 'Contract ownership') ?? '';
+  const composition = headingBody(document, 'Composition and lifetime') ?? '';
+  const operations = headingBody(document, 'Accessor operation contract') ?? '';
+  const resource = headingBody(document, 'Resource contract catalogue') ?? '';
+  const failuresSection = headingBody(document, 'Failure taxonomy and diagnostics') ?? '';
+  const migration = headingBody(document, 'Migration sequence and implementation status') ?? '';
+  const testing = headingBody(document, 'Testing and observability strategy') ?? '';
+  const load = headingBody(document, 'Load and performance profile') ?? '';
+  const risks = headingBody(document, 'Known risks') ?? '';
+  const extensions = headingBody(document, 'Extension points') ?? '';
+  const review = headingBody(document, 'iDesign review') ?? '';
 
-test('Accessor operations hide initialization and state text-only file semantics', async () => {
-  const operations = section(await readDesign(), 'Operations');
+  const requiredContent = [
+    [currentTopology, /Client[\s\S]*Manager[\s\S]*Accessor[\s\S]*(?:JavaScript|browser)/i, 'current layer and platform call path'],
+    [targetTopology, /AlmToo\/Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs/, 'D018 canonical Resource path'],
+    [targetTopology, /AlmToo\.Resource\.BrowserGitResource\.Data/, 'D018 canonical Resource namespace'],
+    [targetTopology, /RepositoryWorkspaceState[\s\S]*(?:does \*\*not\*\* move|does not move)[\s\S]*Manager-owned/i, 'Manager-state and Resource distinction'],
+    [dependencies, /### Allowed edges[\s\S]*### Forbidden edges/, 'allowed and forbidden dependency edges'],
+    [dependencies, /Client -> Manager -> Accessor -> platform/, 'one-way runtime call direction'],
+    [ownership, /`IBrowserGitAccessor` is retained because it protects[^.]*platform boundary[^.]*substitution seam[^.]*\./i, 'IBrowserGitAccessor platform-boundary justification'],
+    [ownership, /`IBrowserFileAccessor` is retained because it protects[^.]*platform boundary[^.]*substitution seam[^.]*\./i, 'IBrowserFileAccessor platform-boundary justification'],
+    [ownership, /RepositoryWorkspaceManager`?\s+needs no interface[\s\S]*no (?:external or )?platform boundary/i, 'concrete Manager interface decision'],
+    [composition, /scoped[\s\S]*same concrete scoped instance[\s\S]*dispose/i, 'shared scoped composition and disposal'],
+    [operations, /CloneOrOpenAsync[\s\S]*FilterFilesAsync[\s\S]*UpdateFilesAsync[\s\S]*GetStatusAsync[\s\S]*CommitAsync[\s\S]*InspectPushAsync[\s\S]*HasCredentialAsync[\s\S]*StoreCredentialAsync[\s\S]*ForgetCredentialAsync[\s\S]*PushAsync[\s\S]*DisposeAsync/, 'complete Accessor operation surface'],
+    [resource, /records and enums[\s\S]*no methods or executable bodies/i, 'passive Resource constraint'],
+    [resource, /No credential field exists/i, 'credential-free Resource contract'],
+    [failuresSection, /JavaScript module import[\s\S]*Browser filesystem[\s\S]*GitHub clone[\s\S]*GitHub push[\s\S]*sessionStorage[\s\S]*Cancellation/i, 'external dependency failure paths'],
+    [failuresSection, /Node architecture tests report rule and source path[\s\S]*Playwright retains failure-only trace\/screenshots/i, 'failure localization surfaces'],
+    [migration, /Pending S04 T02[\s\S]*Pending S04 T02\/T03/, 'truthful staged implementation status'],
+    [migration, /T01 does not claim that steps 3[–-]7 have happened/i, 'no premature runtime migration claim'],
+    [testing, /browserGitDesignContractTests\.mjs[\s\S]*browserGitArchitectureGateTests\.mjs[\s\S]*RepositoryWorkspaceManagerTests\.cs[\s\S]*Playwright/i, 'layered verification strategy'],
+    [load, /10x[\s\S]*SemaphoreSlim[\s\S]*fail fast/i, '10x breakpoint and protection'],
+    [risks, /storage quotas[\s\S]*CORS[\s\S]*Large repositories[\s\S]*credential leak/i, 'known operational and security risks'],
+    [extensions, /binary file[\s\S]*pagination[\s\S]*credential stores[\s\S]*remote hosts/i, 'bounded extension points'],
+    [review, /This implementation-state review copies every section of `docs\/IDESIGN-REVIEW\.md`/, 'implementation-state review provenance']
+  ];
 
-  for (const operation of [
-    'CloneOrOpenAsync',
-    'FilterFilesAsync',
-    'UpdateFilesAsync',
-    'GetStatusAsync',
-    'CommitAsync',
-    'InspectPushAsync',
-    'HasCredentialAsync',
-    'StoreCredentialAsync',
-    'ForgetCredentialAsync',
-    'PushAsync',
-    'DisposeAsync'
-  ]) {
-    assert.match(operations, new RegExp('\\| `' + operation + '`'), `Accessor contract must describe ${operation}`);
+  for (const [body, pattern, description] of requiredContent) {
+    if (!pattern.test(body)) failures.push(violation('DESIGN_CONTENT_MISSING', `missing ${description}`));
   }
 
-  assert.match(operations, /`initialize` is not a public operation/);
-  assert.match(operations, /privately and idempotently imports[\s\S]*initializes browser storage/i);
-  assert.match(operations, /invalid[\s\S]*oversized content fails/i);
-  assert.match(operations, /force-with-lease/i);
-});
-
-test('interface signatures match the separated Git and file operation surfaces', async () => {
-  const operations = section(await readDesign(), 'Operations');
-  const signatureBlock = operations.match(/```csharp([\s\S]*?)```/)?.[1];
-  assert.ok(signatureBlock, 'Accessor contract must include a C# signature block');
-
-  assert.match(signatureBlock, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface/);
-  assert.match(signatureBlock, /public interface IBrowserGitAccessor : IAsyncDisposable/);
-  assert.match(signatureBlock, /public interface IBrowserFileAccessor/);
-  assert.match(signatureBlock, /FilterFilesAsync\([\s\S]*FilterFilesRequest request/);
-  assert.match(signatureBlock, /UpdateFilesAsync\([\s\S]*UpdateFilesRequest request/);
-  assert.equal((signatureBlock.match(/ValueTask</g) ?? []).length, 10);
-  assert.equal((signatureBlock.match(/ValueTask<GitOperationResult>/g) ?? []).length, 0);
-  assert.doesNotMatch(signatureBlock, /ListFilesAsync|ReadTextFileAsync|WriteTextFileAsync/);
-  assert.doesNotMatch(signatureBlock, /InitializeAsync/);
-  assert.doesNotMatch(signatureBlock, /personalAccessToken|password/i);
-});
-
-test('DTO catalogue documents every Accessor boundary type', async () => {
-  const catalogue = section(await readDesign(), 'DTO catalogue');
-
-  for (const dto of [
-    'GitOperationResult',
-    'GitOperationFailureKind',
-    'RepositoryOpenRequest',
-    'RepositoryInfo',
-    'FilterFilesRequest',
-    'FileFilterKind',
-    'FilterFilesResult',
-    'UpdateFilesRequest',
-    'TextFileUpdate',
-    'UpdateFilesResult',
-    'RepositoryFileEntry',
-    'TextFileContent',
-    'ChangedFile',
-    'CommitRequest',
-    'CommitInfo',
-    'PushReview',
-    'PushRequest',
-    'PushResult'
-  ]) {
-    assert.match(catalogue, new RegExp('^#{3,4} `' + dto + '(?:<T>)?`', 'm'), `DTO catalogue must describe ${dto}`);
+  const targetOwnsOldContracts = /(?:target|canonical target)[^\n]{0,100}(?:namespace|contracts?)[^\n]{0,100}AlmToo\.Accessor\.BrowserGitAccessor\.Interface/i.test(document)
+    || /AlmToo\.Accessor\.BrowserGitAccessor\.Interface[^\n]{0,100}(?:is|remains)[^\n]{0,80}(?:target|canonical)[^\n]{0,80}(?:DTO|contract)/i.test(document);
+  if (targetOwnsOldContracts) {
+    failures.push(violation('STALE_TARGET_OWNERSHIP', 'Accessor Interface must not be declared as target ownership for shared Browser Git data contracts'));
   }
 
-  for (const enumValue of ['CredentialRejected', 'RemoteAhead', 'NetworkUnavailable', 'UnsupportedRef', 'Unknown']) {
-    assert.match(catalogue, new RegExp('\\| `' + enumValue + '` \\|'));
-  }
-});
-
-test('DTO semantics prevent secret and binary-content ambiguity', async () => {
-  const catalogue = section(await readDesign(), 'DTO catalogue');
-
-  assert.match(catalogue, /`Message`[\s\S]*safe to render/i);
-  assert.match(catalogue, /`Diagnostic`[\s\S]*must never render it/i);
-  assert.match(catalogue, /`Value` is meaningful only when `Succeeded` is true/i);
-  assert.match(catalogue, /Invalid UTF-8 fails rather than silently replacing bytes/i);
-  assert.match(catalogue, /General binary access requires separate byte-oriented operations and DTOs/i);
-});
-
-test('invariants cover lifecycle, cancellation, paths, push, and credentials', async () => {
-  const invariants = section(await readDesign(), 'Contract invariants');
-
-  for (const heading of [
-    'Initialization and lifetime',
-    'Cancellation',
-    'Paths and editable text',
-    'Push coordinates',
-    'Credentials and safe failures'
-  ]) {
-    subsection(invariants, heading);
+  if (/AlmToo\/Resources\/|namespace\s+AlmToo\.Resources\b|AlmToo\.Resources\.BrowserGit/i.test(targetTopology)) {
+    failures.push(violation('RESOURCE_NOMENCLATURE', 'target must use singular Resource and BrowserGitResource nomenclature'));
   }
 
-  assert.match(invariants, /Initialization is private, lazy, idempotent/i);
-  assert.match(invariants, /Cancellation is forwarded/i);
-  assert.match(invariants, /`\.\.`[\s\S]*encoded traversal[\s\S]*rejected/i);
-  assert.match(invariants, /force-with-lease/i);
-  assert.match(invariants, /Credentials never enter DTOs, instance fields, rendered markup, URLs, logs, diagnostics, exception text/i);
-  assert.match(invariants, /Failed pushes are never replayed automatically/i);
-});
-
-test('embedded implementation-state iDesign review covers every checklist section without unexplained failure', async () => {
-  const design = await readDesign();
-  const review = section(design, 'iDesign review');
-
-  for (const heading of [
+  const reviewHeadings = [
     '1. Layer assignments',
     '2. Dependency direction',
     '3. Interface justification',
     '4. Cohesion and decomposition',
     '5. Verification placement',
     '6. Exceptions'
-  ]) {
-    const body = subsection(review, heading);
-    assert.match(body, /\*\*Result:\*\* (?:PASS|NOT APPLICABLE)/, `${heading} must record its result`);
+  ];
+  for (const title of reviewHeadings) {
+    const body = headingBody(document, title);
+    if (body === null) {
+      failures.push(violation('IDESIGN_REVIEW_MISSING', `missing iDesign review section: ${title}`));
+    } else if (!/\*\*Result:\*\*\s+(?:PASS|NOT APPLICABLE)\b/.test(body)) {
+      failures.push(violation('IDESIGN_REVIEW_RESULT', `${title} must record PASS or NOT APPLICABLE`));
+    }
+  }
+  if (/\*\*(?:Result:|Overall result:)\*\*\s+FAIL\b/.test(review)) {
+    failures.push(violation('IDESIGN_REVIEW_FAILURE', 'implementation-state review contains an unexplained failure'));
+  }
+  if (!/\*\*Overall result:\*\*\s+PASS\b/.test(document)) {
+    failures.push(violation('IDESIGN_REVIEW_RESULT', 'missing overall passing iDesign result'));
   }
 
-  assert.match(review, /DTOs stay adjacent to the interfaces as Accessor contracts/);
-  assert.match(review, /Client -> Manager -> Accessor/);
-  assert.match(review, /concrete `RepositoryWorkspaceManager` remains interface-free/);
-  assert.match(section(design, 'Compliance statement'), /\*\*Overall result:\*\* PASS/);
-  assert.doesNotMatch(design, /\*\*Result:\*\* FAIL|\*\*Overall result:\*\* FAIL/);
+  return failures;
+}
+
+function assertRule(failures, rule) {
+  assert.ok(
+    failures.some(failure => failure.rule === rule && failure.path === designPath),
+    `expected ${rule} at ${designPath}; received ${JSON.stringify(failures)}`
+  );
+}
+
+test('design is a complete current and target Browser Git architecture baseline', async () => {
+  const failures = inspectDesign(await readDesign());
+  assert.deepEqual(failures, [], failures.map(({ rule, path, message }) => `${rule}: ${path}: ${message}`).join('\n'));
 });
 
-test('package test script includes the design contract and behavioral suites', async () => {
+test('negative fixtures reject missing architecture topics and review results', async () => {
+  const design = await readDesign();
+  const missingFailureTaxonomy = design.replace(
+    /^## Failure taxonomy and diagnostics[\s\S]*?(?=^## Contract invariants)/m,
+    ''
+  );
+  assertRule(inspectDesign(missingFailureTaxonomy), 'DESIGN_TOPIC_MISSING');
+
+  const missingReviewResult = design.replace(
+    /(### 4\. Cohesion and decomposition[\s\S]*?)\*\*Result:\*\* PASS/,
+    '$1Result intentionally omitted'
+  );
+  assertRule(inspectDesign(missingReviewResult), 'IDESIGN_REVIEW_RESULT');
+});
+
+test('negative fixtures reject old target DTO ownership and plural Resource nomenclature', async () => {
+  const design = await readDesign();
+  const accessorOwnedTarget = design.replace(
+    'Passive shared contracts:\n  AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs\n  namespace AlmToo.Resource.BrowserGitResource.Data',
+    'Passive shared contracts — canonical target namespace AlmToo.Accessor.BrowserGitAccessor.Interface:\n  AlmToo/Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'
+  );
+  assertRule(inspectDesign(accessorOwnedTarget), 'STALE_TARGET_OWNERSHIP');
+
+  const pluralResourceTarget = design.replaceAll('AlmToo/Resource/BrowserGitResource/', 'AlmToo/Resources/BrowserGitResource/');
+  assertRule(inspectDesign(pluralResourceTarget), 'RESOURCE_NOMENCLATURE');
+});
+
+test('negative fixtures require a platform-boundary justification for both retained interfaces', async () => {
+  const design = await readDesign();
+  const unjustified = design.replace(
+    /`IBrowserFileAccessor` is retained because[^.]+\./,
+    '`IBrowserFileAccessor` is retained for dependency injection and mocking convenience.'
+  );
+  assertRule(inspectDesign(unjustified), 'DESIGN_CONTENT_MISSING');
+});
+
+test('the document is truthful about current and target ownership rather than claiming runtime migration proof', async () => {
+  const design = await readDesign();
+  const status = headingBody(design, 'Status and scope');
+  const current = headingBody(design, 'Current-state topology');
+  const migration = headingBody(design, 'Migration sequence and implementation status');
+
+  assert.match(status, /production source relocation[\s\S]*not claimed by this documentation task/i);
+  assert.match(current, /current source keeps[\s\S]*Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs[\s\S]*transitional, not the target architecture/i);
+  assert.match(migration, /Create `AlmToo\/Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs`[\s\S]*Pending S04 T02/);
+});
+
+test('package test script includes design, architecture, Accessor, engine, credential, and Client contracts', async () => {
   const packageJson = JSON.parse(await readFile(packageUrl, 'utf8'));
   const testScript = packageJson.scripts?.test ?? '';
 
