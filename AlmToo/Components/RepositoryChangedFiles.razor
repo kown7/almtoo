@@ -1,15 +1,9 @@
-@using AlmToo.Services.Git
+@using AlmToo.Managers.Repositories
 
 <section class="changed-files" aria-labelledby="changed-files-heading">
     <div class="changed-files__header">
-        <div>
-            <p class="helper-text">Working tree</p>
-            <h2 id="changed-files-heading">Changed files</h2>
-        </div>
-        <button class="changed-files__refresh"
-                type="button"
-                @onclick="OnRefreshRequested"
-                disabled="@IsLoading">
+        <div><p class="helper-text">Working tree</p><h2 id="changed-files-heading">Changed files</h2></div>
+        <button class="changed-files__refresh" type="button" @onclick="OnRefreshRequested" disabled="@State.IsBusy">
             @(IsLoading ? "Refreshing..." : "Refresh")
         </button>
     </div>
@@ -18,26 +12,27 @@
     {
         <p class="status-message info" role="status" aria-live="polite">Checking working tree status...</p>
     }
-    else if (!string.IsNullOrWhiteSpace(Message))
+    else if (StatusResult is not null)
     {
-        <p class="@MessageCssClass" role="status" aria-live="polite">@Message</p>
+        <p class="@MessageCssClass" role="status" aria-live="polite">@StatusResult.Message</p>
     }
 
-    @if (!IsLoading && ChangedFiles.Count == 0 && string.IsNullOrWhiteSpace(Message))
+    @if (!IsLoading && State.ChangedFiles.Count == 0 && StatusResult is null)
     {
         <p class="changed-files__empty">No changed files detected.</p>
     }
-    else if (!IsLoading && ChangedFiles.Count == 0 && Succeeded)
+    else if (!IsLoading && State.ChangedFiles.Count == 0 && StatusResult?.Succeeded == true)
     {
         <p class="changed-files__empty">Working tree is clean.</p>
     }
-    else if (ChangedFiles.Count > 0)
+    else if (State.ChangedFiles.Count > 0)
     {
         <ul class="changed-files__list" aria-label="Changed file list">
-            @foreach (var file in ChangedFiles)
+            @foreach (var file in State.ChangedFiles)
             {
+                var kind = file.ChangeKind.ToString();
                 <li class="changed-files__item">
-                    <span class="changed-files__badge @GetChangeKindCssClass(file.ChangeKind)">@FormatChangeKind(file.ChangeKind)</span>
+                    <span class="changed-files__badge changed-files__badge--@kind.ToLowerInvariant()">@(kind == "Unknown" ? "Changed" : kind)</span>
                     <span class="changed-files__path">@file.Path</span>
                 </li>
             }
@@ -46,40 +41,11 @@
 </section>
 
 @code {
-    [Parameter]
-    public IReadOnlyList<ChangedFile> ChangedFiles { get; set; } = Array.Empty<ChangedFile>();
+    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter] public EventCallback OnRefreshRequested { get; set; }
 
-    [Parameter]
-    public bool IsLoading { get; set; }
-
-    [Parameter]
-    public string? Message { get; set; }
-
-    [Parameter]
-    public bool Succeeded { get; set; }
-
-    [Parameter]
-    public EventCallback OnRefreshRequested { get; set; }
-
-    private string MessageCssClass => $"status-message {(Succeeded ? "success" : "error")}";
-
-    private static string FormatChangeKind(GitChangeKind changeKind) => changeKind switch
-    {
-        GitChangeKind.Added => "Added",
-        GitChangeKind.Modified => "Modified",
-        GitChangeKind.Deleted => "Deleted",
-        GitChangeKind.Renamed => "Renamed",
-        GitChangeKind.Untracked => "Untracked",
-        _ => "Changed"
-    };
-
-    private static string GetChangeKindCssClass(GitChangeKind changeKind) => changeKind switch
-    {
-        GitChangeKind.Added => "changed-files__badge--added",
-        GitChangeKind.Modified => "changed-files__badge--modified",
-        GitChangeKind.Deleted => "changed-files__badge--deleted",
-        GitChangeKind.Renamed => "changed-files__badge--renamed",
-        GitChangeKind.Untracked => "changed-files__badge--untracked",
-        _ => "changed-files__badge--unknown"
-    };
+    private bool IsLoading => State.Operation == RepositoryWorkspaceOperation.RefreshStatus;
+    private RepositoryWorkspaceResult? StatusResult =>
+        State.Result?.Operation == RepositoryWorkspaceOperation.RefreshStatus ? State.Result : null;
+    private string MessageCssClass => $"status-message {(StatusResult?.Succeeded == true ? "success" : "error")}";
 }

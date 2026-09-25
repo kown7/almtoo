@@ -1,9 +1,8 @@
 @page "/"
 @using AlmToo.Components
-@using AlmToo.Services.Git
-@implements IAsyncDisposable
-@inject IBrowserGitService GitService
-@inject IJSRuntime JSRuntime
+@using AlmToo.Managers.Repositories
+@implements IDisposable
+@inject RepositoryWorkspaceManager Workspace
 
 <PageTitle>Repository Browser</PageTitle>
 
@@ -11,297 +10,178 @@
     <div class="repository-hero">
         <p class="helper-text">Browser-local Git workspace</p>
         <h1>Open a public repository</h1>
-        <p>
-            Clone a public Git repository into local browser storage, or reopen the existing
-            local workspace when it has already been cloned in this browser.
-        </p>
+        <p>Clone a public Git repository into local browser storage, or reopen its existing browser-local workspace.</p>
     </div>
 
     <div class="repository-card">
         <form class="repository-form" @onsubmit="OpenRepositoryAsync" @onsubmit:preventDefault="true">
             <div class="form-field">
                 <label for="repository-url">Repository URL</label>
-                <input id="repository-url"
-                       name="repository-url"
-                       type="url"
-                       placeholder="https://github.com/example/project.git"
-                       autocomplete="url"
-                       @bind="repositoryUrl"
-                       disabled="@isOpening" />
+                <input id="repository-url" name="repository-url" type="url"
+                       placeholder="https://github.com/example/project.git" autocomplete="url"
+                       @bind="repositoryUrl" disabled="@State.IsBusy" />
                 <p class="field-help">Public HTTPS Git URLs work best in browser-local storage.</p>
             </div>
-
-            <button class="primary-action" type="submit" disabled="@isOpening">
-                @(isOpening ? "Opening..." : "Open repository")
+            <button class="primary-action" type="submit" disabled="@State.IsBusy">
+                @(IsOperation(RepositoryWorkspaceOperation.OpenRepository) ? "Opening..." : "Open repository")
             </button>
         </form>
 
-        @if (isOpening)
+        @if (IsOperation(RepositoryWorkspaceOperation.OpenRepository))
         {
-            <p class="status-message info" role="status" aria-live="polite">
-                Contacting the Git host and preparing browser storage...
-            </p>
+            <p class="status-message info" role="status" aria-live="polite">Contacting the Git host and preparing browser storage...</p>
         }
-        else if (!string.IsNullOrWhiteSpace(statusMessage))
+        else if (State.Repository is null && State.Result is not null)
         {
-            <p class="@StatusMessageCssClass" role="status" aria-live="polite">
-                @statusMessage
-            </p>
+            <p class="@ResultCssClass"
+               role="@(State.Result.Succeeded ? "status" : "alert")"
+               aria-live="@(State.Result.Succeeded ? "polite" : "assertive")">@State.Result.Message</p>
         }
     </div>
 
-    @if (currentRepository is null && (hasStoredCredential || !string.IsNullOrWhiteSpace(credentialStatusMessage)))
+    @if (State.IsBusy)
+    {
+        <button class="secondary-action" type="button" @onclick="Workspace.CancelCurrentOperation">Cancel current operation</button>
+    }
+
+    @if (State.Repository is null && (State.HasCredential || State.CredentialReplacementRequired))
     {
         <section class="credential-reload-state" aria-label="Push credential status">
-            @if (hasStoredCredential)
+            @if (State.HasCredential)
             {
                 <p data-credential-state="present">A token is available for an explicit push in this tab.</p>
-                <button class="secondary-action"
-                        type="button"
-                        @onclick="ForgetCredentialAsync"
-                        disabled="@isCredentialBusy">
-                    Forget token
-                </button>
+                <button class="secondary-action" type="button" @onclick="ForgetCredentialAsync" disabled="@State.IsBusy">Forget token</button>
             }
-
-            @if (!string.IsNullOrWhiteSpace(credentialStatusMessage))
+            @if (State.Result?.Operation is RepositoryWorkspaceOperation.InitializeCredential
+                or RepositoryWorkspaceOperation.StoreCredential
+                or RepositoryWorkspaceOperation.ForgetCredential)
             {
-                <p class="@CredentialStatusMessageCssClass"
-                   data-credential-state="@CredentialState"
-                   role="status"
-                   aria-live="polite">@credentialStatusMessage</p>
+                <p class="@ResultCssClass" data-credential-state="@CredentialState" role="status" aria-live="polite">@State.Result.Message</p>
             }
         </section>
     }
 
-    @if (currentRepository is not null)
+    @if (State.Repository is not null)
     {
         <section class="repository-status" aria-labelledby="repository-status-heading">
-            <div>
-                <p class="helper-text">Current repository state</p>
-                <h2 id="repository-status-heading">Repository ready</h2>
-            </div>
-
+            <div><p class="helper-text">Current repository state</p><h2 id="repository-status-heading">Repository ready</h2></div>
             <dl class="status-grid">
-                <div>
-                    <dt>Repository</dt>
-                    <dd>@currentRepository.RepositoryUrl</dd>
-                </div>
-                <div>
-                    <dt>Workspace</dt>
-                    <dd>@currentRepository.WorkspaceName</dd>
-                </div>
-                <div>
-                    <dt>Storage path</dt>
-                    <dd>@currentRepository.RootPath</dd>
-                </div>
-                <div>
-                    <dt>Clone status</dt>
-                    <dd>@(currentRepository.WasCloned ? "Cloned in this session" : "Opened from browser storage")</dd>
-                </div>
-                <div>
-                    <dt>Selected file</dt>
-                    <dd>@(selectedFilePath ?? "None selected")</dd>
-                </div>
-                <div>
-                    <dt>Save status</dt>
-                    <dd>@SaveStatusText</dd>
-                </div>
+                <div><dt>Repository</dt><dd>@State.Repository.RepositoryUrl</dd></div>
+                <div><dt>Workspace</dt><dd>@State.Repository.WorkspaceName</dd></div>
+                <div><dt>Storage path</dt><dd>@State.Repository.RootPath</dd></div>
+                <div><dt>Clone status</dt><dd>@(State.Repository.WasCloned ? "Cloned in this session" : "Opened from browser storage")</dd></div>
+                <div><dt>Selected file</dt><dd>@(State.SelectedFilePath ?? "None selected")</dd></div>
+                <div><dt>Save status</dt><dd>@SaveStatusText</dd></div>
             </dl>
         </section>
 
-        <RepositoryFileBrowser Entries="repositoryEntries"
-                               CurrentPath="currentBrowserPath"
-                               SelectedPath="selectedFilePath"
-                               IsLoading="isLoadingFiles"
-                               OnDirectorySelected="LoadRepositoryPathAsync"
+        <RepositoryFileBrowser State="State"
+                               OnDirectorySelected="LoadDirectoryAsync"
                                OnFileSelected="SelectFileAsync" />
 
-        <RepositoryChangedFiles ChangedFiles="changedFiles"
-                                IsLoading="isLoadingStatus"
-                                Message="@changedFilesMessage"
-                                Succeeded="changedFilesSucceeded"
-                                OnRefreshRequested="RefreshChangedFilesAsync" />
+        <RepositoryChangedFiles State="State" OnRefreshRequested="RefreshStatusAsync" />
 
-        <RepositoryCommitForm IsCommitting="isCommitting"
-                              StatusMessage="@commitStatusMessage"
-                              StatusIsError="@(!commitSucceeded)"
-                              CreatedCommit="createdCommit"
-                              OnCommitRequested="CreateCommitAsync" />
+        <RepositoryCommitForm State="State" OnCommitRequested="CommitAsync" />
 
         <section class="push-panel" aria-labelledby="push-heading">
             <div class="push-panel__heading">
-                <div>
-                    <p class="helper-text">Remote write</p>
-                    <h2 id="push-heading">Push local commit to GitHub</h2>
-                </div>
-                <button class="secondary-action"
-                        type="button"
-                        @onclick="InspectPushAsync"
-                        disabled="@(isInspectingPush || isPushing)">
-                    @(isInspectingPush ? "Reviewing..." : "Review push")
+                <div><p class="helper-text">Remote write</p><h2 id="push-heading">Push local commit to GitHub</h2></div>
+                <button class="secondary-action" type="button" @onclick="InspectPushAsync" disabled="@State.IsBusy">
+                    @(IsOperation(RepositoryWorkspaceOperation.InspectPush) ? "Reviewing..." : "Review push")
                 </button>
             </div>
 
             <section class="push-credential" aria-labelledby="push-credential-heading">
                 <div class="push-credential__heading">
-                    <div>
-                        <h3 id="push-credential-heading">Push credential</h3>
-                        <p class="field-help">The token stays only in this browser tab and its value is never displayed.</p>
-                    </div>
-
-                    @if (hasStoredCredential)
+                    <div><h3 id="push-credential-heading">Push credential</h3><p class="field-help">The token stays only in this browser tab and its value is never displayed.</p></div>
+                    @if (State.HasCredential)
                     {
-                        <button class="secondary-action"
-                                type="button"
-                                @onclick="ForgetCredentialAsync"
-                                disabled="@(isCredentialBusy || isPushing)">
-                            Forget token
-                        </button>
+                        <button class="secondary-action" type="button" @onclick="ForgetCredentialAsync" disabled="@State.IsBusy">Forget token</button>
                     }
                 </div>
-
-                @if (hasStoredCredential)
+                @if (State.HasCredential)
                 {
-                    <p class="credential-presence" data-credential-state="present">
-                        A token is available for an explicit push in this tab.
-                    </p>
+                    <p class="credential-presence" data-credential-state="present">A token is available for an explicit push in this tab.</p>
                 }
-
                 <form class="credential-form" @onsubmit="StoreCredentialAsync" @onsubmit:preventDefault="true">
                     <div class="form-field">
                         <label for="github-pat">GitHub personal access token</label>
-                        <input id="github-pat"
-                               name="github-pat"
-                               type="password"
-                               value="@credentialInput"
-                               @oninput="UpdateCredentialInput"
-                               autocomplete="off"
-                               spellcheck="false"
-                               disabled="@(hasStoredCredential || isCredentialBusy || isPushing)" />
-                        <p class="field-help">
-                            @(hasStoredCredential
-                                ? "A retained token is present; its value is not restored to this input."
-                                : "Use in this tab stores the token in tab-scoped session storage. The input is cleared immediately.")
-                        </p>
+                        <input id="github-pat" name="github-pat" type="password" value="@credentialInput"
+                               @oninput="UpdateCredentialInput" autocomplete="off" spellcheck="false"
+                               disabled="@(State.HasCredential || State.IsBusy)" />
+                        <p class="field-help">@(State.HasCredential ? "A retained token is present; its value is not restored to this input." : "Use in this tab stores the token in tab-scoped session storage. The input is cleared immediately.")</p>
                     </div>
-                    @if (!hasStoredCredential)
+                    @if (!State.HasCredential)
                     {
-                        <button class="secondary-action"
-                                type="submit"
-                                disabled="@(isCredentialBusy || string.IsNullOrWhiteSpace(credentialInput))">
-                            @(isCredentialBusy ? "Saving..." : "Use token in this tab")
+                        <button class="secondary-action" type="submit" disabled="@(State.IsBusy || string.IsNullOrWhiteSpace(credentialInput))">
+                            @(IsOperation(RepositoryWorkspaceOperation.StoreCredential) ? "Saving..." : "Use token in this tab")
                         </button>
                     }
                 </form>
-
-                @if (!string.IsNullOrWhiteSpace(credentialStatusMessage))
+                @if (State.Result?.Operation is RepositoryWorkspaceOperation.StoreCredential or RepositoryWorkspaceOperation.ForgetCredential)
                 {
-                    <p class="@CredentialStatusMessageCssClass"
-                       data-credential-state="@CredentialState"
-                       role="status"
-                       aria-live="polite">@credentialStatusMessage</p>
+                    <p class="@ResultCssClass" data-credential-state="@CredentialState" role="status" aria-live="polite">@State.Result.Message</p>
                 }
             </section>
 
-            @if (pushReview is not null)
+            @if (State.PushReview is not null)
             {
                 <dl class="push-review" aria-label="Push destination review">
-                    <div>
-                        <dt>GitHub origin</dt>
-                        <dd data-push-review="origin">@pushReview.RepositoryUrl</dd>
-                    </div>
-                    <div>
-                        <dt>Branch</dt>
-                        <dd data-push-review="branch">@pushReview.Branch</dd>
-                    </div>
-                    <div>
-                        <dt>Outgoing commit SHA</dt>
-                        <dd class="push-review__sha" data-push-review="sha">@pushReview.OutgoingCommitId</dd>
-                    </div>
+                    <div><dt>GitHub origin</dt><dd data-push-review="origin">@State.PushReview.RepositoryUrl</dd></div>
+                    <div><dt>Branch</dt><dd data-push-review="branch">@State.PushReview.Branch</dd></div>
+                    <div><dt>Destination ref</dt><dd data-push-review="destination">@State.PushReview.DestinationRef</dd></div>
+                    <div><dt>Outgoing commit SHA</dt><dd class="push-review__sha" data-push-review="sha">@State.PushReview.OutgoingCommitId</dd></div>
                 </dl>
-
                 <form class="push-form" @onsubmit="PushReviewedCommitAsync" @onsubmit:preventDefault="true">
                     <label class="push-confirmation" for="confirm-push">
-                        <input id="confirm-push"
-                               type="checkbox"
-                               @bind="pushConfirmed"
-                               disabled="@isPushing" />
+                        <input id="confirm-push" type="checkbox" checked="@State.PushConfirmed" @onchange="ConfirmPushReview" disabled="@State.IsBusy" />
                         <span>I confirm this exact commit may be pushed to the reviewed origin and branch.</span>
                     </label>
-
-                    <button class="primary-action"
-                            type="submit"
-                            disabled="@(!CanPush)">
-                        @(isPushing ? "Pushing..." : "Push reviewed commit")
+                    <button class="primary-action" type="submit" disabled="@(!CanPush)">
+                        @(IsOperation(RepositoryWorkspaceOperation.Push) ? "Pushing..." : "Push reviewed commit")
                     </button>
                 </form>
             }
             else
             {
-                <p class="push-panel__placeholder">
-                    Review the active origin, branch, and commit before confirmation can be entered.
-                </p>
+                <p class="push-panel__placeholder">Review the active origin, branch, destination ref, and commit before confirmation can be entered.</p>
             }
 
-            @if (!string.IsNullOrWhiteSpace(pushStatusMessage))
+            @if (State.Result?.Operation is RepositoryWorkspaceOperation.InspectPush or RepositoryWorkspaceOperation.Push)
             {
-                <p class="@PushStatusMessageCssClass"
-                   data-push-failure="@PushFailureCategory"
-                   role="@(pushFailureKind is null ? "status" : "alert")"
-                   aria-live="@(pushFailureKind is null ? "polite" : "assertive")">@pushStatusMessage</p>
+                <p class="@ResultCssClass" data-push-failure="@State.PushFailureCategory"
+                   role="@(State.PushFailureCategory is null ? "status" : "alert")"
+                   aria-live="@(State.PushFailureCategory is null ? "polite" : "assertive")">@State.Result.Message</p>
             }
         </section>
 
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
-            <div>
-                <p class="helper-text">Selected file path</p>
-                <h2 id="file-editor-heading">@(selectedFilePath ?? "No file selected")</h2>
-            </div>
-
-            @if (isLoadingSelectedFile)
+            <div><p class="helper-text">Selected file path</p><h2 id="file-editor-heading">@(State.SelectedFilePath ?? "No file selected")</h2></div>
+            @if (IsOperation(RepositoryWorkspaceOperation.LoadFile))
             {
                 <p class="status-message info" role="status" aria-live="polite">Loading selected text file...</p>
             }
-            else if (!string.IsNullOrWhiteSpace(fileBrowserMessage))
+            @if (State.Result?.Operation is RepositoryWorkspaceOperation.LoadFile or RepositoryWorkspaceOperation.SaveFile)
             {
-                <p class="@FileBrowserMessageCssClass" role="status" aria-live="polite">@fileBrowserMessage</p>
+                <p class="@ResultCssClass" role="status" aria-live="polite">@State.Result.Message</p>
             }
-
-            @if (!string.IsNullOrWhiteSpace(saveStatusMessage))
-            {
-                <p class="@SaveStatusMessageCssClass" role="status" aria-live="polite">@saveStatusMessage</p>
-            }
-
-            @if (selectedFileContent is not null)
+            @if (State.SelectedFileContent is not null)
             {
                 <div class="file-editor__field">
                     <label for="selected-file-content">Plain text editor</label>
-                    <textarea id="selected-file-content"
-                              class="file-editor__textarea"
-                              spellcheck="false"
-                              @bind="editableFileContent"
-                              @bind:event="oninput"
-                              disabled="@isSavingFile"></textarea>
+                    <textarea id="selected-file-content" class="file-editor__textarea" spellcheck="false"
+                              value="@State.EditableFileContent" @oninput="EditSelectedFile" disabled="@State.IsBusy"></textarea>
                 </div>
-
                 <div class="file-editor__actions">
-                    <button class="primary-action"
-                            type="button"
-                            @onclick="SaveSelectedFileAsync"
-                            disabled="@(isSavingFile || !HasUnsavedChanges)">
-                        @(isSavingFile ? "Saving..." : "Save changes")
+                    <button class="primary-action" type="button" @onclick="SaveSelectedFileAsync" disabled="@(State.IsBusy || !State.HasUnsavedChanges)">
+                        @(IsOperation(RepositoryWorkspaceOperation.SaveFile) ? "Saving..." : "Save changes")
                     </button>
-                    <p class="file-editor__dirty-state">
-                        @(HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits")
-                    </p>
+                    <p class="file-editor__dirty-state">@(State.HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits")</p>
                 </div>
             }
-            else if (selectedFilePath is null && !isLoadingSelectedFile)
+            else if (State.SelectedFilePath is null && !IsOperation(RepositoryWorkspaceOperation.LoadFile))
             {
-                <p class="file-preview__placeholder">
-                    Choose a text file from the browser to load the editor. Binary or oversized files stay disabled.
-                </p>
+                <p class="file-preview__placeholder">Choose a text file from the browser to load the editor. Binary or oversized files stay disabled.</p>
             }
         </section>
     }
@@ -309,658 +189,53 @@
 
 @code {
     private string repositoryUrl = string.Empty;
-    private RepositoryInfo? currentRepository;
-    private bool isOpening;
-    private string? statusMessage;
-    private bool statusSucceeded;
-
-    private IReadOnlyList<RepositoryFileEntry> repositoryEntries = Array.Empty<RepositoryFileEntry>();
-    private string currentBrowserPath = "/";
-    private string? selectedFilePath;
-    private string? selectedFileContent;
-    private string? editableFileContent;
-    private string? fileBrowserMessage;
-    private string? saveStatusMessage;
-    private IReadOnlyList<ChangedFile> changedFiles = Array.Empty<ChangedFile>();
-    private string? changedFilesMessage;
-    private bool fileBrowserSucceeded;
-    private bool saveSucceeded;
-    private bool changedFilesSucceeded;
-    private bool isLoadingFiles;
-    private bool isLoadingSelectedFile;
-    private bool isSavingFile;
-    private bool isLoadingStatus;
-    private bool isCommitting;
-    private bool commitSucceeded;
-    private string? commitStatusMessage;
-    private const string CredentialModulePath = "./js/pushCredentialSession.js";
-
-    private CommitInfo? createdCommit;
-    private PushReview? pushReview;
-    private Task<IJSObjectReference>? credentialModuleTask;
     private string credentialInput = string.Empty;
-    private bool hasStoredCredential;
-    private bool isCredentialBusy;
-    private bool credentialStatusSucceeded;
-    private bool credentialReplacementRequired;
-    private string? credentialStatusMessage;
-    private bool pushConfirmed;
-    private bool isInspectingPush;
-    private bool isPushing;
-    private bool pushSucceeded;
-    private GitOperationFailureKind? pushFailureKind;
-    private string? pushStatusMessage;
+    private RepositoryWorkspaceState State => Workspace.State;
+    private bool IsOperation(RepositoryWorkspaceOperation operation) => State.Operation == operation;
+    private bool CanPush => State.PushReview is not null && State.PushConfirmed && State.HasCredential && !State.IsBusy;
+    private string ResultCssClass => $"status-message {(State.Result?.Succeeded == true ? "success" : "error")}";
+    private string CredentialState => State.CredentialReplacementRequired ? "replacement-required" : State.HasCredential ? "present" : "forgotten";
+    private string SaveStatusText => IsOperation(RepositoryWorkspaceOperation.SaveFile) ? "Saving changes" : State.HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits";
 
-    private bool HasUnsavedChanges => selectedFileContent is not null && editableFileContent != selectedFileContent;
-
-    private bool CanPush => pushReview is not null
-        && pushConfirmed
-        && hasStoredCredential
-        && !isInspectingPush
-        && !isPushing;
-
-    private string SaveStatusText => isSavingFile
-        ? "Saving changes"
-        : saveStatusMessage ?? (HasUnsavedChanges ? "Unsaved edits" : "No changes saved");
-
-    private string StatusMessageCssClass => $"status-message {(statusSucceeded ? "success" : "error")}";
-
-    private string FileBrowserMessageCssClass => $"status-message {(fileBrowserSucceeded ? "success" : "error")}";
-
-    private string SaveStatusMessageCssClass => $"status-message {(saveSucceeded ? "success" : "error")}";
-
-    private string PushStatusMessageCssClass => $"status-message {(pushSucceeded ? "success" : pushFailureKind is not null ? "error" : "info")}";
-
-    private string? PushFailureCategory => pushSucceeded || pushFailureKind is null
-        ? null
-        : pushFailureKind switch
-        {
-            GitOperationFailureKind.CredentialRejected => "credential-rejected",
-            GitOperationFailureKind.RemoteAhead => "remote-ahead",
-            GitOperationFailureKind.NetworkUnavailable => "network-unavailable",
-            GitOperationFailureKind.UnsupportedRef => "unsupported-ref",
-            _ => "unknown"
-        };
-
-    private string CredentialStatusMessageCssClass => $"status-message {(credentialStatusSucceeded ? "success" : "error")}";
-
-    private string CredentialState => credentialReplacementRequired ? "replacement-required" : hasStoredCredential ? "present" : "forgotten";
+    protected override void OnInitialized() => Workspace.StateChanged += HandleStateChanged;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender)
+        if (firstRender)
         {
-            return;
+            await Workspace.InitializeCredentialStateAsync();
         }
-
-        try
-        {
-            var module = await GetCredentialModuleAsync();
-            hasStoredCredential = await module.InvokeAsync<bool>("hasCredential");
-        }
-        catch (Exception)
-        {
-            hasStoredCredential = false;
-            credentialStatusSucceeded = false;
-            credentialStatusMessage = "Tab credential storage is unavailable. Enter a token after storage becomes available.";
-        }
-
-        StateHasChanged();
     }
 
-    private async Task<IJSObjectReference> GetCredentialModuleAsync()
-    {
-        credentialModuleTask ??= JSRuntime.InvokeAsync<IJSObjectReference>("import", CredentialModulePath).AsTask();
-        return await credentialModuleTask;
-    }
-
-    private void UpdateCredentialInput(ChangeEventArgs args)
-    {
-        credentialInput = args.Value?.ToString() ?? string.Empty;
-        credentialStatusMessage = null;
-        credentialReplacementRequired = false;
-    }
+    private async Task OpenRepositoryAsync() => await Workspace.OpenRepositoryAsync(repositoryUrl);
+    private async Task LoadDirectoryAsync(string path) => await Workspace.LoadDirectoryAsync(path);
+    private async Task SelectFileAsync(string path) => await Workspace.SelectFileAsync(path);
+    private async Task SaveSelectedFileAsync() => await Workspace.SaveSelectedFileAsync();
+    private async Task RefreshStatusAsync() => await Workspace.RefreshStatusAsync();
+    private async Task CommitAsync(RepositoryCommitInput input) => await Workspace.CommitAsync(input);
+    private async Task InspectPushAsync() => await Workspace.InspectPushAsync();
+    private async Task ForgetCredentialAsync() => await Workspace.ForgetCredentialAsync();
+    private void EditSelectedFile(ChangeEventArgs args) => Workspace.EditSelectedFile(args.Value?.ToString() ?? string.Empty);
+    private void ConfirmPushReview(ChangeEventArgs args) => Workspace.ConfirmPushReview(args.Value is true || string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase));
+    private void UpdateCredentialInput(ChangeEventArgs args) => credentialInput = args.Value?.ToString() ?? string.Empty;
 
     private async Task StoreCredentialAsync()
     {
-        if (isCredentialBusy || string.IsNullOrWhiteSpace(credentialInput))
-        {
-            return;
-        }
-
-        var credentialForStorage = credentialInput.Trim();
+        var credentialForAttempt = credentialInput;
         credentialInput = string.Empty;
-        isCredentialBusy = true;
-        credentialStatusMessage = null;
-
-        try
-        {
-            var module = await GetCredentialModuleAsync();
-            hasStoredCredential = await module.InvokeAsync<bool>("storeCredential", credentialForStorage);
-            credentialStatusSucceeded = hasStoredCredential;
-            credentialReplacementRequired = !hasStoredCredential;
-            credentialStatusMessage = hasStoredCredential
-                ? "Token saved for this tab."
-                : "The token could not be saved in this tab. Enter a replacement token to continue.";
-        }
-        catch (Exception)
-        {
-            hasStoredCredential = false;
-            credentialStatusSucceeded = false;
-            credentialReplacementRequired = true;
-            credentialStatusMessage = "The token could not be saved in this tab. Enter a replacement token to continue.";
-        }
-        finally
-        {
-            credentialForStorage = string.Empty;
-            isCredentialBusy = false;
-        }
-    }
-
-    private Task ForgetCredentialAsync() => ClearCredentialAsync(replacementRequired: false);
-
-    private async Task ClearCredentialAsync(bool replacementRequired)
-    {
-        credentialInput = string.Empty;
-        hasStoredCredential = false;
-        isCredentialBusy = true;
-
-        var removed = false;
-        try
-        {
-            var module = await GetCredentialModuleAsync();
-            removed = await module.InvokeAsync<bool>("forgetCredential");
-        }
-        catch (Exception)
-        {
-            // The component still fails closed and no credential value enters an error surface.
-        }
-        finally
-        {
-            isCredentialBusy = false;
-        }
-
-        credentialStatusSucceeded = removed && !replacementRequired;
-        credentialReplacementRequired = replacementRequired || !removed;
-        credentialStatusMessage = replacementRequired
-            ? "The remote rejected the credential or repository permission. Enter a replacement token."
-            : removed
-                ? "Token forgotten for this tab."
-                : "The token could not be removed from tab storage. Close this tab before continuing.";
-    }
-
-    private async Task OpenRepositoryAsync()
-    {
-        var trimmedRepositoryUrl = repositoryUrl.Trim();
-        if (string.IsNullOrWhiteSpace(trimmedRepositoryUrl))
-        {
-            ResetRepositoryBrowser();
-            currentRepository = null;
-            statusSucceeded = false;
-            statusMessage = "Enter a public repository URL before opening a workspace.";
-            return;
-        }
-
-        isOpening = true;
-        currentRepository = null;
-        statusMessage = null;
-        ResetRepositoryBrowser();
-
-        try
-        {
-            var request = new RepositoryOpenRequest(
-                trimmedRepositoryUrl,
-                CreateWorkspaceName(trimmedRepositoryUrl));
-
-            var result = await GitService.CloneOrOpenAsync(request);
-            var openedRepository = result.Value;
-            statusSucceeded = result.Succeeded && openedRepository is not null;
-
-            if (openedRepository is not null && result.Succeeded)
-            {
-                currentRepository = openedRepository;
-                statusMessage = result.Message;
-                await LoadRepositoryPathAsync("/");
-                await RefreshChangedFilesAsync();
-            }
-            else
-            {
-                statusMessage = result.Message;
-            }
-        }
-        catch (Exception)
-        {
-            statusSucceeded = false;
-            statusMessage = "The repository could not be opened. Check that the URL is public and supported.";
-        }
-        finally
-        {
-            isOpening = false;
-        }
-    }
-
-    private async Task LoadRepositoryPathAsync(string path)
-    {
-        if (currentRepository is null)
-        {
-            return;
-        }
-
-        isLoadingFiles = true;
-        fileBrowserMessage = null;
-        saveStatusMessage = null;
-        saveSucceeded = false;
-        selectedFilePath = null;
-        selectedFileContent = null;
-        editableFileContent = null;
-
-        try
-        {
-            var normalizedPath = NormalizeRepositoryPath(path);
-            var result = await GitService.ListFilesAsync(normalizedPath);
-            if (result.Succeeded && result.Value is not null)
-            {
-                repositoryEntries = result.Value;
-                currentBrowserPath = normalizedPath;
-                fileBrowserSucceeded = true;
-                fileBrowserMessage = result.Message;
-            }
-            else
-            {
-                repositoryEntries = Array.Empty<RepositoryFileEntry>();
-                fileBrowserSucceeded = false;
-                fileBrowserMessage = result.Message;
-            }
-        }
-        catch (Exception)
-        {
-            repositoryEntries = Array.Empty<RepositoryFileEntry>();
-            fileBrowserSucceeded = false;
-            fileBrowserMessage = "Repository files could not be loaded. Reopen the public repository and try again.";
-        }
-        finally
-        {
-            isLoadingFiles = false;
-        }
-
-        await RefreshChangedFilesAsync();
-    }
-
-    private async Task SelectFileAsync(string path)
-    {
-        if (currentRepository is null)
-        {
-            return;
-        }
-
-        selectedFilePath = path;
-        selectedFileContent = null;
-        editableFileContent = null;
-        saveStatusMessage = null;
-        saveSucceeded = false;
-
-        var selectedEntry = repositoryEntries.FirstOrDefault(entry => entry.Path == path);
-        if (selectedEntry is null)
-        {
-            fileBrowserSucceeded = false;
-            fileBrowserMessage = "The selected file is no longer visible in the current repository listing.";
-            return;
-        }
-
-        if (!selectedEntry.IsEditableText)
-        {
-            fileBrowserSucceeded = false;
-            fileBrowserMessage = "This file is binary, oversized, or otherwise unsupported for text preview.";
-            return;
-        }
-
-        isLoadingSelectedFile = true;
-        fileBrowserMessage = null;
-
-        try
-        {
-            var result = await GitService.ReadTextFileAsync(path);
-            if (result.Succeeded && result.Value is not null)
-            {
-                selectedFileContent = result.Value.Content;
-                editableFileContent = result.Value.Content;
-                fileBrowserSucceeded = true;
-                fileBrowserMessage = $"Loaded {result.Value.Path}.";
-            }
-            else
-            {
-                fileBrowserSucceeded = false;
-                fileBrowserMessage = result.Message;
-            }
-        }
-        catch (Exception)
-        {
-            fileBrowserSucceeded = false;
-            fileBrowserMessage = "The selected file could not be loaded as text. Choose another file or reopen the repository.";
-        }
-        finally
-        {
-            isLoadingSelectedFile = false;
-        }
-    }
-
-    private async Task SaveSelectedFileAsync()
-    {
-        if (currentRepository is null || string.IsNullOrWhiteSpace(selectedFilePath) || selectedFileContent is null)
-        {
-            saveSucceeded = false;
-            saveStatusMessage = "Choose a text file before saving changes.";
-            return;
-        }
-
-        isSavingFile = true;
-        saveStatusMessage = null;
-
-        try
-        {
-            var contentToSave = editableFileContent ?? string.Empty;
-            var result = await GitService.WriteTextFileAsync(selectedFilePath, contentToSave);
-            if (result.Succeeded)
-            {
-                selectedFileContent = contentToSave;
-                saveSucceeded = true;
-                saveStatusMessage = result.Message;
-                await RefreshChangedFilesAsync();
-            }
-            else
-            {
-                saveSucceeded = false;
-                saveStatusMessage = result.Message;
-            }
-        }
-        catch (Exception)
-        {
-            saveSucceeded = false;
-            saveStatusMessage = "The selected file could not be saved. Reopen the repository and try again.";
-        }
-        finally
-        {
-            isSavingFile = false;
-        }
-    }
-
-    private async Task RefreshChangedFilesAsync()
-    {
-        if (currentRepository is null)
-        {
-            changedFiles = Array.Empty<ChangedFile>();
-            changedFilesMessage = null;
-            changedFilesSucceeded = false;
-            return;
-        }
-
-        isLoadingStatus = true;
-
-        try
-        {
-            var result = await GitService.GetStatusAsync();
-            changedFilesSucceeded = result.Succeeded;
-            changedFilesMessage = result.Message;
-            changedFiles = result.Succeeded && result.Value is not null
-                ? result.Value
-                : Array.Empty<ChangedFile>();
-        }
-        catch (Exception)
-        {
-            changedFilesSucceeded = false;
-            changedFilesMessage = "Changed files could not be loaded. Reopen the repository and try again.";
-            changedFiles = Array.Empty<ChangedFile>();
-        }
-        finally
-        {
-            isLoadingStatus = false;
-        }
-    }
-
-    private async Task CreateCommitAsync(CommitRequest request)
-    {
-        if (currentRepository is null)
-        {
-            commitSucceeded = false;
-            commitStatusMessage = "Open a repository before creating a commit.";
-            return;
-        }
-
-        isCommitting = true;
-        commitStatusMessage = null;
-        createdCommit = null;
-
-        try
-        {
-            var result = await GitService.CommitAsync(request);
-            commitSucceeded = result.Succeeded && result.Value is not null;
-            commitStatusMessage = result.Message;
-            createdCommit = commitSucceeded ? result.Value : null;
-
-            if (commitSucceeded)
-            {
-                InvalidatePushReview();
-                await RefreshChangedFilesAsync();
-            }
-        }
-        catch (Exception)
-        {
-            commitSucceeded = false;
-            commitStatusMessage = "The local commit could not be created. Review the changed files and try again.";
-        }
-        finally
-        {
-            isCommitting = false;
-        }
-    }
-
-    private async Task InspectPushAsync()
-    {
-        if (currentRepository is null || isInspectingPush || isPushing)
-        {
-            return;
-        }
-
-        isInspectingPush = true;
-        pushReview = null;
-        pushConfirmed = false;
-        pushSucceeded = false;
-        pushFailureKind = null;
-        pushStatusMessage = null;
-
-        try
-        {
-            var result = await GitService.InspectPushAsync();
-            if (result.Succeeded && result.Value is not null)
-            {
-                pushReview = result.Value;
-                pushStatusMessage = "Review the GitHub origin, branch, and outgoing commit before confirming the push.";
-            }
-            else
-            {
-                pushFailureKind = NormalizePushFailureKind(result.FailureKind);
-                pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
-            }
-        }
-        catch (Exception)
-        {
-            pushFailureKind = GitOperationFailureKind.Unknown;
-            pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
-        }
-        finally
-        {
-            isInspectingPush = false;
-        }
+        await Workspace.StoreCredentialAsync(credentialForAttempt);
+        credentialForAttempt = string.Empty;
     }
 
     private async Task PushReviewedCommitAsync()
     {
-        if (isPushing || pushReview is null || !pushConfirmed || !hasStoredCredential)
+        if (State.PushReview is not null)
         {
-            return;
-        }
-
-        isPushing = true;
-        pushSucceeded = false;
-        pushFailureKind = null;
-        pushStatusMessage = "Pushing the reviewed commit to GitHub...";
-
-        var reviewedPush = new PushRequest(
-            pushReview.RepositoryUrl,
-            pushReview.Branch,
-            pushReview.OutgoingCommitId,
-            pushReview.DestinationRef);
-        string? tokenForAttempt = null;
-
-        try
-        {
-            var credentialModule = await GetCredentialModuleAsync();
-            tokenForAttempt = await credentialModule.InvokeAsync<string?>("getCredentialForPush");
-        }
-        catch (Exception)
-        {
-            // Retrieval fails closed without forwarding interop details or a credential value.
-        }
-
-        if (string.IsNullOrWhiteSpace(tokenForAttempt))
-        {
-            tokenForAttempt = null;
-            hasStoredCredential = false;
-            credentialStatusSucceeded = false;
-            credentialReplacementRequired = true;
-            credentialStatusMessage = "The saved token is unavailable. Enter a replacement token to continue.";
-            pushConfirmed = false;
-            isPushing = false;
-            return;
-        }
-
-        try
-        {
-            var result = await GitService.PushAsync(reviewedPush, tokenForAttempt);
-            pushSucceeded = result.Succeeded && result.Value is not null;
-
-            if (pushSucceeded)
-            {
-                pushStatusMessage = $"Pushed commit {result.Value!.PushedCommitId} to the reviewed GitHub branch.";
-                await RefreshChangedFilesAsync();
-            }
-            else
-            {
-                pushFailureKind = NormalizePushFailureKind(result.FailureKind);
-                pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
-                if (pushFailureKind == GitOperationFailureKind.CredentialRejected)
-                {
-                    tokenForAttempt = null;
-                    await ClearCredentialAsync(replacementRequired: true);
-                }
-            }
-        }
-        catch (Exception)
-        {
-            pushFailureKind = GitOperationFailureKind.Unknown;
-            pushStatusMessage = GetPushRecoveryGuidance(pushFailureKind.Value);
-        }
-        finally
-        {
-            tokenForAttempt = null;
-            pushConfirmed = false;
-            isPushing = false;
+            await Workspace.PushReviewedCommitAsync(State.PushReview);
         }
     }
 
-    private static GitOperationFailureKind NormalizePushFailureKind(GitOperationFailureKind? failureKind) =>
-        failureKind is GitOperationFailureKind.CredentialRejected
-            or GitOperationFailureKind.RemoteAhead
-            or GitOperationFailureKind.NetworkUnavailable
-            or GitOperationFailureKind.UnsupportedRef
-            ? failureKind.Value
-            : GitOperationFailureKind.Unknown;
+    private void HandleStateChanged() => _ = InvokeAsync(StateHasChanged);
 
-    private static string GetPushRecoveryGuidance(GitOperationFailureKind failureKind) => failureKind switch
-    {
-        GitOperationFailureKind.CredentialRejected =>
-            "The remote rejected the credential or repository permission. Replace the token, review the same destination again, and retry manually.",
-        GitOperationFailureKind.RemoteAhead =>
-            "The remote branch is ahead. Refresh the repository, reconcile the remote commits with the preserved local commit, then review and retry manually.",
-        GitOperationFailureKind.NetworkUnavailable =>
-            "The browser could not reach the remote. Resolve the network or CORS issue, then retry this reviewed push manually.",
-        GitOperationFailureKind.UnsupportedRef =>
-            "The checked-out ref is not a supported local branch. Check out a local branch, review its destination, and retry manually.",
-        _ =>
-            "The push could not be completed safely. The local commit and reviewed destination remain available; inspect the workspace before retrying manually."
-    };
-
-    private void InvalidatePushReview()
-    {
-        pushReview = null;
-        pushConfirmed = false;
-        pushSucceeded = false;
-        pushFailureKind = null;
-        pushStatusMessage = null;
-    }
-
-    private static string CreateWorkspaceName(string repositoryUrl)
-    {
-        var name = repositoryUrl.TrimEnd('/').Split('/').LastOrDefault() ?? "repository";
-        name = name.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
-            ? name[..^4]
-            : name;
-
-        var safeCharacters = name
-            .Select(character => char.IsLetterOrDigit(character) ? character : '-')
-            .ToArray();
-
-        var workspaceName = new string(safeCharacters).Trim('-').ToLowerInvariant();
-        return string.IsNullOrWhiteSpace(workspaceName)
-            ? "repository"
-            : workspaceName;
-    }
-
-    private static string NormalizeRepositoryPath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || path == ".")
-        {
-            return "/";
-        }
-
-        return path.StartsWith("/", StringComparison.Ordinal) ? path : $"/{path}";
-    }
-
-    private void ResetRepositoryBrowser()
-    {
-        repositoryEntries = Array.Empty<RepositoryFileEntry>();
-        currentBrowserPath = "/";
-        selectedFilePath = null;
-        selectedFileContent = null;
-        editableFileContent = null;
-        fileBrowserMessage = null;
-        saveStatusMessage = null;
-        changedFilesMessage = null;
-        fileBrowserSucceeded = false;
-        saveSucceeded = false;
-        changedFilesSucceeded = false;
-        isLoadingFiles = false;
-        isLoadingSelectedFile = false;
-        isSavingFile = false;
-        isLoadingStatus = false;
-        isCommitting = false;
-        commitSucceeded = false;
-        commitStatusMessage = null;
-        createdCommit = null;
-        InvalidatePushReview();
-        isInspectingPush = false;
-        isPushing = false;
-        changedFiles = Array.Empty<ChangedFile>();
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (credentialModuleTask is not { IsCompletedSuccessfully: true })
-        {
-            return;
-        }
-
-        var module = await credentialModuleTask;
-        await module.DisposeAsync();
-    }
+    public void Dispose() => Workspace.StateChanged -= HandleStateChanged;
 }

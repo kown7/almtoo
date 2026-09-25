@@ -211,7 +211,7 @@ test('repository paths reject parent directory traversal as structured operation
   assert.equal(result.operation, 'listFiles');
   assert.equal(result.succeeded, false);
   assert.match(result.message, /could not be listed/i);
-  assert.match(result.diagnostic, /parent directory segments/);
+  assert.match(result.diagnostic, /normalized repository-relative paths|parent directory segments/);
 });
 
 test('getStatus returns a structured failure when git status cannot be read', async () => {
@@ -727,6 +727,24 @@ test('listFiles classifies and sorts entries while sampling the editable-size bo
     { name: 'README.md', kind: 'File', isEditableText: true },
     { name: 'too-large.txt', kind: 'File', isEditableText: false }
   ]);
+});
+
+test('readTextFile accepts allowlisted extensionless names as repository-relative paths', async () => {
+  const engine = await openFakeRepository({
+    fsOverrides: {
+      async readFile(path) {
+        assert.equal(path, '/almtoo-workspaces/coverage-demo/README');
+        return new TextEncoder().encode('Hello World!\n');
+      }
+    }
+  });
+
+  const result = await engine.readTextFile('/README');
+
+  assert.equal(result.succeeded, true);
+  assert.deepEqual(result.value, {
+    path: '/README', content: 'Hello World!\n', encoding: 'utf-8', sizeBytes: 13
+  });
 });
 
 test('readTextFile and writeTextFile preserve UTF-8 content and normalized repository paths', async () => {

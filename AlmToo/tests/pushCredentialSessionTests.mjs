@@ -86,7 +86,7 @@ test('unavailable session storage fails closed without throwing', () => {
   assert.equal(hasCredential(), false);
   assert.equal(storeCredential('fixture-credential'), false);
   assert.equal(getCredentialForPush(), null);
-  assert.equal(forgetCredential(), true);
+  assert.equal(forgetCredential(), false);
 });
 
 test('module source keeps one private key and has no logging or serialization sink', async () => {

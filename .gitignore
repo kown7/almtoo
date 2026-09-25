@@ -3,6 +3,8 @@
 AlmToo/bin/
 AlmToo/obj/
 AlmToo/publish/
+AlmToo.Tests/bin/
+AlmToo.Tests/obj/
 
 
 # ── GSD baseline (auto-generated) ──
