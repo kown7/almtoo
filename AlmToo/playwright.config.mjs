@@ -11,8 +11,8 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL,
-    trace: 'off',
-    screenshot: 'off',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
     video: 'off'
   },
   projects: [

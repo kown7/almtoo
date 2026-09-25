@@ -563,8 +563,9 @@ function isEditableTextPath(name, sizeBytes) {
     return false;
   }
 
-  return /\.(cjs|cs|csproj|css|csv|go|html|ini|java|js|json|jsx|markdown|md|mjs|py|razor|rs|scss|sh|sln|svg|toml|ts|tsx|txt|xml|yaml|yml)$/i.test(name)
-    || /^(README|LICENSE|Dockerfile|Makefile|\.gitignore|\.editorconfig)$/i.test(name);
+  const baseName = name.split('/').at(-1);
+  return /\.(cjs|cs|csproj|css|csv|go|html|ini|java|js|json|jsx|markdown|md|mjs|py|razor|rs|scss|sh|sln|svg|toml|ts|tsx|txt|xml|yaml|yml)$/i.test(baseName)
+    || /^(README|LICENSE|Dockerfile|Makefile|\.gitignore|\.editorconfig)$/i.test(baseName);
 }
 
 function mapChangeKind(head, workdir, stage) {

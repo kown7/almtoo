@@ -729,6 +729,24 @@ test('listFiles classifies and sorts entries while sampling the editable-size bo
   ]);
 });
 
+test('readTextFile accepts allowlisted extensionless names as repository-relative paths', async () => {
+  const engine = await openFakeRepository({
+    fsOverrides: {
+      async readFile(path) {
+        assert.equal(path, '/almtoo-workspaces/coverage-demo/README');
+        return new TextEncoder().encode('Hello World!\n');
+      }
+    }
+  });
+
+  const result = await engine.readTextFile('/README');
+
+  assert.equal(result.succeeded, true);
+  assert.deepEqual(result.value, {
+    path: '/README', content: 'Hello World!\n', encoding: 'utf-8', sizeBytes: 13
+  });
+});
+
 test('readTextFile and writeTextFile preserve UTF-8 content and normalized repository paths', async () => {
   const writes = [];
   const engine = await openFakeRepository({

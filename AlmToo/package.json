@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "postinstall": "node tools/copy-git-browser-assets.mjs",
-    "test": "node --test tests/browserGitEngineTests.mjs tests/pushCredentialSessionTests.mjs tests/homePageContractTests.mjs tests/browserGitDesignContractTests.mjs tests/browserGitAccessorContractTests.mjs tests/browserGitArchitectureGateTests.mjs"
+    "test": "node --test tests/browserGitEngineTests.mjs tests/pushCredentialSessionTests.mjs tests/homePageContractTests.mjs tests/browserGitDesignContractTests.mjs tests/browserGitAccessorContractTests.mjs tests/browserGitArchitectureGateTests.mjs",
+    "test:browser": "playwright test e2e/repositoryWorkflow.spec.mjs e2e/credentialSafety.spec.mjs"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "4.7.0",
