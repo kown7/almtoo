@@ -3,10 +3,10 @@ import { readdir, readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 const root = new URL('../', import.meta.url);
-const reviewPath = 'Accessors/Git/DESIGN.md';
+const reviewPath = 'Accessor/BrowserGitAccessor/DESIGN.md';
 const resourcePath = 'Resource/BrowserGitResource/Data/BrowserGitContracts.cs';
 const excludedDirectoryNames = new Set(['bin', 'obj', 'node_modules', 'test-results', 'playwright-report', '.git', '.gsd']);
-const dtoDeclaration = /\b(?:record|enum)\s+(?:GitOperationResult|GitOperationFailureKind|RepositoryOpenRequest|RepositoryInfo|FileFilterKind|FilterFilesRequest|FilterFilesResult|UpdateFilesRequest|TextFileUpdate|UpdateFilesResult|RepositoryFileEntry|RepositoryFileKind|TextFileContent|ChangedFile|GitChangeKind|CommitRequest|CommitInfo|PushReview|PushRequest|PushResult)\b/;
+const dtoDeclaration = /\b(?:record|enum)\s+(?:GitOperationResult|GitOperationFailureKind|RepositoryOpenRequest|RepositoryInfo|FileFilterKind|FilterFilesRequest|FilterFilesResult|UpdateFilesRequest|TextFileUpdate|UpdateFilesResult|RepositoryFileEntry|RepositoryFileKind|TextFileContent|ChangedFile|GitChangeKind|CommitRequest|CommitInfo|PushReview|PushRequest|PushResult|SynchronizationIntent|SynchronizationDecisionState|SynchronizationFailureCategory|SynchronizationRequest|IncomingCommitMetadata|ChangedFileSummary|SynchronizationReview|SynchronizationFailure)\b/;
 
 async function collectFiles(relativeDirectory, include) {
   const directory = new URL(`${relativeDirectory}/`, root);
@@ -57,6 +57,7 @@ export function inspectArchitecture(snapshot) {
 
   failures.push(...matchingSources(snapshot.clients, /\b(?:IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|IVersionControlAccessor|BrowserGitService|IBrowserGitService|GitService)\b|AlmToo\.(?:Accessor|Accessors|Services\.Git)\b/, 'CLIENT_ACCESSOR_EDGE', 'repository Client must depend on the concrete Manager, never an Accessor type or namespace'));
   failures.push(...matchingSources(snapshot.clients, /\b(?:IJSRuntime|IJSObjectReference|JSImport)\b|\bInvokeAsync\s*</, 'CLIENT_GIT_INTEROP', 'repository Client must not own Git-related JavaScript interop'));
+  failures.push(...matchingSources(snapshot.clients, /\.Diagnostic\b|\b(?:personalAccessToken|accessToken)\b/i, 'CLIENT_DIAGNOSTIC_EXPOSURE', 'repository Client must not expose raw diagnostics or credential values'));
 
   for (const [path, source] of snapshot.managers) {
     const declared = new Set([...source.matchAll(/\b(?:class|record)\s+([A-Z]\w*Manager)\b/g)].map(match => match[1]));
@@ -79,7 +80,8 @@ export function inspectArchitecture(snapshot) {
   } else {
     if (!/namespace\s+AlmToo\.Resource\.BrowserGitResource\.Data\s*;/.test(resource)) failures.push(violation('RESOURCE_NAMESPACE', resourcePath, 'Resource contract must use the exact D016/D018 namespace'));
     if (!dtoDeclaration.test(resource)) failures.push(violation('RESOURCE_CONTENT', resourcePath, 'Resource contract must declare the passive Browser Git records and enums'));
-    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(resource)) failures.push(violation('RESOURCE_BEHAVIOR', resourcePath, 'Resource contract must contain passive records and enums only, with no methods or executable bodies'));
+    const executableResource = resource.replace(/^\s*\/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\b\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(executableResource)) failures.push(violation('RESOURCE_BEHAVIOR', resourcePath, 'Resource contract must contain passive records and enums only, with no methods or executable bodies'));
   }
   for (const [path, source] of snapshot.resources) {
     if (path !== resourcePath && dtoDeclaration.test(source)) failures.push(violation('RESOURCE_PATH', path, `Browser Git DTOs must be declared only at ${resourcePath}`));

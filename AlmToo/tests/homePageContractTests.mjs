@@ -32,6 +32,7 @@ test('Home injects the concrete repository Manager and has no Client to Accessor
   assert.match(home, /@using AlmToo\.Managers\.Repositories/);
   assert.doesNotMatch(allClients, /IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|AlmToo\.Accessor|AlmToo\.Services\.Git/);
   assert.doesNotMatch(allClients, /IJSRuntime|IJSObjectReference|JSImport|InvokeAsync<.*>\("(?:storeCredential|getCredentialForPush|forgetCredential|hasCredential)"/);
+  assert.doesNotMatch(allClients, /\.Diagnostic\b|personalAccessToken|accessToken/i);
   assert.doesNotMatch(allClients, /IRepositoryWorkspaceManager|IVersionControlAccessor|Resources/);
 });
 

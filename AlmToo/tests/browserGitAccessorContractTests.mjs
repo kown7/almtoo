@@ -19,11 +19,14 @@ test('Browser Git interfaces and passive Resource contracts use their exact sepa
   assert.doesNotMatch(git + file + contracts, /AlmToo\.Resources|\.Context\b/);
   for (const facet of [git, file]) assert.doesNotMatch(facet, /\b(?:record|enum)\s+(?:GitOperationResult|PushRequest|FilterFilesRequest)\b/);
   assert.match(git, /interface IBrowserGitAccessor : IAsyncDisposable/);
-  for (const operation of ['CloneOrOpenAsync', 'GetStatusAsync', 'CommitAsync', 'InspectPushAsync', 'HasCredentialAsync', 'StoreCredentialAsync', 'ForgetCredentialAsync', 'PushAsync']) assert.match(git, new RegExp(operation));
+  for (const operation of ['CloneOrOpenAsync', 'GetStatusAsync', 'CommitAsync', 'InspectPushAsync', 'HasCredentialAsync', 'StoreCredentialAsync', 'ForgetCredentialAsync', 'PushAsync', 'SynchronizeAsync']) assert.match(git, new RegExp(operation));
   assert.match(file, /FilterFilesAsync\(FilterFilesRequest request/);
   assert.match(file, /UpdateFilesAsync\(UpdateFilesRequest request/);
   assert.doesNotMatch(git + file, /personalAccessToken|InitializeAsync|ListFilesAsync|ReadTextFileAsync|WriteTextFileAsync/);
-  for (const dto of ['GitOperationResult', 'FilterFilesRequest', 'FilterFilesResult', 'UpdateFilesRequest', 'UpdateFilesResult', 'PushReview', 'PushRequest', 'PushResult']) assert.match(contracts, new RegExp(`record ${dto}\\b`));
+  assert.doesNotMatch(contracts, /record SynchronizationFailure\([\s\S]*?(?:Diagnostic|credential|token)/i);
+  assert.match(contracts, /SynchronizationFailure\(\s*SynchronizationFailureCategory Category,\s*string Message\)/);
+  for (const dto of ['GitOperationResult', 'FilterFilesRequest', 'FilterFilesResult', 'UpdateFilesRequest', 'UpdateFilesResult', 'PushReview', 'PushRequest', 'PushResult', 'SynchronizationRequest', 'IncomingCommitMetadata', 'ChangedFileSummary', 'SynchronizationReview', 'SynchronizationFailure']) assert.match(contracts, new RegExp(`record ${dto}\\b`));
+  for (const enumeration of ['SynchronizationIntent', 'SynchronizationDecisionState', 'SynchronizationFailureCategory']) assert.match(contracts, new RegExp(`enum ${enumeration}\\b`));
   assert.doesNotMatch(contracts, /\b(?:static|class|interface)\b|\b(?:Success|Failure)\s*\(|=>/);
 });
 
