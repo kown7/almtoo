@@ -84,3 +84,13 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] Contract gates verify Client sources reference neither `BrowserGitAccessor` nor `browserGitEngine`, while synchronization failures return a stable failure kind with null diagnostics above the Accessor.
 
 **Result:** PASS
+
+## M004 S03 completion review
+
+- [x] `Pages/Home.razor` remains a **Client**: it subscribes to `RepositoryWorkspaceManager` state, renders only credential-free review summaries and stable categories, and delegates review, apply, and cancellation to that Manager.
+- [x] `RepositoryWorkspaceManager` remains the **Manager**: it owns operation serialization, exact-review validation, working-copy preconditions, cancellation, and safe outcome state; Home adds no synchronization policy or Accessor call.
+- [x] `IBrowserGitAccessor` and `BrowserGitAccessor` remain the **Accessor** boundary for browser Git, transport, credentials, and diagnostic translation. The Client names neither the Accessor nor browser JavaScript and renders no diagnostic or credential value.
+- [x] `SynchronizationReview`, `IncomingCommitMetadata`, changed-file summaries, decisions, and failure categories remain passive **Resource** data crossing the existing Manager boundary.
+- [x] No new interface is needed because this change introduces no new substitution boundary: the existing concrete Manager is the cohesive Client-facing orchestration surface, and `IBrowserGitAccessor` already protects the browser/platform seam.
+
+**Result:** PASS

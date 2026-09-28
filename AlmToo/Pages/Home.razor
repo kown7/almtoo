@@ -155,6 +155,80 @@
             }
         </section>
 
+        <section class="synchronization-panel" aria-labelledby="synchronization-heading">
+            <div class="synchronization-panel__heading">
+                <div><p class="helper-text">Remote update</p><h2 id="synchronization-heading">Review repository synchronization</h2></div>
+                <button class="secondary-action" type="button" @onclick="ReviewSynchronizationAsync" disabled="@State.IsBusy">
+                    @(IsOperation(RepositoryWorkspaceOperation.ReviewSynchronization) ? "Reviewing..." : "Review synchronization")
+                </button>
+            </div>
+
+            @if (IsOperation(RepositoryWorkspaceOperation.ReviewSynchronization) || IsOperation(RepositoryWorkspaceOperation.ApplySynchronization))
+            {
+                <p class="status-message info" data-synchronization-progress="@State.Operation" role="status" aria-live="polite">@(IsOperation(RepositoryWorkspaceOperation.ApplySynchronization) ? "Applying the accepted repository synchronization..." : "Checking the remote branch for incoming changes...")</p>
+            }
+
+            @if (State.SynchronizationReview is { } review)
+            {
+                @if (IsSynchronizationDecision("ReadyToApply"))
+                {
+                    <div class="synchronization-review" data-synchronization-decision="ready-to-apply">
+                        <p class="synchronization-review__summary">Incoming changes are ready for review. Applying them changes this browser-local workspace only after your explicit confirmation.</p>
+                        @if (review.IncomingCommit is { } incomingCommit)
+                        {
+                            <dl class="synchronization-review__commit" aria-label="Incoming commit review">
+                                <div><dt>Incoming commit</dt><dd class="synchronization-review__sha">@incomingCommit.CommitId</dd></div>
+                                <div><dt>Author</dt><dd>@incomingCommit.AuthorName</dd></div>
+                                <div><dt>Message</dt><dd>@incomingCommit.Message</dd></div>
+                                <div><dt>Authored</dt><dd>@incomingCommit.AuthoredAt.ToLocalTime().ToString("f")</dd></div>
+                            </dl>
+                        }
+                        <div class="synchronization-review__files">
+                            <h3>Incoming changed files</h3>
+                            @if (review.ChangedFiles.Count > 0)
+                            {
+                                <ul aria-label="Incoming changed-file summary">
+                                    @foreach (var changedFile in review.ChangedFiles)
+                                    {
+                                        <li><span class="synchronization-review__change">@changedFile.ChangeKind</span><span>@changedFile.Path</span></li>
+                                    }
+                                </ul>
+                            }
+                            else
+                            {
+                                <p>No changed-file summary was provided for this reviewed update.</p>
+                            }
+                        </div>
+                        <form class="synchronization-form" @onsubmit="ApplySynchronizationAsync" @onsubmit:preventDefault="true">
+                            <label class="synchronization-confirmation" for="confirm-synchronization">
+                                <input id="confirm-synchronization" type="checkbox" checked="@synchronizationConfirmed" @onchange="ConfirmSynchronization" disabled="@State.IsBusy" />
+                                <span>I reviewed this exact incoming update and accept applying it to this browser-local workspace.</span>
+                            </label>
+                            <button class="primary-action" type="submit" disabled="@(!CanApplySynchronization)">
+                                @(IsOperation(RepositoryWorkspaceOperation.ApplySynchronization) ? "Applying..." : "Apply reviewed synchronization")
+                            </button>
+                        </form>
+                    </div>
+                }
+                else
+                {
+                    <p class="@SynchronizationStatusCssClass" data-synchronization-decision="@SynchronizationDecisionCode" data-synchronization-failure="@State.SynchronizationFailureCode"
+                       role="@(State.SynchronizationFailureCode is null ? "status" : "alert")"
+                       aria-live="@(State.SynchronizationFailureCode is null ? "polite" : "assertive")">@SynchronizationMessage</p>
+                }
+            }
+            else if (SynchronizationMessage is not null)
+            {
+                <p class="@SynchronizationStatusCssClass" data-synchronization-decision="@SynchronizationDecisionCode" data-synchronization-failure="@State.SynchronizationFailureCode"
+                   role="@(State.SynchronizationFailureCode is null ? "status" : "alert")"
+                   aria-live="@(State.SynchronizationFailureCode is null ? "polite" : "assertive")">@SynchronizationMessage</p>
+            }
+            else
+            {
+                <p class="synchronization-panel__placeholder">Review the remote branch before applying incoming changes. Local files remain available while you decide.</p>
+            }
+        </section>
+
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div><p class="helper-text">Selected file path</p><h2 id="file-editor-heading">@(State.SelectedFilePath ?? "No file selected")</h2></div>
             @if (IsOperation(RepositoryWorkspaceOperation.LoadFile))
@@ -190,9 +264,35 @@
 @code {
     private string repositoryUrl = string.Empty;
     private string credentialInput = string.Empty;
+    private bool synchronizationConfirmed;
     private RepositoryWorkspaceState State => Workspace.State;
     private bool IsOperation(RepositoryWorkspaceOperation operation) => State.Operation == operation;
     private bool CanPush => State.PushReview is not null && State.PushConfirmed && State.HasCredential && !State.IsBusy;
+    private bool CanApplySynchronization => State.SynchronizationReview is not null && IsSynchronizationDecision("ReadyToApply") && synchronizationConfirmed && !State.IsBusy;
+    private string? SynchronizationDecisionCode => State.SynchronizationDecision?.ToString();
+    private string SynchronizationStatusCssClass => $"status-message {(State.SynchronizationFailureCode is null ? "success" : "error")}";
+    private string? SynchronizationMessage => State.SynchronizationFailureCode switch
+    {
+        "unsaved-editor-changes" => "Save or discard editor changes before applying synchronization.",
+        "uncommitted-working-tree" => "Commit or discard changed files before applying synchronization.",
+        "cancelled" => "Synchronization review was cancelled. Review again when you are ready.",
+        "credential-rejected" => "The remote rejected the tab credential. Replace it before retrying synchronization.",
+        "network-unavailable" => "The remote could not be reached. Check connectivity before retrying synchronization.",
+        "unsupported-ref" => "The checked-out ref is not supported for synchronization. Select a local branch and retry.",
+        "divergent-history" => "The local and remote histories diverged. Reconcile them before synchronizing.",
+        "invalid-repository" => "The repository is no longer available. Reopen it before reviewing synchronization.",
+        "unknown" => "Synchronization could not be completed safely. Inspect the workspace before retrying.",
+        _ => SynchronizationDecisionCode switch
+        {
+            "Current" => "The workspace is already current with the remote branch.",
+            "Ahead" => "The workspace is ahead of the remote branch; no incoming changes are available.",
+            "Divergent" => "The local and remote branches have diverged. Reconcile them before synchronizing.",
+            "Cancelled" => "Synchronization review was cancelled. Review again when you are ready.",
+            "Applied" => "Repository synchronization was applied and workspace status was refreshed.",
+            "Failed" => "Synchronization could not be completed safely. Inspect the workspace before retrying.",
+            _ => null
+        }
+    };
     private string ResultCssClass => $"status-message {(State.Result?.Succeeded == true ? "success" : "error")}";
     private string CredentialState => State.CredentialReplacementRequired ? "replacement-required" : State.HasCredential ? "present" : "forgotten";
     private string SaveStatusText => IsOperation(RepositoryWorkspaceOperation.SaveFile) ? "Saving changes" : State.HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits";
@@ -216,6 +316,22 @@
     private async Task InspectPushAsync() => await Workspace.InspectPushAsync();
     private async Task ForgetCredentialAsync() => await Workspace.ForgetCredentialAsync();
     private void EditSelectedFile(ChangeEventArgs args) => Workspace.EditSelectedFile(args.Value?.ToString() ?? string.Empty);
+    private bool IsSynchronizationDecision(string decision) => string.Equals(SynchronizationDecisionCode, decision, StringComparison.Ordinal);
+    private void ConfirmSynchronization(ChangeEventArgs args) => synchronizationConfirmed = (args.Value is true || string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase)) && IsSynchronizationDecision("ReadyToApply");
+    private async Task ReviewSynchronizationAsync()
+    {
+        synchronizationConfirmed = false;
+        await Workspace.ReviewSynchronizationAsync();
+    }
+
+    private async Task ApplySynchronizationAsync()
+    {
+        if (CanApplySynchronization && State.SynchronizationReview is not null)
+        {
+            await Workspace.ApplySynchronizationAsync(State.SynchronizationReview);
+            synchronizationConfirmed = false;
+        }
+    }
     private void ConfirmPushReview(ChangeEventArgs args) => Workspace.ConfirmPushReview(args.Value is true || string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase));
     private void UpdateCredentialInput(ChangeEventArgs args) => credentialInput = args.Value?.ToString() ?? string.Empty;
 
