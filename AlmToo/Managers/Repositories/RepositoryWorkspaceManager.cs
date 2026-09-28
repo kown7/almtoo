@@ -148,6 +148,84 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     public Task<bool> RefreshStatusAsync(CancellationToken cancellationToken = default) =>
         RunAsync(RepositoryWorkspaceOperation.RefreshStatus, RefreshStatusCoreAsync, cancellationToken);
 
+    public Task<bool> ReviewSynchronizationAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.ReviewSynchronization, async token =>
+        {
+            if (!RequireRepository())
+            {
+                return false;
+            }
+
+            State.SynchronizationReview = null;
+            State.SynchronizationDecision = null;
+            State.SynchronizationFailureCategory = null;
+            var repository = State.Repository!;
+            var result = await gitAccessor.SynchronizeAsync(
+                new SynchronizationRequest(repository.RepositoryUrl, "main", SynchronizationIntent.Review), token);
+            if (!result.Succeeded || result.Value is null)
+            {
+                return FailSynchronization(result);
+            }
+
+            State.SynchronizationReview = result.Value;
+            State.SynchronizationDecision = result.Value.Decision;
+            return Succeed(GetSynchronizationReviewMessage(result.Value.Decision));
+        }, cancellationToken);
+
+    public Task<bool> ApplySynchronizationAsync(SynchronizationReview reviewedSynchronization, CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.ApplySynchronization, async token =>
+        {
+            if (!RequireRepository())
+            {
+                return false;
+            }
+
+            if (!await RefreshStatusCoreAsync(token))
+            {
+                return false;
+            }
+
+            if (State.HasUnsavedChanges)
+            {
+                return FailSynchronization(new SynchronizationFailure(
+                    SynchronizationFailureCategory.UnsavedEditorChanges,
+                    "Save the edited file before applying repository synchronization."));
+            }
+
+            if (State.ChangedFiles.Count > 0)
+            {
+                return FailSynchronization(new SynchronizationFailure(
+                    SynchronizationFailureCategory.UncommittedWorkingTree,
+                    "Commit or discard the changed files before applying repository synchronization."));
+            }
+
+            if (reviewedSynchronization is null || State.SynchronizationReview is null ||
+                reviewedSynchronization != State.SynchronizationReview ||
+                State.SynchronizationReview.Decision != SynchronizationDecisionState.ReadyToApply)
+            {
+                return FailSynchronization(new SynchronizationFailure(
+                    SynchronizationFailureCategory.Unknown,
+                    "Review the current incoming commits and explicitly accept the ready synchronization before applying it."));
+            }
+
+            var repository = State.Repository!;
+            var result = await gitAccessor.SynchronizeAsync(
+                new SynchronizationRequest(repository.RepositoryUrl, reviewedSynchronization.Branch, SynchronizationIntent.Apply), token);
+            if (!result.Succeeded || result.Value is null)
+            {
+                return FailSynchronization(result);
+            }
+
+            State.SynchronizationReview = result.Value;
+            State.SynchronizationDecision = result.Value.Decision;
+            if (!await RefreshStatusCoreAsync(token))
+            {
+                return false;
+            }
+
+            return Succeed("Repository synchronization was applied and workspace status was refreshed.");
+        }, cancellationToken);
+
     public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
         CommitAsync(new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
 
@@ -374,6 +452,11 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }
         catch (OperationCanceledException) when (linkedCancellation.IsCancellationRequested)
         {
+            if (operation is RepositoryWorkspaceOperation.ReviewSynchronization or RepositoryWorkspaceOperation.ApplySynchronization)
+            {
+                State.SynchronizationFailureCategory = SynchronizationFailureCategory.Cancelled;
+                State.SynchronizationDecision = SynchronizationDecisionState.Cancelled;
+            }
             State.Error = new(operation, "The repository operation was cancelled.", WasCancelled: true);
             State.Result = new(operation, false, State.Error.Message);
             return false;
@@ -421,8 +504,34 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         return false;
     }
 
+    private bool FailSynchronization(GitOperationResult<SynchronizationReview> result)
+    {
+        var category = result.FailureKind switch
+        {
+            GitOperationFailureKind.CredentialRejected => SynchronizationFailureCategory.CredentialRejected,
+            GitOperationFailureKind.NetworkUnavailable => SynchronizationFailureCategory.NetworkUnavailable,
+            GitOperationFailureKind.UnsupportedRef => SynchronizationFailureCategory.UnsupportedRef,
+            GitOperationFailureKind.RemoteAhead => SynchronizationFailureCategory.DivergentHistory,
+            _ => SynchronizationFailureCategory.Unknown
+        };
+        return FailSynchronization(new SynchronizationFailure(category, GetSynchronizationFailureMessage(category)));
+    }
+
+    private bool FailSynchronization(SynchronizationFailure failure)
+    {
+        State.SynchronizationFailureCategory = failure.Category;
+        State.SynchronizationDecision = SynchronizationDecisionState.Failed;
+        State.Error = new(State.Operation, failure.Message);
+        State.Result = new(State.Operation, false, failure.Message);
+        NotifyChanged();
+        return false;
+    }
+
     private void ResetWorkspace()
     {
+        State.SynchronizationReview = null;
+        State.SynchronizationDecision = null;
+        State.SynchronizationFailureCategory = null;
         State.Repository = null;
         State.Entries = Array.Empty<RepositoryFileEntry>();
         State.CurrentPath = "/";
@@ -445,6 +554,25 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         State.PushConfirmed = false;
         State.PushFailureKind = null;
     }
+
+    private static string GetSynchronizationReviewMessage(SynchronizationDecisionState decision) => decision switch
+    {
+        SynchronizationDecisionState.Current => "The workspace is already current with the remote branch.",
+        SynchronizationDecisionState.Ahead => "The workspace is ahead of the remote branch; no incoming changes are available.",
+        SynchronizationDecisionState.Divergent => "The local and remote branches have diverged. Reconcile them before synchronizing.",
+        SynchronizationDecisionState.ReadyToApply => "Incoming changes are ready. Review them and explicitly accept synchronization to apply.",
+        SynchronizationDecisionState.Applied => "Repository synchronization was applied.",
+        _ => "Review the repository synchronization result before continuing."
+    };
+
+    private static string GetSynchronizationFailureMessage(SynchronizationFailureCategory category) => category switch
+    {
+        SynchronizationFailureCategory.CredentialRejected => "The remote rejected the tab credential. Replace it before retrying synchronization.",
+        SynchronizationFailureCategory.NetworkUnavailable => "The remote could not be reached. Check connectivity before retrying synchronization.",
+        SynchronizationFailureCategory.UnsupportedRef => "The checked-out ref is not supported for synchronization. Select a local branch and retry.",
+        SynchronizationFailureCategory.DivergentHistory => "The local and remote histories diverged. Reconcile them before retrying synchronization.",
+        _ => "Repository synchronization could not be completed safely. Inspect the workspace before retrying."
+    };
 
     private void NotifyChanged() => StateChanged?.Invoke();
 

@@ -240,6 +240,134 @@ export async function inspectPush() {
   }
 }
 
+export async function synchronize(request) {
+  const operation = 'synchronize';
+
+  try {
+    const repositoryUrl = canonicalizeGitHubOrigin(requireText(request?.repositoryUrl, 'repositoryUrl'));
+    const branch = parseLocalBranchRef(`refs/heads/${requireText(request?.branch, 'branch')}`);
+    const rawIntent = request?.intent;
+    const intent = typeof rawIntent === 'number'
+      ? ['Fetch', 'Review', 'Apply'][rawIntent]
+      : requireText(rawIntent, 'intent');
+    if (!['Fetch', 'Review', 'Apply'].includes(intent)) {
+      throw new Error('The synchronization intent is not supported.');
+    }
+
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    const origin = canonicalizeGitHubOrigin(await git.getConfig({ fs, dir, path: 'remote.origin.url' }));
+    if (origin !== repositoryUrl) {
+      throw new Error('The synchronization repository does not match the active origin.');
+    }
+
+    const currentBranch = parseLocalBranchRef(await git.currentBranch({ fs, dir, fullname: true }));
+    if (currentBranch !== branch) {
+      throw new Error('The checked-out branch does not match the requested synchronization branch.');
+    }
+
+    await git.fetch({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, depth: 50 });
+    const localCommitId = await git.resolveRef({ fs, dir, ref: 'HEAD' });
+    const remoteRef = `refs/remotes/origin/${branch}`;
+    const remoteCommitId = await git.resolveRef({ fs, dir, ref: remoteRef });
+    const incoming = remoteCommitId === localCommitId
+      ? null
+      : (await git.log({ fs, dir, ref: remoteRef, depth: 1 }))[0];
+    const localContainsRemote = remoteCommitId === localCommitId
+      || await git.isDescendent({ fs, dir, oid: localCommitId, ancestor: remoteCommitId });
+    const remoteContainsLocal = remoteCommitId === localCommitId
+      || await git.isDescendent({ fs, dir, oid: remoteCommitId, ancestor: localCommitId });
+    const decision = remoteCommitId === localCommitId
+      ? 'Current'
+      : localContainsRemote
+        ? 'Ahead'
+        : remoteContainsLocal
+          ? 'ReadyToApply'
+          : 'Divergent';
+    const changedFiles = remoteContainsLocal && remoteCommitId !== localCommitId
+      ? await summarizeIncomingFiles(git, fs, dir, remoteRef)
+      : [];
+
+    if (intent === 'Apply') {
+      if (decision !== 'ReadyToApply') {
+        return failureWithKind(operation, 'Repository synchronization was not a fast-forward.', 'remoteAhead');
+      }
+      await git.pull({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, fastForwardOnly: true });
+      return success(operation, 'The reviewed repository synchronization was applied.', {
+        repositoryUrl,
+        branch,
+        localCommitId: await git.resolveRef({ fs, dir, ref: 'HEAD' }),
+        incomingCommit: toIncomingCommit(incoming),
+        changedFiles,
+        decision: 'Applied'
+      });
+    }
+
+    return success(operation, 'The repository synchronization was reviewed without changing local files.', {
+      repositoryUrl: origin,
+      branch,
+      localCommitId,
+      incomingCommit: toIncomingCommit(incoming),
+      changedFiles,
+      decision
+    });
+  } catch (error) {
+    return failureWithKind(operation, 'Repository synchronization could not be completed.', classifyPushFailure(error));
+  }
+}
+
+async function summarizeIncomingFiles(git, fs, dir, remoteRef) {
+  const changedFiles = await git.walk({
+    fs,
+    dir,
+    trees: [git.TREE({ ref: 'HEAD' }), git.TREE({ ref: remoteRef })],
+    map: async (filepath, entries) => {
+      if (!filepath || filepath === '.') {
+        return null;
+      }
+
+      const [local, remote] = entries;
+      const localType = local ? await local.type() : 'absent';
+      const remoteType = remote ? await remote.type() : 'absent';
+      if (localType === remoteType && localType === 'blob' && await local.oid() === await remote.oid()) {
+        return null;
+      }
+
+      return {
+        path: `/${filepath}`,
+        changeKind: localType === 'absent' ? 'Added' : remoteType === 'absent' ? 'Deleted' : 'Modified'
+      };
+    }
+  });
+  return changedFiles.filter(Boolean);
+}
+
+function toIncomingCommit(commit) {
+  if (!commit) {
+    return null;
+  }
+  return {
+    commitId: commit.oid,
+    parentCommitId: commit.commit?.parent?.[0] || '',
+    message: commit.commit?.message || '',
+    authorName: commit.commit?.author?.name || '',
+    authoredAt: commit.commit?.author?.timestamp
+      ? new Date(commit.commit.author.timestamp * 1000).toISOString()
+      : new Date(0).toISOString()
+  };
+}
+
+function failureWithKind(operation, message, failureKind) {
+  return {
+    operation,
+    succeeded: false,
+    message,
+    value: null,
+    diagnostic: null,
+    failureKind
+  };
+}
+
 export async function push(review, personalAccessToken) {
   const operation = 'push';
   let token;

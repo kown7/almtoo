@@ -163,6 +163,23 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             cancellationToken);
     }
 
+    public async ValueTask<GitOperationResult<SynchronizationReview>> SynchronizeAsync(
+        SynchronizationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.RepositoryUrl) || string.IsNullOrWhiteSpace(request.Branch) || !Enum.IsDefined(request.Intent))
+        {
+            return new GitOperationResult<SynchronizationReview>("synchronize", false, "Repository synchronization could not be started.", Value: default, Diagnostic: "A repository URL, local branch, and supported synchronization intent are required.", FailureKind: GitOperationFailureKind.Unknown);
+        }
+
+        return await InvokeWithValueAsync<SynchronizationReviewDto, SynchronizationReview>(
+            "synchronize",
+            "synchronize",
+            value => value.ToSynchronizationReview(),
+            cancellationToken,
+            request);
+    }
+
     public async ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default)
     {
         const string operation = "hasCredential";
@@ -764,6 +781,43 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             ValidateCommitId(PushedCommitId, nameof(PushedCommitId));
             return new(RepositoryUrl, Branch, DestinationRef, PushedCommitId);
         }
+    }
+
+    private sealed record SynchronizationReviewDto
+    {
+        [JsonPropertyName("repositoryUrl")] public string RepositoryUrl { get; init; } = string.Empty;
+        [JsonPropertyName("branch")] public string Branch { get; init; } = string.Empty;
+        [JsonPropertyName("localCommitId")] public string LocalCommitId { get; init; } = string.Empty;
+        [JsonPropertyName("incomingCommit")] public IncomingCommitMetadata? IncomingCommit { get; init; }
+        [JsonPropertyName("changedFiles")] public IReadOnlyList<ChangedFileSummaryDto> ChangedFiles { get; init; } = [];
+        [JsonPropertyName("decision")] public string Decision { get; init; } = string.Empty;
+
+        public SynchronizationReview ToSynchronizationReview()
+        {
+            if (!Uri.TryCreate(RepositoryUrl, UriKind.Absolute, out var repository)
+                || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(Branch)
+                || !Enum.TryParse<SynchronizationDecisionState>(Decision, true, out var decision)
+                || !Enum.IsDefined(decision))
+            {
+                throw new InvalidOperationException("The synchronization response did not match the expected review contract.");
+            }
+
+            return new(RepositoryUrl, Branch, LocalCommitId, IncomingCommit,
+                ChangedFiles.Select(file => file.ToChangedFileSummary()).ToArray(), decision);
+        }
+    }
+
+    private sealed record ChangedFileSummaryDto
+    {
+        [JsonPropertyName("path")] public string Path { get; init; } = string.Empty;
+        [JsonPropertyName("changeKind")] public string ChangeKind { get; init; } = string.Empty;
+
+        public ChangedFileSummary ToChangedFileSummary() => new(
+            Path,
+            Enum.TryParse<GitChangeKind>(ChangeKind, ignoreCase: true, out var changeKind)
+                ? changeKind
+                : GitChangeKind.Unknown);
     }
 
     private static void ValidatePushCoordinates(
