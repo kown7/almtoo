@@ -242,6 +242,7 @@ export async function inspectPush() {
 
 export async function synchronize(request) {
   const operation = 'synchronize';
+  let synchronizationSnapshot;
 
   try {
     const repositoryUrl = canonicalizeGitHubOrigin(requireText(request?.repositoryUrl, 'repositoryUrl'));
@@ -266,9 +267,10 @@ export async function synchronize(request) {
       throw new Error('The checked-out branch does not match the requested synchronization branch.');
     }
 
-    await git.fetch({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, depth: 50 });
-    const localCommitId = await git.resolveRef({ fs, dir, ref: 'HEAD' });
     const remoteRef = `refs/remotes/origin/${branch}`;
+    synchronizationSnapshot = await captureSynchronizationRefs(git, fs, dir, branch, remoteRef);
+    await git.fetch({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, depth: 50 });
+    const localCommitId = synchronizationSnapshot.localCommitId;
     const remoteCommitId = await git.resolveRef({ fs, dir, ref: remoteRef });
     const incoming = remoteCommitId === localCommitId
       ? null
@@ -290,9 +292,15 @@ export async function synchronize(request) {
 
     if (intent === 'Apply') {
       if (decision !== 'ReadyToApply') {
+        await restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, synchronizationSnapshot);
         return failureWithKind(operation, 'Repository synchronization was not a fast-forward.', 'remoteAhead');
       }
-      await git.pull({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, fastForwardOnly: true });
+      try {
+        await git.pull({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, fastForwardOnly: true });
+      } catch (error) {
+        await restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, synchronizationSnapshot);
+        throw error;
+      }
       return success(operation, 'The reviewed repository synchronization was applied.', {
         repositoryUrl,
         branch,
@@ -312,7 +320,43 @@ export async function synchronize(request) {
       decision
     });
   } catch (error) {
+    if (synchronizationSnapshot) {
+      try {
+        const { fs, dir } = await getActiveWorkspace(operation);
+        await restoreSynchronizationRefs(
+          getGit(),
+          fs,
+          dir,
+          synchronizationSnapshot.branch,
+          synchronizationSnapshot.remoteRef,
+          synchronizationSnapshot);
+      } catch {
+        // Preserve the safe failure contract even if browser storage cannot complete a compensating restore.
+      }
+    }
     return failureWithKind(operation, 'Repository synchronization could not be completed.', classifyPushFailure(error));
+  }
+}
+
+async function captureSynchronizationRefs(git, fs, dir, branch, remoteRef) {
+  const localCommitId = await git.resolveRef({ fs, dir, ref: 'HEAD' });
+  let remoteCommitId = null;
+  try {
+    remoteCommitId = await git.resolveRef({ fs, dir, ref: remoteRef });
+  } catch {
+    // A first fetch may legitimately create the remote-tracking ref.
+  }
+
+  return { localCommitId, localRef: `refs/heads/${branch}`, remoteCommitId, branch, remoteRef };
+}
+
+async function restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, snapshot) {
+  await git.writeRef({ fs, dir, ref: snapshot.localRef, value: snapshot.localCommitId, force: true });
+  await git.checkout({ fs, dir, ref: branch, force: true });
+  if (snapshot.remoteCommitId) {
+    await git.writeRef({ fs, dir, ref: remoteRef, value: snapshot.remoteCommitId, force: true });
+  } else {
+    await git.deleteRef({ fs, dir, ref: remoteRef });
   }
 }
 
@@ -339,7 +383,9 @@ async function summarizeIncomingFiles(git, fs, dir, remoteRef) {
       };
     }
   });
-  return changedFiles.filter(Boolean);
+  return changedFiles
+    .filter(Boolean)
+    .sort((left, right) => left.path.localeCompare(right.path) || left.changeKind.localeCompare(right.changeKind));
 }
 
 function toIncomingCommit(commit) {

@@ -793,3 +793,220 @@ test('file operation I/O failures remain structured and operation-specific', asy
     assert.ok(result.diagnostic);
   }
 });
+
+const syncOids = Object.freeze({
+  base: '1111111111111111111111111111111111111111',
+  local: '2222222222222222222222222222222222222222',
+  remote: '3333333333333333333333333333333333333333',
+  divergent: '4444444444444444444444444444444444444444'
+});
+
+async function openSynchronizationFixture({ scenario = 'ready', failure = null } = {}) {
+  resetBrowserGlobals();
+  installLoadingDocument();
+
+  const remoteByScenario = {
+    current: syncOids.local,
+    ahead: syncOids.base,
+    ready: syncOids.remote,
+    divergent: syncOids.divergent
+  };
+  const state = {
+    origin: 'https://github.com/octocat/Hello-World.git',
+    branch: 'refs/heads/main',
+    refs: {
+      HEAD: syncOids.local,
+      'refs/heads/main': syncOids.local,
+      'refs/remotes/origin/main': syncOids.base
+    },
+    remote: remoteByScenario[scenario],
+    files: { '/README.md': 'local readme', '/obsolete.txt': 'obsolete', '/src/app.js': 'old app' },
+    fetchCalls: [],
+    pullCalls: [],
+    remoteRefReads: 0
+  };
+  const parents = {
+    [syncOids.local]: syncOids.base,
+    [syncOids.remote]: syncOids.local,
+    [syncOids.divergent]: syncOids.base,
+    [syncOids.base]: null
+  };
+  const trees = {
+    [syncOids.local]: { 'README.md': 'local-readme', 'obsolete.txt': 'obsolete', 'src/app.js': 'old-app' },
+    [syncOids.remote]: { 'README.md': 'remote-readme', 'new.txt': 'new', 'src/app.js': 'new-app' },
+    [syncOids.base]: { 'README.md': 'base-readme' },
+    [syncOids.divergent]: { 'README.md': 'divergent-readme', 'other.txt': 'other' }
+  };
+  const snapshot = () => structuredClone({ refs: state.refs, files: state.files });
+  const isDescendent = (oid, ancestor) => {
+    for (let current = oid; current; current = parents[current]) {
+      if (current === ancestor) return true;
+    }
+    return false;
+  };
+  const treeEntry = (tree, filepath) => tree?.[filepath]
+    ? { async type() { return 'blob'; }, async oid() { return tree[filepath]; } }
+    : undefined;
+
+  installFakeGitRuntime({
+    async getConfig() { return state.origin; },
+    async currentBranch() { return state.branch; },
+    async resolveRef({ ref }) {
+      if (ref === 'refs/remotes/origin/main') {
+        state.remoteRefReads += 1;
+        if (failure === 'remoteRef' && state.remoteRefReads > 1) {
+          throw new Error('remote tracking ref could not be resolved');
+        }
+      }
+      if (!Object.hasOwn(state.refs, ref)) throw new Error(`missing ref ${ref}`);
+      return state.refs[ref];
+    },
+    async fetch(options) {
+      state.fetchCalls.push(options);
+      if (failure === 'fetch') throw new TypeError('Failed to fetch github_pat_test-sentinel');
+      state.refs['refs/remotes/origin/main'] = state.remote;
+    },
+    async writeRef({ ref, value }) { state.refs[ref] = value; },
+    async deleteRef({ ref }) { delete state.refs[ref]; },
+    async checkout() {
+      state.refs.HEAD = state.refs['refs/heads/main'];
+      state.files = { '/README.md': 'local readme', '/obsolete.txt': 'obsolete', '/src/app.js': 'old app' };
+    },
+    async isDescendent({ oid, ancestor }) { return isDescendent(oid, ancestor); },
+    async log({ ref }) {
+      const oid = state.refs[ref];
+      return [{
+        oid,
+        commit: { parent: parents[oid] ? [parents[oid]] : [], message: 'Remote changes', author: { name: 'Remote Author', timestamp: 1_700_000_000 } }
+      }];
+    },
+    TREE({ ref }) { return { ref }; },
+    async walk({ trees: walkTrees, map }) {
+      const [local, remote] = walkTrees.map(({ ref }) => trees[state.refs[ref]]);
+      return Promise.all(['src/app.js', 'obsolete.txt', 'README.md', 'new.txt'].map((path) => map(path, [treeEntry(local, path), treeEntry(remote, path)])));
+    },
+    async pull(options) {
+      state.pullCalls.push(options);
+      if (failure === 'pull') throw new Error('browser storage failed after download');
+      state.refs.HEAD = state.remote;
+      state.refs['refs/heads/main'] = state.remote;
+      state.files = { '/README.md': 'remote readme', '/new.txt': 'new', '/src/app.js': 'new app' };
+    }
+  }, {
+    async stat(path) {
+      if (path.endsWith('/.git')) {
+        const error = new Error('missing repository metadata');
+        error.code = 'ENOENT';
+        throw error;
+      }
+      return { isFile: () => true, size: 0 };
+    }
+  });
+
+  const engine = await importFreshModule();
+  assert.equal((await engine.cloneOrOpen({ repositoryUrl: state.origin, workspaceName: 'synchronization' })).succeeded, true);
+  return { engine, state, snapshot };
+}
+
+function assertSafeSynchronizationResult(result) {
+  const serialized = JSON.stringify(result);
+  assert.equal(result.operation, 'synchronize');
+  assert.equal(result.diagnostic, null);
+  assert.equal(serialized.includes('github_pat_test-sentinel'), false);
+  assert.equal(serialized.includes('Failed to fetch'), false);
+}
+
+test('synchronize fetch and review classify history without changing the local workspace', async () => {
+  for (const [scenario, expectedDecision] of [['current', 'Current'], ['ahead', 'Ahead'], ['ready', 'ReadyToApply'], ['divergent', 'Divergent']]) {
+    const { engine, state, snapshot } = await openSynchronizationFixture({ scenario });
+    const before = snapshot();
+    const result = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: 'Review' });
+
+    assertSafeSynchronizationResult(result);
+    assert.equal(result.succeeded, true);
+    assert.equal(result.value.decision, expectedDecision);
+    assert.equal(state.fetchCalls.length, 1);
+    assert.equal(state.fetchCalls[0].ref, 'main');
+    assert.equal(state.fetchCalls[0].singleBranch, true);
+    assert.equal(state.fetchCalls[0].depth, 50);
+    assert.deepEqual({ HEAD: state.refs.HEAD, local: state.refs['refs/heads/main'], files: state.files }, { HEAD: before.refs.HEAD, local: before.refs['refs/heads/main'], files: before.files });
+  }
+
+  const { engine, state, snapshot } = await openSynchronizationFixture({ scenario: 'ready' });
+  const before = snapshot();
+  const fetched = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: 'Fetch' });
+  assertSafeSynchronizationResult(fetched);
+  assert.equal(fetched.value.decision, 'ReadyToApply');
+  assert.deepEqual({ HEAD: state.refs.HEAD, local: state.refs['refs/heads/main'], files: state.files }, { HEAD: before.refs.HEAD, local: before.refs['refs/heads/main'], files: before.files });
+  assert.equal(state.refs['refs/remotes/origin/main'], syncOids.remote);
+});
+
+test('synchronize presents credential-free, sorted incoming metadata before a clean fast-forward apply', async () => {
+  const { engine, state, snapshot } = await openSynchronizationFixture({ scenario: 'ready' });
+  const beforeReview = snapshot();
+  const review = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: 'Review' });
+
+  assertSafeSynchronizationResult(review);
+  assert.equal(review.value.incomingCommit.commitId, syncOids.remote);
+  assert.equal(review.value.incomingCommit.parentCommitId, syncOids.local);
+  assert.equal(review.value.incomingCommit.authorName, 'Remote Author');
+  assert.deepEqual(review.value.changedFiles, [
+    { path: '/new.txt', changeKind: 'Added' },
+    { path: '/obsolete.txt', changeKind: 'Deleted' },
+    { path: '/README.md', changeKind: 'Modified' },
+    { path: '/src/app.js', changeKind: 'Modified' }
+  ]);
+  assert.deepEqual({ HEAD: state.refs.HEAD, local: state.refs['refs/heads/main'], files: state.files }, { HEAD: beforeReview.refs.HEAD, local: beforeReview.refs['refs/heads/main'], files: beforeReview.files });
+
+  const applied = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: 'Apply' });
+  assertSafeSynchronizationResult(applied);
+  assert.equal(applied.succeeded, true);
+  assert.equal(applied.value.decision, 'Applied');
+  assert.equal(state.refs.HEAD, syncOids.remote);
+  assert.equal(state.refs['refs/heads/main'], syncOids.remote);
+  assert.deepEqual(state.files, { '/README.md': 'remote readme', '/new.txt': 'new', '/src/app.js': 'new app' });
+  assert.equal(state.pullCalls.length, 1);
+  assert.equal(state.pullCalls[0].fastForwardOnly, true);
+});
+
+test('synchronize rejects malformed, mismatched, failed, and non-fast-forward paths without local workspace mutation', async () => {
+  const rejectedRequests = [
+    { request: { repositoryUrl: '', branch: 'main', intent: 'Review' } },
+    { request: { repositoryUrl: 'https://github.com/octocat/Elsewhere.git', branch: 'main', intent: 'Review' } },
+    { request: { repositoryUrl: 'https://github.com/octocat/Hello-World.git', branch: 'other', intent: 'Review' } }
+  ];
+  for (const { request } of rejectedRequests) {
+    const { engine, snapshot } = await openSynchronizationFixture();
+    const before = snapshot();
+    const result = await engine.synchronize(request);
+    assertSafeSynchronizationResult(result);
+    assert.equal(result.succeeded, false);
+    assert.deepEqual(snapshot(), before);
+  }
+
+  for (const failure of ['fetch', 'pull']) {
+    const { engine, state, snapshot } = await openSynchronizationFixture({ failure });
+    const before = snapshot();
+    const result = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: failure === 'pull' ? 'Apply' : 'Review' });
+    assertSafeSynchronizationResult(result);
+    assert.equal(result.succeeded, false);
+    assert.deepEqual(snapshot(), before);
+  }
+
+  const { engine, state, snapshot } = await openSynchronizationFixture({ failure: 'remoteRef' });
+  const before = snapshot();
+  const unresolved = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: 'Review' });
+  assertSafeSynchronizationResult(unresolved);
+  assert.equal(unresolved.succeeded, false);
+  assert.deepEqual(snapshot(), before);
+
+  for (const scenario of ['current', 'ahead', 'divergent']) {
+    const fixture = await openSynchronizationFixture({ scenario });
+    const before = fixture.snapshot();
+    const result = await fixture.engine.synchronize({ repositoryUrl: fixture.state.origin, branch: 'main', intent: 'Apply' });
+    assertSafeSynchronizationResult(result);
+    assert.equal(result.succeeded, false);
+    assert.equal(result.failureKind, 'remoteAhead');
+    assert.deepEqual({ HEAD: fixture.state.refs.HEAD, local: fixture.state.refs['refs/heads/main'], files: fixture.state.files }, { HEAD: before.refs.HEAD, local: before.refs['refs/heads/main'], files: before.files });
+  }
+});
