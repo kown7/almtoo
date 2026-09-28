@@ -8,7 +8,7 @@ Use this checklist for every architecture-affecting plan, implementation, refact
 |---|---|---|---|---|
 | `Pages/Home.razor` and repository components | Client | Render credential-free Manager state and delegate user actions | `RepositoryWorkspaceManager`, `RepositoryWorkspaceState` | Accessor types, JS interop, Git policy, raw diagnostics |
 | `RepositoryWorkspaceManager` and `RepositoryWorkspaceState` | Manager | Orchestrate review-first synchronization, preconditions, cancellation, and state transitions | Accessor interfaces, passive Resource contracts | other Managers, JS interop, rendering |
-| `IBrowserGitAccessor` and `BrowserGitAccessor` | Accessor | Integrate browser Git and remote transport, including fetch/review/apply execution and failure translation | browser APIs, Git engine, passive Resource contracts | Client, Manager workflow, UI state |
+| `browserGitEngine.js`, `IBrowserGitAccessor`, and `BrowserGitAccessor` | Accessor | Integrate browser-local Git metadata and remote transport, including fetch/review/apply execution, credential-free serialization, and failure translation | browser APIs, Git engine, passive Resource contracts | Client, Manager workflow, UI state |
 | `BrowserGitContracts.cs` | Resource | Carry passive synchronization requests, review metadata, decisions, and safe failure categories | data types only | methods, validation, I/O, orchestration, credentials |
 
 Synchronization remains a Browser Git capability, not a new VCS-neutral service: the Manager owns review and acceptance order; the Accessor owns browser/Git integration; Resource records carry only credential-free data.
@@ -75,3 +75,12 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 > This M004 synchronization change follows the project iDesign policy. Layer assignments and dependency direction were reviewed. Every retained interface protects a browser/platform boundary or necessary substitution seam, and no unexplained interface-per-class or pass-through decomposition remains. Review-first acceptance, non-destructive preconditions, cancellation, and safe diagnostic handling remain owned by the correct layers.
 
 **Overall result:** PASS
+
+## M004 S02 completion review
+
+- [x] `browserGitEngine.js` and `BrowserGitAccessor` remain Accessors: the engine owns browser Git, storage, and remote transport integration; the concrete Accessor owns managed interop validation and safe DTO translation.
+- [x] `RepositoryWorkspaceManager` remains the sole Manager for review and apply orchestration; no Engine or second synchronization service was introduced.
+- [x] Resource records remain passive and credential-free. `IBrowserGitAccessor` is retained as the single justified interface because it protects the browser JavaScript and Git platform dependency for Manager tests.
+- [x] Contract gates verify Client sources reference neither `BrowserGitAccessor` nor `browserGitEngine`, while synchronization failures return a stable failure kind with null diagnostics above the Accessor.
+
+**Result:** PASS

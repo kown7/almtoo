@@ -78,6 +78,35 @@ test('credential and push boundary is secret-safe, single-attempt, and review-bo
   assert.doesNotMatch(credential, /console\.|localStorage|JSON\.stringify/);
 });
 
+test('synchronization interop admits only safe review data and removes raw diagnostics', async () => {
+  const [service, contracts, engine] = await Promise.all([
+    source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
+    source('Resource/BrowserGitResource/Data/BrowserGitContracts.cs'),
+    source('wwwroot/js/browserGitEngine.js')
+  ]);
+  const synchronizationSurface = service.slice(service.indexOf('SynchronizeAsync('), service.indexOf('public async ValueTask<GitOperationResult<bool>> HasCredentialAsync'));
+
+  assert.match(synchronizationSurface, /ValidateSynchronizationCoordinates\(request\.RepositoryUrl, request\.Branch\)/);
+  assert.match(synchronizationSurface, /InvokeWithValueAsync<SynchronizationReviewDto, SynchronizationReview>/);
+  assert.match(synchronizationSurface, /var sanitized = SanitizeSynchronizationResult\(result\)/);
+  assert.match(synchronizationSurface, /sanitized\.Value\.RepositoryUrl, request\.RepositoryUrl/);
+  assert.match(synchronizationSurface, /return sanitized;/);
+  assert.match(synchronizationSurface, /catch \(OperationCanceledException\)[\s\S]*?SanitizedSynchronizationFailure\(GitOperationFailureKind\.Unknown\)/);
+  assert.match(service, /SanitizeSynchronizationResult[\s\S]*?Diagnostic = null, FailureKind = null/);
+  assert.match(service, /SanitizedSynchronizationFailure[\s\S]*?Diagnostic: null, FailureKind: failureKind/);
+  assert.match(service, /ValidateCommitId\(LocalCommitId/);
+  assert.match(service, /ValidateIncomingCommit/);
+  assert.match(service, /ReadyToApply or SynchronizationDecisionState\.Applied\) && incoming is null/);
+  assert.match(service, /TryNormalizeRepositoryPath\(Path, allowRoot: false/);
+  assert.match(service, /GitChangeKind\.Added or GitChangeKind\.Modified or GitChangeKind\.Deleted/);
+  assert.doesNotMatch(synchronizationSurface, /(?:personalAccessToken|github_pat|accessToken|\bPAT\b)/i);
+  assert.doesNotMatch(contracts.match(/record Synchronization(?:Request|Review|Failure)\([\s\S]*?\);/g)?.join('\n') ?? '', /(?:token|credential|diagnostic)/i);
+  assert.match(engine, /export async function synchronize\(request\)/);
+  assert.match(engine, /return failureWithKind\(operation, 'Repository synchronization could not be completed\.', classifyPushFailure\(error\)\)/);
+  assert.match(engine, /diagnostic: null/);
+  assert.doesNotMatch(engine.slice(engine.indexOf('export async function synchronize'), engine.indexOf('export async function push')), /console\.|personalAccessToken|github_pat/);
+});
+
 test('Accessor normalizes cancellation, interop failures, initialization, and partial disposal', async () => {
   const service = await source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs');
   assert.match(service, /initializationTask \?\?= InitializeAsync/);

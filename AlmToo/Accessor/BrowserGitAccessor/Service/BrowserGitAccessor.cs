@@ -167,17 +167,39 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         SynchronizationRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (request is null || string.IsNullOrWhiteSpace(request.RepositoryUrl) || string.IsNullOrWhiteSpace(request.Branch) || !Enum.IsDefined(request.Intent))
+        try
         {
-            return new GitOperationResult<SynchronizationReview>("synchronize", false, "Repository synchronization could not be started.", Value: default, Diagnostic: "A repository URL, local branch, and supported synchronization intent are required.", FailureKind: GitOperationFailureKind.Unknown);
-        }
+            if (request is null || !Enum.IsDefined(request.Intent))
+            {
+                return SanitizedSynchronizationFailure(GitOperationFailureKind.Unknown);
+            }
 
-        return await InvokeWithValueAsync<SynchronizationReviewDto, SynchronizationReview>(
-            "synchronize",
-            "synchronize",
-            value => value.ToSynchronizationReview(),
-            cancellationToken,
-            request);
+            ValidateSynchronizationCoordinates(request.RepositoryUrl, request.Branch);
+            var result = await InvokeWithValueAsync<SynchronizationReviewDto, SynchronizationReview>(
+                "synchronize",
+                "synchronize",
+                value => value.ToSynchronizationReview(),
+                cancellationToken,
+                request);
+
+            var sanitized = SanitizeSynchronizationResult(result);
+            if (sanitized.Succeeded && (sanitized.Value is null
+                || !string.Equals(sanitized.Value.RepositoryUrl, request.RepositoryUrl, StringComparison.Ordinal)
+                || !string.Equals(sanitized.Value.Branch, request.Branch, StringComparison.Ordinal)))
+            {
+                return SanitizedSynchronizationFailure(GitOperationFailureKind.Unknown);
+            }
+
+            return sanitized;
+        }
+        catch (OperationCanceledException)
+        {
+            return SanitizedSynchronizationFailure(GitOperationFailureKind.Unknown);
+        }
+        catch (Exception)
+        {
+            return SanitizedSynchronizationFailure(GitOperationFailureKind.Unknown);
+        }
     }
 
     public async ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default)
@@ -278,6 +300,22 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             personalAccessToken = null;
         }
     }
+
+    private static GitOperationResult<SynchronizationReview> SanitizeSynchronizationResult(
+        GitOperationResult<SynchronizationReview> result)
+    {
+        if (result.Succeeded && result.Value is not null)
+        {
+            return result with { Diagnostic = null, FailureKind = null };
+        }
+
+        return SanitizedSynchronizationFailure(result.FailureKind ?? GitOperationFailureKind.Unknown);
+    }
+
+    private static GitOperationResult<SynchronizationReview> SanitizedSynchronizationFailure(
+        GitOperationFailureKind failureKind) =>
+        new("synchronize", false, "Repository synchronization could not be completed.", Value: default,
+            Diagnostic: null, FailureKind: failureKind);
 
     private static GitOperationResult<PushResult> SanitizePushFailure(
         GitOperationResult<PushResult> result)
@@ -794,17 +832,39 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
 
         public SynchronizationReview ToSynchronizationReview()
         {
-            if (!Uri.TryCreate(RepositoryUrl, UriKind.Absolute, out var repository)
-                || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-                || string.IsNullOrWhiteSpace(Branch)
-                || !Enum.TryParse<SynchronizationDecisionState>(Decision, true, out var decision)
-                || !Enum.IsDefined(decision))
+            ValidateSynchronizationCoordinates(RepositoryUrl, Branch);
+            ValidateCommitId(LocalCommitId, nameof(LocalCommitId));
+            if (!Enum.TryParse<SynchronizationDecisionState>(Decision, true, out var decision)
+                || !Enum.IsDefined(decision)
+                || decision is SynchronizationDecisionState.Cancelled or SynchronizationDecisionState.Failed)
             {
                 throw new InvalidOperationException("The synchronization response did not match the expected review contract.");
             }
 
-            return new(RepositoryUrl, Branch, LocalCommitId, IncomingCommit,
-                ChangedFiles.Select(file => file.ToChangedFileSummary()).ToArray(), decision);
+            var incoming = IncomingCommit is null ? null : ValidateIncomingCommit(IncomingCommit);
+            var changedFiles = ChangedFiles.Select(file => file.ToChangedFileSummary()).ToArray();
+            if ((decision is SynchronizationDecisionState.ReadyToApply or SynchronizationDecisionState.Applied) && incoming is null)
+            {
+                throw new InvalidOperationException("A synchronization ready to apply must include incoming commit metadata.");
+            }
+
+            return new(RepositoryUrl, Branch, LocalCommitId, incoming, changedFiles, decision);
+        }
+
+        private static IncomingCommitMetadata ValidateIncomingCommit(IncomingCommitMetadata incoming)
+        {
+            ValidateCommitId(incoming.CommitId, nameof(incoming.CommitId));
+            if (incoming.ParentCommitId.Length > 0)
+            {
+                ValidateCommitId(incoming.ParentCommitId, nameof(incoming.ParentCommitId));
+            }
+
+            if (string.IsNullOrWhiteSpace(incoming.AuthorName))
+            {
+                throw new InvalidOperationException("Incoming commit metadata must identify its author.");
+            }
+
+            return incoming;
         }
     }
 
@@ -813,11 +873,39 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         [JsonPropertyName("path")] public string Path { get; init; } = string.Empty;
         [JsonPropertyName("changeKind")] public string ChangeKind { get; init; } = string.Empty;
 
-        public ChangedFileSummary ToChangedFileSummary() => new(
-            Path,
-            Enum.TryParse<GitChangeKind>(ChangeKind, ignoreCase: true, out var changeKind)
-                ? changeKind
-                : GitChangeKind.Unknown);
+        public ChangedFileSummary ToChangedFileSummary()
+        {
+            if (!TryNormalizeRepositoryPath(Path, allowRoot: false, out var path)
+                || !Enum.TryParse<GitChangeKind>(ChangeKind, ignoreCase: true, out var changeKind)
+                || changeKind is not (GitChangeKind.Added or GitChangeKind.Modified or GitChangeKind.Deleted))
+            {
+                throw new InvalidOperationException("The synchronization file summary did not match the expected contract.");
+            }
+
+            return new(path, changeKind);
+        }
+    }
+
+    private static void ValidateSynchronizationCoordinates(string repositoryUrl, string branch)
+    {
+        if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var repository)
+            || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(repository.UserInfo)
+            || !string.IsNullOrEmpty(repository.Query)
+            || !string.IsNullOrEmpty(repository.Fragment)
+            || repository.Segments.Length != 3
+            || string.IsNullOrWhiteSpace(branch)
+            || !string.Equals(branch, branch.Trim(), StringComparison.Ordinal)
+            || branch.IndexOfAny(['\0', '\r', '\n', ' ', '~', '^', ':', '?', '*', '[', '\\']) >= 0
+            || branch.Contains("..", StringComparison.Ordinal)
+            || branch.Contains("@{", StringComparison.Ordinal)
+            || branch.EndsWith(".", StringComparison.Ordinal)
+            || branch.EndsWith("/", StringComparison.Ordinal)
+            || branch.Split('/').Any(segment => segment.Length == 0 || segment.StartsWith(".", StringComparison.Ordinal) || segment.EndsWith(".lock", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException("The synchronization coordinates are not a credential-free GitHub HTTPS origin and supported local branch.");
+        }
     }
 
     private static void ValidatePushCoordinates(
