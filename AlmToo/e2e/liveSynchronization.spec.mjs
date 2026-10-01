@@ -105,7 +105,17 @@ async function assertNoCredentialLeak(page, diagnostics) {
   expect(/(?:github_pat_|ghp_|gho_|ghs_|ghu_)/i.test(browserSurface), 'Credential-shaped values must never reach browser surfaces').toBe(false);
 }
 
+async function clearLiveBrowserWorkspace(page) {
+  const client = await page.context().newCDPSession(page);
+  await client.send('Storage.clearDataForOrigin', {
+    origin: new URL(process.env.ALMTOO_BASE_URL ?? 'http://127.0.0.1:5208').origin,
+    storageTypes: 'all'
+  });
+  await client.detach();
+}
+
 async function openFixtureRepository(page) {
+  await clearLiveBrowserWorkspace(page);
   await page.goto('/');
   await page.getByLabel('Repository URL').fill(configuration.repositoryUrl);
   await page.getByRole('button', { name: 'Open repository' }).click();
