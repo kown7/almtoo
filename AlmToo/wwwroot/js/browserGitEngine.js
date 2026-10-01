@@ -269,7 +269,9 @@ export async function synchronize(request) {
 
     const remoteRef = `refs/remotes/origin/${branch}`;
     synchronizationSnapshot = await captureSynchronizationRefs(git, fs, dir, branch, remoteRef);
-    await git.fetch({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, depth: 50 });
+    if (intent !== 'Apply') {
+      await git.fetch({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, depth: 50 });
+    }
     const localCommitId = synchronizationSnapshot.localCommitId;
     const remoteCommitId = await git.resolveRef({ fs, dir, ref: remoteRef });
     const incoming = remoteCommitId === localCommitId
@@ -296,7 +298,10 @@ export async function synchronize(request) {
         return failureWithKind(operation, 'Repository synchronization was not a fast-forward.', 'remoteAhead');
       }
       try {
-        await git.pull({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, fastForwardOnly: true });
+        // Review already fetched and verified this exact remote-tracking commit. Applying it
+        // must not perform a second network fetch that could advance or fail independently.
+        await git.writeRef({ fs, dir, ref: `refs/heads/${branch}`, value: remoteCommitId, force: true });
+        await git.checkout({ fs, dir, ref: branch, force: true });
       } catch (error) {
         await restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, synchronizationSnapshot);
         throw error;
@@ -352,39 +357,46 @@ async function captureSynchronizationRefs(git, fs, dir, branch, remoteRef) {
 
 async function restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, snapshot) {
   await git.writeRef({ fs, dir, ref: snapshot.localRef, value: snapshot.localCommitId, force: true });
-  await git.checkout({ fs, dir, ref: branch, force: true });
+  await git.writeRef({ fs, dir, ref: 'HEAD', value: snapshot.localCommitId, force: true });
   if (snapshot.remoteCommitId) {
     await git.writeRef({ fs, dir, ref: remoteRef, value: snapshot.remoteCommitId, force: true });
   } else {
     await git.deleteRef({ fs, dir, ref: remoteRef });
   }
+  await git.checkout({ fs, dir, ref: branch, force: true });
 }
 
 async function summarizeIncomingFiles(git, fs, dir, remoteRef) {
-  const changedFiles = await git.walk({
+  const changedFiles = [];
+  const mappedEntries = [];
+  await git.walk({
     fs,
     dir,
     trees: [git.TREE({ ref: 'HEAD' }), git.TREE({ ref: remoteRef })],
-    map: async (filepath, entries) => {
-      if (!filepath || filepath === '.') {
-        return null;
-      }
+    map: (filepath, entries) => {
+      const mapped = (async () => {
+        if (!filepath || filepath === '.') {
+          return;
+        }
 
-      const [local, remote] = entries;
-      const localType = local ? await local.type() : 'absent';
-      const remoteType = remote ? await remote.type() : 'absent';
-      if (localType === remoteType && localType === 'blob' && await local.oid() === await remote.oid()) {
-        return null;
-      }
+        const [local, remote] = entries;
+        const localType = local ? await local.type() : 'absent';
+        const remoteType = remote ? await remote.type() : 'absent';
+        if (localType === remoteType && localType === 'blob' && await local.oid() === await remote.oid()) {
+          return;
+        }
 
-      return {
-        path: `/${filepath}`,
-        changeKind: localType === 'absent' ? 'Added' : remoteType === 'absent' ? 'Deleted' : 'Modified'
-      };
+        changedFiles.push({
+          path: `/${filepath}`,
+          changeKind: localType === 'absent' ? 'Added' : remoteType === 'absent' ? 'Deleted' : 'Modified'
+        });
+      })();
+      mappedEntries.push(mapped);
+      return mapped;
     }
   });
+  await Promise.all(mappedEntries);
   return changedFiles
-    .filter(Boolean)
     .sort((left, right) => left.path.localeCompare(right.path) || left.changeKind.localeCompare(right.changeKind));
 }
 

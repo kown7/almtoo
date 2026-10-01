@@ -832,8 +832,8 @@ async function openSynchronizationFixture({ scenario = 'ready', failure = null }
     [syncOids.base]: null
   };
   const trees = {
-    [syncOids.local]: { 'README.md': 'local-readme', 'obsolete.txt': 'obsolete', 'src/app.js': 'old-app' },
-    [syncOids.remote]: { 'README.md': 'remote-readme', 'new.txt': 'new', 'src/app.js': 'new-app' },
+    [syncOids.local]: { 'README.md': 'local readme', 'obsolete.txt': 'obsolete', 'src/app.js': 'old app' },
+    [syncOids.remote]: { 'README.md': 'remote readme', 'new.txt': 'new', 'src/app.js': 'new app' },
     [syncOids.base]: { 'README.md': 'base-readme' },
     [syncOids.divergent]: { 'README.md': 'divergent-readme', 'other.txt': 'other' }
   };
@@ -869,8 +869,9 @@ async function openSynchronizationFixture({ scenario = 'ready', failure = null }
     async writeRef({ ref, value }) { state.refs[ref] = value; },
     async deleteRef({ ref }) { delete state.refs[ref]; },
     async checkout() {
+      if (failure === 'checkout') throw new Error('local checkout failed');
       state.refs.HEAD = state.refs['refs/heads/main'];
-      state.files = { '/README.md': 'local readme', '/obsolete.txt': 'obsolete', '/src/app.js': 'old app' };
+      state.files = Object.fromEntries(Object.entries(trees[state.refs.HEAD]).map(([path, content]) => [`/${path}`, content]));
     },
     async isDescendent({ oid, ancestor }) { return isDescendent(oid, ancestor); },
     async log({ ref }) {
@@ -883,7 +884,9 @@ async function openSynchronizationFixture({ scenario = 'ready', failure = null }
     TREE({ ref }) { return { ref }; },
     async walk({ trees: walkTrees, map }) {
       const [local, remote] = walkTrees.map(({ ref }) => trees[state.refs[ref]]);
-      return Promise.all(['src/app.js', 'obsolete.txt', 'README.md', 'new.txt'].map((path) => map(path, [treeEntry(local, path), treeEntry(remote, path)])));
+      for (const path of ['src/app.js', 'obsolete.txt', 'README.md', 'new.txt']) {
+        map(path, [treeEntry(local, path), treeEntry(remote, path)]);
+      }
     },
     async pull(options) {
       state.pullCalls.push(options);
@@ -965,8 +968,7 @@ test('synchronize presents credential-free, sorted incoming metadata before a cl
   assert.equal(state.refs.HEAD, syncOids.remote);
   assert.equal(state.refs['refs/heads/main'], syncOids.remote);
   assert.deepEqual(state.files, { '/README.md': 'remote readme', '/new.txt': 'new', '/src/app.js': 'new app' });
-  assert.equal(state.pullCalls.length, 1);
-  assert.equal(state.pullCalls[0].fastForwardOnly, true);
+  assert.equal(state.fetchCalls.length, 1, 'Apply must reuse the review fetch rather than perform a second network fetch.');
 });
 
 test('synchronize rejects malformed, mismatched, failed, and non-fast-forward paths without local workspace mutation', async () => {
@@ -984,10 +986,10 @@ test('synchronize rejects malformed, mismatched, failed, and non-fast-forward pa
     assert.deepEqual(snapshot(), before);
   }
 
-  for (const failure of ['fetch', 'pull']) {
+  for (const failure of ['fetch', 'checkout']) {
     const { engine, state, snapshot } = await openSynchronizationFixture({ failure });
     const before = snapshot();
-    const result = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: failure === 'pull' ? 'Apply' : 'Review' });
+    const result = await engine.synchronize({ repositoryUrl: state.origin, branch: 'main', intent: failure === 'checkout' ? 'Apply' : 'Review' });
     assertSafeSynchronizationResult(result);
     assert.equal(result.succeeded, false);
     assert.deepEqual(snapshot(), before);

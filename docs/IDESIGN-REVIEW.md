@@ -94,3 +94,13 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No new interface is needed because this change introduces no new substitution boundary: the existing concrete Manager is the cohesive Client-facing orchestration surface, and `IBrowserGitAccessor` already protects the browser/platform seam.
 
 **Result:** PASS
+
+## M004 S04 live-proof review
+
+- [x] `e2e/liveSynchronizationFixture.mjs` and `e2e/liveSynchronization.spec.mjs` are Playwright test infrastructure, not application services: they execute only in Node during the dedicated live acceptance command and are absent from production Client, Manager, Accessor, and Resource dependencies.
+- [x] The live specification drives `Pages/Home.razor` exclusively through its existing Client controls, which delegate review and apply to `RepositoryWorkspaceManager`; it introduces no Client-to-Accessor or Client-to-engine path.
+- [x] `RepositoryWorkspaceManager` remains the sole workflow owner, and `IBrowserGitAccessor` remains the sole justified browser-platform seam protecting Git, browser storage, and transport integration. No interface, Engine, or production exception is introduced.
+- [x] Fixture configuration is injected from the process environment, while browser, console, storage, DOM, URL, and resource-URL assertions preserve the existing credential-free Client boundary.
+- [x] Redacted Playwright transport and browser-Git stage classification remain test-only infrastructure: they reduce request events and wrapped Git calls to fixed labels, retain no URL, arguments, header, body, Git response, SHA, error text, or credential value, and add no production dependency or application boundary.
+
+**Result:** PASS
