@@ -21,3 +21,9 @@ Treat it as required project policy, not optional background material.
 Every architecture-affecting plan and review must complete [`docs/IDESIGN-REVIEW.md`](docs/IDESIGN-REVIEW.md). A change is not complete while that review has an unexplained failure.
 
 When adding or retaining an interface, include a one-sentence justification naming the boundary, substitution need, or platform dependency it protects.
+
+
+## Credentials
+
+The credentials are stored in `/root/.config/almtoo/live.env`
+
