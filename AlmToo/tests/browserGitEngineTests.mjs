@@ -80,6 +80,7 @@ function installFakeGitRuntime(gitOverrides = {}, fsOverrides = {}) {
           return new Uint8Array();
         },
         async writeFile() {},
+        async flush() {},
         ...fsOverrides
       };
     }
@@ -823,6 +824,7 @@ async function openSynchronizationFixture({ scenario = 'ready', failure = null }
     files: { '/README.md': 'local readme', '/obsolete.txt': 'obsolete', '/src/app.js': 'old app' },
     fetchCalls: [],
     pullCalls: [],
+    flushCalls: 0,
     remoteRefReads: 0
   };
   const parents = {
@@ -903,6 +905,9 @@ async function openSynchronizationFixture({ scenario = 'ready', failure = null }
         throw error;
       }
       return { isFile: () => true, size: 0 };
+    },
+    async flush() {
+      state.flushCalls += 1;
     }
   });
 
@@ -969,6 +974,7 @@ test('synchronize presents credential-free, sorted incoming metadata before a cl
   assert.equal(state.refs['refs/heads/main'], syncOids.remote);
   assert.deepEqual(state.files, { '/README.md': 'remote readme', '/new.txt': 'new', '/src/app.js': 'new app' });
   assert.equal(state.fetchCalls.length, 1, 'Apply must reuse the review fetch rather than perform a second network fetch.');
+  assert.equal(state.flushCalls, 1, 'Apply must durably flush browser-local metadata before reporting success.');
 });
 
 test('synchronize rejects malformed, mismatched, failed, and non-fast-forward paths without local workspace mutation', async () => {

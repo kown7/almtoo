@@ -302,6 +302,7 @@ export async function synchronize(request) {
         await restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, synchronizationSnapshot);
         return failureWithKind(operation, 'Repository synchronization was not a fast-forward.', 'remoteAhead');
       }
+      let localCommitIdAfterApply;
       try {
         // Review already fetched and verified this exact remote-tracking commit. Applying it
         // must not perform a second network fetch that could advance or fail independently.
@@ -324,6 +325,8 @@ export async function synchronize(request) {
           await git.writeRef({ fs, dir, ref: `refs/heads/${branch}`, value: remoteCommitId, force: true });
           await git.writeRef({ fs, dir, ref: 'HEAD', value: remoteCommitId, force: true });
         }
+        localCommitIdAfterApply = await git.resolveRef({ fs, dir, ref: 'HEAD' });
+        await persistFilesystem(fs);
       } catch (error) {
         await restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, synchronizationSnapshot);
         throw error;
@@ -331,7 +334,7 @@ export async function synchronize(request) {
       return success(operation, 'The reviewed repository synchronization was applied.', {
         repositoryUrl,
         branch,
-        localCommitId: await git.resolveRef({ fs, dir, ref: 'HEAD' }),
+        localCommitId: localCommitIdAfterApply,
         incomingCommit: toIncomingCommit(incoming),
         changedFiles,
         decision: 'Applied'
@@ -715,6 +718,12 @@ async function mkdirp(fs, path) {
         throw error;
       }
     }
+  }
+}
+
+async function persistFilesystem(fs) {
+  if (typeof fs?.promises?.flush === 'function') {
+    await fs.promises.flush();
   }
 }
 
