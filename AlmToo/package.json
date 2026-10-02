@@ -8,7 +8,7 @@
     "postinstall": "node tools/copy-git-browser-assets.mjs",
     "test": "node --test tests/browserGitEngineTests.mjs tests/pushCredentialSessionTests.mjs tests/liveSynchronizationFixtureTests.mjs tests/homePageContractTests.mjs tests/browserGitDesignContractTests.mjs tests/browserGitAccessorContractTests.mjs tests/browserGitArchitectureGateTests.mjs",
     "test:browser": "playwright test e2e/repositoryWorkflow.spec.mjs e2e/credentialSafety.spec.mjs",
-    "test:browser:live": "node node_modules/@playwright/test/cli.js test e2e/liveSynchronization.spec.mjs"
+    "test:browser:live": "node --env-file-if-exists=$HOME/.config/almtoo/live.env --env-file-if-exists=.env node_modules/@playwright/test/cli.js test e2e/liveSynchronization.spec.mjs"
   },
   "dependencies": {
     "@isomorphic-git/lightning-fs": "4.7.0",

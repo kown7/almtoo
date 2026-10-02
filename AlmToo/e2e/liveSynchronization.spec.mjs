@@ -1,10 +1,18 @@
 import { expect, test } from '@playwright/test';
-import { prepareLiveFixture, readLiveConfiguration } from './liveSynchronizationFixture.mjs';
+import { liveConfigurationError, prepareLiveFixture, readLiveConfiguration } from './liveSynchronizationFixture.mjs';
 
-// Intentionally evaluates at discovery: a live command without CI-injected values fails,
-// rather than being skipped or accidentally reading a local environment file.
-const configuration = readLiveConfiguration();
+// Configuration is process-environment-only. Register a real failing setup test
+// instead of throwing during discovery, so missing CI configuration is explicit
+// and never appears as an ambiguous "No tests found" result.
+const configurationError = liveConfigurationError();
+const configuration = configurationError ? null : readLiveConfiguration();
 test.describe.configure({ mode: 'serial' });
+
+if (configurationError) {
+  test('controlled live fixture configuration is required', () => {
+    throw new Error(configurationError);
+  });
+}
 
 function fileName(path) {
   return path.slice(path.lastIndexOf('/') + 1);

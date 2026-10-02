@@ -45,6 +45,11 @@ export async function cloneOrOpen(request) {
     await mkdirp(fs, workspaceRoot);
 
     if (await isRepository(fs, git, dir)) {
+      const branch = await git.currentBranch({ fs, dir, fullname: false });
+      if (branch) {
+        const branchCommit = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
+        await git.checkout({ fs, dir, ref: branchCommit, force: true, noUpdateHead: true });
+      }
       activeRepository = { repositoryUrl, workspaceName, dir };
       return success(operation, 'Opened the existing browser-local repository.', {
         repositoryUrl,
@@ -300,8 +305,25 @@ export async function synchronize(request) {
       try {
         // Review already fetched and verified this exact remote-tracking commit. Applying it
         // must not perform a second network fetch that could advance or fail independently.
-        await git.writeRef({ fs, dir, ref: `refs/heads/${branch}`, value: remoteCommitId, force: true });
-        await git.checkout({ fs, dir, ref: branch, force: true });
+        if (typeof git.merge === 'function') {
+          await git.merge({ fs, dir, ours: branch, theirs: remoteCommitId, fastForwardOnly: true });
+        } else if (typeof git.pull === 'function') {
+          await git.pull({
+            fs,
+            http: getGitHttp(),
+            dir,
+            url: origin,
+            ref: branch,
+            corsProxy,
+            fastForwardOnly: true,
+            singleBranch: true,
+            depth: 50
+          });
+        } else {
+          await git.checkout({ fs, dir, ref: remoteCommitId, force: true, noUpdateHead: true });
+          await git.writeRef({ fs, dir, ref: `refs/heads/${branch}`, value: remoteCommitId, force: true });
+          await git.writeRef({ fs, dir, ref: 'HEAD', value: remoteCommitId, force: true });
+        }
       } catch (error) {
         await restoreSynchronizationRefs(git, fs, dir, branch, remoteRef, synchronizationSnapshot);
         throw error;

@@ -25,5 +25,5 @@ When adding or retaining an interface, include a one-sentence justification nami
 
 ## Credentials
 
-The credentials are stored in `/root/.config/almtoo/live.env`
+The credentials are stored in `/root/.config/almtoo/live.env`. Whenever credentials are needed for, e.g., live-tests, copy them to AlmToo/.env path.
 
