@@ -1,5 +1,4 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
-using AlmToo.Resource.BrowserGitResource.Data;
 
 namespace AlmToo.Managers.Repositories;
 

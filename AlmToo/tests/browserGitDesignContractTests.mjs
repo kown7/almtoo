@@ -53,7 +53,7 @@ export function inspectDesign(document) {
     'Contract ownership',
     'Composition and lifetime',
     'Accessor operation contract',
-    'Resource contract catalogue',
+    'Accessor contract catalogue',
     'End-to-end workflows',
     'Failure taxonomy and diagnostics',
     'Contract invariants',
@@ -88,7 +88,7 @@ export function inspectDesign(document) {
   const ownership = headingBody(document, 'Contract ownership') ?? '';
   const composition = headingBody(document, 'Composition and lifetime') ?? '';
   const operations = headingBody(document, 'Accessor operation contract') ?? '';
-  const resource = headingBody(document, 'Resource contract catalogue') ?? '';
+  const contract = headingBody(document, 'Accessor contract catalogue') ?? '';
   const failuresSection = headingBody(document, 'Failure taxonomy and diagnostics') ?? '';
   const migration = headingBody(document, 'Migration sequence and implementation status') ?? '';
   const testing = headingBody(document, 'Testing and observability strategy') ?? '';
@@ -99,9 +99,9 @@ export function inspectDesign(document) {
 
   const requiredContent = [
     [currentTopology, /Client[\s\S]*Manager[\s\S]*Accessor[\s\S]*(?:JavaScript|browser)/i, 'current layer and platform call path'],
-    [targetTopology, /AlmToo\/Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs/, 'D018 canonical Resource path'],
-    [targetTopology, /AlmToo\.Resource\.BrowserGitResource\.Data/, 'D018 canonical Resource namespace'],
-    [targetTopology, /RepositoryWorkspaceState[\s\S]*(?:does \*\*not\*\* move|does not move)[\s\S]*Manager-owned/i, 'Manager-state and Resource distinction'],
+    [targetTopology, /Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs/, 'Accessor contract canonical path'],
+    [targetTopology, /AlmToo\.Accessor\.BrowserGitAccessor\.Interface/, 'Accessor contract canonical namespace'],
+    [targetTopology, /RepositoryWorkspaceState[\s\S]*(?:does \*\*not\*\* move|does not move)[\s\S]*Manager-owned/i, 'Manager-state and Accessor-contract distinction'],
     [dependencies, /### Allowed edges[\s\S]*### Forbidden edges/, 'allowed and forbidden dependency edges'],
     [dependencies, /Client -> Manager -> Accessor -> platform/, 'one-way runtime call direction'],
     [ownership, /`IBrowserGitAccessor` is retained because it protects[^.]*platform boundary[^.]*substitution seam[^.]*\./i, 'IBrowserGitAccessor platform-boundary justification'],
@@ -109,8 +109,8 @@ export function inspectDesign(document) {
     [ownership, /RepositoryWorkspaceManager`?\s+needs no interface[\s\S]*no (?:external or )?platform boundary/i, 'concrete Manager interface decision'],
     [composition, /scoped[\s\S]*same concrete scoped instance[\s\S]*dispose/i, 'shared scoped composition and disposal'],
     [operations, /CloneOrOpenAsync[\s\S]*FilterFilesAsync[\s\S]*UpdateFilesAsync[\s\S]*GetStatusAsync[\s\S]*CommitAsync[\s\S]*InspectPushAsync[\s\S]*HasCredentialAsync[\s\S]*StoreCredentialAsync[\s\S]*ForgetCredentialAsync[\s\S]*PushAsync[\s\S]*SynchronizeAsync[\s\S]*DisposeAsync/, 'complete Accessor operation surface'],
-    [resource, /records and enums[\s\S]*no methods or executable bodies/i, 'passive Resource constraint'],
-    [resource, /No credential field exists/i, 'credential-free Resource contract'],
+    [contract, /records and enums[\s\S]*no methods or executable bodies/i, 'passive Resource constraint'],
+    [contract, /No credential field exists/i, 'credential-free Accessor contract'],
     [failuresSection, /JavaScript module import[\s\S]*Browser filesystem[\s\S]*GitHub clone[\s\S]*GitHub push[\s\S]*sessionStorage[\s\S]*Cancellation/i, 'external dependency failure paths'],
     [failuresSection, /Node architecture tests report rule and source path[\s\S]*Playwright retains failure-only trace\/screenshots/i, 'failure localization surfaces'],
     [migration, /Implemented by S04 T02[\s\S]*autonomous browser re-proof remains S04 T03/, 'truthful staged implementation status'],
@@ -127,14 +127,14 @@ export function inspectDesign(document) {
     if (!pattern.test(body)) failures.push(violation('DESIGN_CONTENT_MISSING', `missing ${description}`));
   }
 
-  const targetOwnsOldContracts = /(?:target|canonical target)[^\n]{0,100}(?:namespace|contracts?)[^\n]{0,100}AlmToo\.Accessor\.BrowserGitAccessor\.Interface/i.test(document)
-    || /AlmToo\.Accessor\.BrowserGitAccessor\.Interface[^\n]{0,100}(?:is|remains)[^\n]{0,80}(?:target|canonical)[^\n]{0,80}(?:DTO|contract)/i.test(document);
-  if (targetOwnsOldContracts) {
-    failures.push(violation('STALE_TARGET_OWNERSHIP', 'Accessor Interface must not be declared as target ownership for shared Browser Git data contracts'));
+  const contractIsCoLocated = /Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs/.test(targetTopology)
+    && /AlmToo\.Accessor\.BrowserGitAccessor\.Interface/.test(targetTopology);
+  if (!contractIsCoLocated) {
+    failures.push(violation('CONTRACT_COLOCATION', 'shared Browser Git data contracts must be co-located with the Accessor interfaces'));
   }
 
-  if (/AlmToo\/Resources\/|namespace\s+AlmToo\.Resources\b|AlmToo\.Resources\.BrowserGit/i.test(targetTopology)) {
-    failures.push(violation('RESOURCE_NOMENCLATURE', 'target must use singular Resource and BrowserGitResource nomenclature'));
+  if (/Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs|AlmToo\.Resource\.BrowserGitResource\.Data/.test(targetTopology)) {
+    failures.push(violation('STALE_RESOURCE_OWNERSHIP', 'target must not retain the former Resource DTO ownership path or namespace'));
   }
 
   const reviewHeadings = [
@@ -190,16 +190,12 @@ test('negative fixtures reject missing architecture topics and review results', 
   assertRule(inspectDesign(missingReviewResult), 'IDESIGN_REVIEW_RESULT');
 });
 
-test('negative fixtures reject old target DTO ownership and plural Resource nomenclature', async () => {
+test('negative fixtures reject the former Resource DTO ownership', async () => {
   const design = await readDesign();
-  const accessorOwnedTarget = design.replace(
-    'Passive shared contracts:\n  AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs\n  namespace AlmToo.Resource.BrowserGitResource.Data',
-    'Passive shared contracts — canonical target namespace AlmToo.Accessor.BrowserGitAccessor.Interface:\n  AlmToo/Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'
-  );
-  assertRule(inspectDesign(accessorOwnedTarget), 'STALE_TARGET_OWNERSHIP');
-
-  const pluralResourceTarget = design.replaceAll('AlmToo/Resource/BrowserGitResource/', 'AlmToo/Resources/BrowserGitResource/');
-  assertRule(inspectDesign(pluralResourceTarget), 'RESOURCE_NOMENCLATURE');
+  const oldResourceTarget = design
+    .replaceAll('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs', 'Resource/BrowserGitResource/Data/BrowserGitContracts.cs')
+    .replaceAll('AlmToo.Accessor.BrowserGitAccessor.Interface', 'AlmToo.Resource.BrowserGitResource.Data');
+  assertRule(inspectDesign(oldResourceTarget), 'STALE_RESOURCE_OWNERSHIP');
 });
 
 test('negative fixtures require a platform-boundary justification for both retained interfaces', async () => {
@@ -211,15 +207,15 @@ test('negative fixtures require a platform-boundary justification for both retai
   assertRule(inspectDesign(unjustified), 'DESIGN_CONTENT_MISSING');
 });
 
-test('the document is truthful about implemented Resource ownership and remaining browser re-proof', async () => {
+test('the document is truthful about Accessor contract co-location and remaining browser re-proof', async () => {
   const design = await readDesign();
   const status = headingBody(design, 'Status and scope');
   const current = headingBody(design, 'Current-state topology');
   const migration = headingBody(design, 'Migration sequence and implementation status');
 
-  assert.match(status, /D018 Resource relocation[\s\S]*Implemented by S04 T02/i);
-  assert.match(current, /current source keeps[\s\S]*Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs[\s\S]*former Accessor-owned DTO file no longer exists/i);
-  assert.match(migration, /Create `AlmToo\/Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs`[\s\S]*Implemented by S04 T02/);
+  assert.match(status, /DTO contract co-location[\s\S]*Implemented beside the Accessor interfaces/i);
+  assert.match(current, /current source keeps[\s\S]*Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs[\s\S]*AlmToo\.Accessor\.BrowserGitAccessor\.Interface/i);
+  assert.match(migration, /Import Accessor contract records[\s\S]*Implemented by S04 T02/);
   assert.match(migration, /autonomous browser re-proof remains S04 T03/);
 });
 

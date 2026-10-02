@@ -1,6 +1,5 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
-using AlmToo.Resource.BrowserGitResource.Data;
 using AlmToo.Managers.Repositories;
 using Xunit;
 

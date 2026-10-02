@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 const root = new URL('../', import.meta.url);
 const reviewPath = 'Accessor/BrowserGitAccessor/DESIGN.md';
-const resourcePath = 'Resource/BrowserGitResource/Data/BrowserGitContracts.cs';
+const contractPath = 'Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs';
 const excludedDirectoryNames = new Set(['bin', 'obj', 'node_modules', 'test-results', 'playwright-report', '.git', '.gsd']);
 const dtoDeclaration = /\b(?:record|enum)\s+(?:GitOperationResult|GitOperationFailureKind|RepositoryOpenRequest|RepositoryInfo|FileFilterKind|FilterFilesRequest|FilterFilesResult|UpdateFilesRequest|TextFileUpdate|UpdateFilesResult|RepositoryFileEntry|RepositoryFileKind|TextFileContent|ChangedFile|GitChangeKind|CommitRequest|CommitInfo|PushReview|PushRequest|PushResult|SynchronizationIntent|SynchronizationDecisionState|SynchronizationFailureCategory|SynchronizationRequest|IncomingCommitMetadata|ChangedFileSummary|SynchronizationReview|SynchronizationFailure)\b/;
 
@@ -32,7 +32,7 @@ async function productionSnapshot() {
     clients: await readSources(clientPaths),
     managers: await readSources(managerPaths),
     accessors: await readSources([...accessorPaths, 'wwwroot/js/browserGitEngine.js', 'wwwroot/js/pushCredentialSession.js']),
-    resources: await readSources([resourcePath]),
+    contracts: await readSources([contractPath]),
     composition: await readSources(['Program.cs']),
     design: await readFile(new URL(reviewPath, root), 'utf8')
   };
@@ -53,7 +53,7 @@ function reviewSection(document, heading, nextHeading) {
 
 export function inspectArchitecture(snapshot) {
   const failures = [];
-  const production = new Map([...snapshot.clients, ...snapshot.managers, ...snapshot.accessors, ...snapshot.resources, ...snapshot.composition]);
+  const production = new Map([...snapshot.clients, ...snapshot.managers, ...snapshot.accessors, ...snapshot.contracts, ...snapshot.composition]);
 
   failures.push(...matchingSources(snapshot.clients, /\b(?:IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|browserGitEngine|IVersionControlAccessor|BrowserGitService|IBrowserGitService|GitService)\b|AlmToo\.(?:Accessor|Accessors|Services\.Git)\b/, 'CLIENT_ACCESSOR_EDGE', 'repository Client must depend on the concrete Manager, never an Accessor type, browser Git engine, or namespace'));
   failures.push(...matchingSources(snapshot.clients, /\b(?:IJSRuntime|IJSObjectReference|JSImport)\b|\bInvokeAsync\s*</, 'CLIENT_GIT_INTEROP', 'repository Client must not own Git-related JavaScript interop'));
@@ -69,22 +69,17 @@ export function inspectArchitecture(snapshot) {
   failures.push(...matchingSources(snapshot.accessors, /AlmToo\.(?:Managers|Pages|Components)\b|\b(?:NavigationManager|RenderFragment|EventCallback|RepositoryWorkspaceState|StateChanged|CredentialReplacementRequired|ConfirmPush|AutoRetry)\b/, 'ACCESSOR_WORKFLOW_OR_UI', 'Accessor must not own Manager workflow policy or Client presentation state'));
   failures.push(...matchingSources(production, /\b(?:IVersionControlAccessor|VersionControlAccessor|IBrowserGitService|BrowserGitService)\b|AlmToo\.(?:Accessors\.Git|Services\.Git)\b/, 'LEGACY_GIT_ARCHITECTURE', 'legacy Browser Git service name or namespace is forbidden'));
 
-  for (const [path, source] of snapshot.accessors) {
-    if (path.includes('/Interface/') && dtoDeclaration.test(source)) failures.push(violation('DTO_ACCESSOR_OWNERSHIP', path, 'shared Browser Git DTO declarations belong only in the Resource contract'));
-  }
-  failures.push(...matchingSources(production, /(?:namespace|using)\s+AlmToo\.Resources(?:\.|;)|(?:^|\/)Resources\//m, 'RESOURCE_NOMENCLATURE', 'Browser Git contracts require singular Resource and BrowserGitResource nomenclature'));
-
-  const resource = snapshot.resources.get(resourcePath);
-  if (resource === undefined) {
-    failures.push(violation('RESOURCE_PATH', resourcePath, 'missing canonical Browser Git Resource contract'));
+  const contract = snapshot.contracts.get(contractPath);
+  if (contract === undefined) {
+    failures.push(violation('CONTRACT_PATH', contractPath, 'missing canonical Browser Git Accessor contract'));
   } else {
-    if (!/namespace\s+AlmToo\.Resource\.BrowserGitResource\.Data\s*;/.test(resource)) failures.push(violation('RESOURCE_NAMESPACE', resourcePath, 'Resource contract must use the exact D016/D018 namespace'));
-    if (!dtoDeclaration.test(resource)) failures.push(violation('RESOURCE_CONTENT', resourcePath, 'Resource contract must declare the passive Browser Git records and enums'));
-    const executableResource = resource.replace(/^\s*\/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\b\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(executableResource)) failures.push(violation('RESOURCE_BEHAVIOR', resourcePath, 'Resource contract must contain passive records and enums only, with no methods or executable bodies'));
+    if (!/namespace\s+AlmToo\.Accessor\.BrowserGitAccessor\.Interface\s*;/.test(contract)) failures.push(violation('CONTRACT_NAMESPACE', contractPath, 'Browser Git DTOs must use the Accessor interface namespace'));
+    if (!dtoDeclaration.test(contract)) failures.push(violation('CONTRACT_CONTENT', contractPath, 'Browser Git contract must declare the passive request, result, and value records and enums'));
+    const executableContract = contract.replace(/^\s*\/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\b\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(executableContract)) failures.push(violation('CONTRACT_BEHAVIOR', contractPath, 'Browser Git contract must contain passive records and enums only, with no methods or executable bodies'));
   }
-  for (const [path, source] of snapshot.resources) {
-    if (path !== resourcePath && dtoDeclaration.test(source)) failures.push(violation('RESOURCE_PATH', path, `Browser Git DTOs must be declared only at ${resourcePath}`));
+  for (const [path, source] of snapshot.accessors) {
+    if (path !== contractPath && dtoDeclaration.test(source)) failures.push(violation('CONTRACT_PATH', path, `Browser Git DTOs must be declared only at ${contractPath}`));
   }
 
   const program = snapshot.composition.get('Program.cs') ?? '';
@@ -110,7 +105,7 @@ export function inspectArchitecture(snapshot) {
     [layerReview, /RepositoryWorkspaceManager[\s\S]*\|\s*Manager\s*\|/, 'repository Manager layer mapping'],
     [layerReview, /browserGitEngine\.js[\s\S]*\|\s*Accessor\s*\|/, 'browser Git engine Accessor layer mapping'],
     [layerReview, /IBrowserGitAccessor[\s\S]*\|\s*Accessor\s*\|/, 'Browser Git Accessor layer mapping'],
-    [layerReview, /Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs[\s\S]*\|\s*Resource\s*\|/, 'Browser Git Resource mapping'],
+    [layerReview, /Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs[\s\S]*\|\s*Accessor contract\s*\|/, 'Browser Git Accessor contract mapping'],
     [interfaceReview, /IBrowserGitAccessor[^\n]*platform boundary[^\n]*substitution seam/i, 'IBrowserGitAccessor boundary and substitution rationale'],
     [interfaceReview, /IBrowserFileAccessor[^\n]*platform boundary[^\n]*substitution seam/i, 'IBrowserFileAccessor boundary and substitution rationale'],
     [interfaceReview, /RepositoryWorkspaceManager[^\n]*interface-free/i, 'interface-free concrete Manager rationale'],
@@ -128,7 +123,7 @@ function assertViolation(snapshot, expectedRule, expectedPath) {
 
 function fixture(overrides = {}) {
   const validReview = [
-    '### 1. Layer assignments\n| Pages/Home.razor | Client | Render | Manager | Accessor |\n| RepositoryWorkspaceManager | Manager | Coordinate | Accessor | Manager |\n| browserGitEngine.js | Accessor | Integrate | Platform | Client |\n| IBrowserGitAccessor | Accessor | Integrate | Platform | Client |\n| Resource/BrowserGitResource/Data/BrowserGitContracts.cs | Resource | Transfer | Data | Behavior |\n**Result:** PASS',
+    '### 1. Layer assignments\n| Pages/Home.razor | Client | Render | Manager | Accessor |\n| RepositoryWorkspaceManager | Manager | Coordinate | Accessor | Manager |\n| browserGitEngine.js | Accessor | Integrate | Platform | Client |\n| IBrowserGitAccessor | Accessor | Integrate | Platform | Client |\n| Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs | Accessor contract | Transfer | Accessor interfaces and data | Behavior |\n**Result:** PASS',
     '### 2. Dependency direction\nOne way.\n**Result:** PASS',
     '### 3. Interface justification\n| IBrowserGitAccessor | browser Git platform boundary and substitution seam |\n| IBrowserFileAccessor | browser filesystem platform boundary and substitution seam |\nThe concrete RepositoryWorkspaceManager remains interface-free.\n**Result:** PASS',
     '### 4. Cohesion and decomposition\nCohesive.\n**Result:** PASS',
@@ -140,7 +135,7 @@ function fixture(overrides = {}) {
     clients: new Map([['Pages/Home.razor', '@inject RepositoryWorkspaceManager Workspace']]),
     managers: new Map([['Managers/Repositories/RepositoryWorkspaceManager.cs', 'public sealed class RepositoryWorkspaceManager { }']]),
     accessors: new Map([['Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs', 'public interface IBrowserGitAccessor { }'], ['Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs', 'public sealed class BrowserGitAccessor { }']]),
-    resources: new Map([[resourcePath, 'namespace AlmToo.Resource.BrowserGitResource.Data; public record GitOperationResult(string Operation, bool Succeeded, string Message);']]),
+    contracts: new Map([[contractPath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record GitOperationResult(string Operation, bool Succeeded, string Message);']]),
     composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>(); services.AddScoped<IBrowserGitAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IBrowserFileAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<RepositoryWorkspaceManager>();']]),
     design: validReview
   };
@@ -158,14 +153,13 @@ test('negative fixtures identify dependency and ownership violations at concrete
   assertViolation(fixture({ clients: new Map([['Pages/Home.razor', 'await browserGitEngine.synchronize(request);']]) }), 'CLIENT_ACCESSOR_EDGE', 'Pages/Home.razor');
   assertViolation(fixture({ clients: new Map([['Components/RepositoryFileBrowser.razor', '@inject IJSRuntime GitRuntime']]) }), 'CLIENT_GIT_INTEROP', 'Components/RepositoryFileBrowser.razor');
   assertViolation(fixture({ managers: new Map([['Managers/Repositories/RepositoryWorkspaceManager.cs', 'sealed class RepositoryWorkspaceManager { BillingManager other; }']]) }), 'MANAGER_TO_MANAGER', 'Managers/Repositories/RepositoryWorkspaceManager.cs');
-  assertViolation(fixture({ accessors: new Map([['Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs', 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record PushRequest(string Ref);']]) }), 'DTO_ACCESSOR_OWNERSHIP', 'Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs');
   assertViolation(fixture({ accessors: new Map([['Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs', 'sealed class BrowserGitAccessor { RepositoryWorkspaceState state; void ConfirmPush() {} }']]) }), 'ACCESSOR_WORKFLOW_OR_UI', 'Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs');
 });
 
-test('negative fixtures enforce Resource nomenclature purity state separation and composition', () => {
-  assertViolation(fixture({ resources: new Map([['Resources/BrowserGitResource/Data/BrowserGitContracts.cs', 'namespace AlmToo.Resources.BrowserGitResource.Data; public record PushRequest(string Ref);']]) }), 'RESOURCE_NOMENCLATURE', 'Resources/BrowserGitResource/Data/BrowserGitContracts.cs');
-  assertViolation(fixture({ resources: new Map([[resourcePath, 'namespace AlmToo.Resource.BrowserGitResource.Data; public record GitOperationResult(string Operation) { public static GitOperationResult Success() => new("x"); }']]) }), 'RESOURCE_BEHAVIOR', resourcePath);
-  assertViolation(fixture({ resources: new Map([[resourcePath, 'namespace AlmToo.Resource.BrowserGitResource.Data; public record RepositoryWorkspaceState(bool IsBusy);']]) }), 'RESOURCE_BEHAVIOR', resourcePath);
+test('negative fixtures enforce Accessor contract co-location, passive shape, and composition', () => {
+  assertViolation(fixture({ contracts: new Map([[contractPath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record GitOperationResult(string Operation) { public static GitOperationResult Success() => new("x"); }']]) }), 'CONTRACT_BEHAVIOR', contractPath);
+  assertViolation(fixture({ contracts: new Map([[contractPath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Service; public record GitOperationResult(string Operation);']]) }), 'CONTRACT_NAMESPACE', contractPath);
+  assertViolation(fixture({ accessors: new Map([['Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs', 'public record PushRequest(string Ref);']]) }), 'CONTRACT_PATH', 'Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs');
   assertViolation(fixture({ composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>();']]) }), 'SCOPED_COMPOSITION', 'Program.cs');
   assertViolation(fixture({ design: '### 1. Layer assignments\n**Result:** PASS' }), 'REVIEW_COVERAGE', reviewPath);
 });

@@ -7,9 +7,9 @@ Use this checklist for every architecture-affecting plan, implementation, refact
 | Component | Layer | Cohesive responsibility | Allowed dependencies | Forbidden dependencies |
 |---|---|---|---|---|
 | `Pages/Home.razor` and repository components | Client | Render credential-free Manager state and delegate user actions | `RepositoryWorkspaceManager`, `RepositoryWorkspaceState` | Accessor types, JS interop, Git policy, raw diagnostics |
-| `RepositoryWorkspaceManager` and `RepositoryWorkspaceState` | Manager | Orchestrate review-first synchronization, preconditions, cancellation, and state transitions | Accessor interfaces, passive Resource contracts | other Managers, JS interop, rendering |
-| `browserGitEngine.js`, `IBrowserGitAccessor`, and `BrowserGitAccessor` | Accessor | Integrate browser-local Git metadata and remote transport, including fetch/review/apply execution, credential-free serialization, and failure translation | browser APIs, Git engine, passive Resource contracts | Client, Manager workflow, UI state |
-| `BrowserGitContracts.cs` | Resource | Carry passive synchronization requests, review metadata, decisions, and safe failure categories | data types only | methods, validation, I/O, orchestration, credentials |
+| `RepositoryWorkspaceManager` and `RepositoryWorkspaceState` | Manager | Orchestrate review-first synchronization, preconditions, cancellation, and state transitions | Accessor interfaces, passive Accessor contract records | other Managers, JS interop, rendering |
+| `browserGitEngine.js`, `IBrowserGitAccessor`, and `BrowserGitAccessor` | Accessor | Integrate browser-local Git metadata and remote transport, including fetch/review/apply execution, credential-free serialization, and failure translation | browser APIs, Git engine, passive Accessor contract records | Client, Manager workflow, UI state |
+| `BrowserGitContracts.cs` beside `IBrowserGitAccessor` and `IBrowserFileAccessor` | Accessor contract | Carry passive requests, results, review metadata, decisions, and safe failure categories | Accessor interfaces and data types only | methods, validation, I/O, orchestration, credentials |
 
 Synchronization remains a Browser Git capability, not a new VCS-neutral service: the Manager owns review and acceptance order; the Accessor owns browser/Git integration; Resource records carry only credential-free data.
 

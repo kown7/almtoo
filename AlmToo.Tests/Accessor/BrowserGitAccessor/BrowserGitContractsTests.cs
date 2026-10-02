@@ -1,8 +1,8 @@
 using System.Text.Json;
-using AlmToo.Resource.BrowserGitResource.Data;
+using AlmToo.Accessor.BrowserGitAccessor.Interface;
 using Xunit;
 
-namespace AlmToo.Tests.Resource;
+namespace AlmToo.Tests.Accessor.BrowserGitAccessor;
 
 public sealed class BrowserGitContractsTests
 {

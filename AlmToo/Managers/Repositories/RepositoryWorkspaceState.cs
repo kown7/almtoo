@@ -1,5 +1,4 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
-using AlmToo.Resource.BrowserGitResource.Data;
 
 namespace AlmToo.Managers.Repositories;
 
@@ -66,15 +65,15 @@ public sealed class RepositoryWorkspaceState
     public SynchronizationFailureCategory? SynchronizationFailureCategory { get; internal set; }
     public string? SynchronizationFailureCode => SynchronizationFailureCategory switch
     {
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.UnsavedEditorChanges => "unsaved-editor-changes",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.UncommittedWorkingTree => "uncommitted-working-tree",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.CredentialRejected => "credential-rejected",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.NetworkUnavailable => "network-unavailable",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.UnsupportedRef => "unsupported-ref",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.DivergentHistory => "divergent-history",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.Cancelled => "cancelled",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.InvalidRepository => "invalid-repository",
-        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.Unknown => "unknown",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.UnsavedEditorChanges => "unsaved-editor-changes",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.UncommittedWorkingTree => "uncommitted-working-tree",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.CredentialRejected => "credential-rejected",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.NetworkUnavailable => "network-unavailable",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.UnsupportedRef => "unsupported-ref",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.DivergentHistory => "divergent-history",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.Cancelled => "cancelled",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.InvalidRepository => "invalid-repository",
+        AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.Unknown => "unknown",
         _ => null
     };
     public string? PushFailureCategory => PushFailureKind switch

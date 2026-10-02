@@ -2,13 +2,13 @@
 
 ## Status and scope
 
-This document is the durable architecture baseline for Browser Git. It describes the implemented browser-local repository workflow and its D018 Resource boundary. It is intentionally broader than an Accessor API catalogue: a contributor should be able to trace ownership, dependencies, composition, every supported workflow, failures, verification, risks, and extension rules from this document.
+This document is the durable architecture baseline for Browser Git. It describes the implemented browser-local repository workflow and its Accessor contract boundary. It is intentionally broader than an Accessor API catalogue: a contributor should be able to trace ownership, dependencies, composition, every supported workflow, failures, verification, risks, and extension rules from this document.
 
 | Field | Value |
 |---|---|
 | Architecture status | Implemented architecture |
-| Current implementation baseline | Browser Git workflow through Client, Manager, Accessor, and passive Resource contracts is implemented |
-| D018 Resource relocation | Implemented by S04 T02 and enforced by source-path-specific architecture contracts |
+| Current implementation baseline | Browser Git workflow through Client, Manager, Accessor, and passive Accessor contract records is implemented |
+| DTO contract co-location | Implemented beside the Accessor interfaces and enforced by source-path-specific architecture contracts |
 | Runtime behavior | Payload shapes, scoped composition, cancellation, credentials, and workflow behavior are unchanged |
 | Review date | 2026-09-25 |
 | Governing policy | `docs/IDESIGN.md` and `docs/IDESIGN-REVIEW.md` |
@@ -39,7 +39,7 @@ RepositoryWorkspaceManager + RepositoryWorkspaceState       Manager
 
 `Program.cs` is the Client composition root. It creates one scoped `BrowserGitAccessor` and exposes that same instance through both Accessor capability interfaces. The scoped `RepositoryWorkspaceManager` receives both facets. The Manager owns use-case order and observable UI state; the Accessor owns browser/platform integration, trust-boundary validation, response translation, credential redaction, and JavaScript module lifetime.
 
-The current source keeps shared request, result, value, and failure records in `Resource/BrowserGitResource/Data/BrowserGitContracts.cs` under `AlmToo.Resource.BrowserGitResource.Data`. The Accessor Interface directory now contains only the two capability interfaces; the former Accessor-owned DTO file no longer exists.
+The current source keeps shared request, result, value, and failure records beside the capability interfaces in `Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs` under `AlmToo.Accessor.BrowserGitAccessor.Interface`.
 
 ### Target topology
 
@@ -56,13 +56,13 @@ Accessor interfaces:
   namespace AlmToo.Accessor.BrowserGitAccessor.Interface
 
 Passive shared contracts:
-  AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs
-  namespace AlmToo.Resource.BrowserGitResource.Data
+  AlmToo/Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs
+  namespace AlmToo.Accessor.BrowserGitAccessor.Interface
 ```
 
-The singular `Resource` and `BrowserGitResource` nomenclature is exact. The target is not `Resources`, a global `Models` folder, an Accessor `Interface` DTO file, or a behavior-bearing Resource service. `BrowserGitContracts.cs` contains records and enums only. It owns no factory methods, validation, workflow, integration, JavaScript calls, mutation algorithms, or executable policy.
+`BrowserGitContracts.cs` is intentionally co-located with `IBrowserGitAccessor` and `IBrowserFileAccessor` in the Accessor `Interface` folder. These shared request, result, value, and failure records remain passive: they own no factory methods, validation, workflow, integration, JavaScript calls, mutation algorithms, or executable policy. It owns no factory methods, validation, workflow, integration, JavaScript calls, mutation algorithms, or executable policy.
 
-`RepositoryWorkspaceState` does **not** move to the Resource boundary. It is mutable Manager-owned orchestration state with busy/result/error, selection, credential-presence, and reviewed-push lifecycle signals. Resource records are passive values shared across layer boundaries; Manager state is the observable state machine of one use case.
+`RepositoryWorkspaceState` does **not** move into the Accessor contract.  It is mutable Manager-owned orchestration state with busy/result/error, selection, credential-presence, and reviewed-push lifecycle signals. Accessor contract records are passive values shared across the Accessor boundary; Manager state is the observable state machine of one use case.
 
 ### Component-to-layer assignments
 
@@ -76,7 +76,7 @@ The singular `Resource` and `BrowserGitResource` nomenclature is exact. The targ
 | `IBrowserFileAccessor` | Accessor interface | Define browser-workspace file capabilities | Implemented; retained |
 | `BrowserGitAccessor` | Accessor service | Integrate .NET with browser filesystem, Git, remote transport, and credential storage | Implemented |
 | `browserGitEngine.js`, `pushCredentialSession.js` | Accessor implementation | Execute browser Git/filesystem and tab credential operations | Implemented |
-| `Resource/BrowserGitResource/Data/BrowserGitContracts.cs` | Resource | Carry shared passive records and enums with no behavior | Implemented and enforced |
+| `Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs` | Resource | Carry shared passive records and enums with no behavior | Implemented and enforced |
 
 No Engine service is required. Workflow sequencing belongs to the Manager, while integration and trust-boundary checks belong to the Accessor. There is no independent deterministic domain algorithm substantial enough to justify an Engine.
 
@@ -86,7 +86,7 @@ No Engine service is required. Workflow sequencing belongs to the Manager, while
 
 - Client repository components call the concrete `RepositoryWorkspaceManager` and read `RepositoryWorkspaceState`.
 - The Manager calls `IBrowserGitAccessor` and `IBrowserFileAccessor`.
-- Client-facing Manager state, the Manager, Accessor interfaces, and Accessor service may reference passive types in `AlmToo.Resource.BrowserGitResource.Data`.
+- Client-facing Manager state, the Manager, Accessor interfaces, and Accessor service may reference passive types in `AlmToo.Accessor.BrowserGitAccessor.Interface`.
 - `BrowserGitAccessor` calls browser JavaScript modules and platform/vendor APIs.
 - `Program.cs` references Client, Manager, and Accessor registration types solely to compose the scoped object graph.
 - Tests may substitute the two Accessor interfaces to verify Manager workflows.
@@ -98,7 +98,7 @@ No Engine service is required. Workflow sequencing belongs to the Manager, while
 - Accessors must not depend on Clients, Managers, `RepositoryWorkspaceState`, or presentation behavior.
 - Accessors must not choose workflow order, automatic retry, push confirmation, or UI recovery guidance.
 - Resources must not call any service or contain algorithms, methods, validation, I/O, mutable workflow state, or executable bodies.
-- The passive contracts must not be declared in an Accessor interface file and must not move to plural `Resources`, global `Models`, or generic `Common` placement.
+- The passive contracts are declared with the Accessor interfaces and must not move to plural `Resources`, global `Models`, or generic `Common` placement.
 - Composition must not create separate concrete Accessor instances for the Git and file facets.
 
 The runtime call direction is `Client -> Manager -> Accessor -> platform`. Resource references carry data laterally and do not reverse the runtime call graph.
@@ -110,8 +110,8 @@ The runtime call direction is `Client -> Manager -> Accessor -> platform`. Resou
 | Git interface | `AlmToo.Accessor.BrowserGitAccessor.Interface.IBrowserGitAccessor` |
 | File interface | `AlmToo.Accessor.BrowserGitAccessor.Interface.IBrowserFileAccessor` |
 | Service | `AlmToo.Accessor.BrowserGitAccessor.Service.BrowserGitAccessor` |
-| Passive Resource source | `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` |
-| Passive Resource namespace | `AlmToo.Resource.BrowserGitResource.Data` |
+| Passive Resource source | `AlmToo/Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs` |
+| Passive Resource namespace | `AlmToo.Accessor.BrowserGitAccessor.Interface` |
 | Manager state | `AlmToo.Managers.Repositories.RepositoryWorkspaceState` |
 | JavaScript integration | Accessor-owned modules under `wwwroot/js` |
 | Lifetime | One scoped service implements both Accessor interfaces for one browser workspace and is asynchronously disposable |
@@ -128,7 +128,7 @@ The concrete `RepositoryWorkspaceManager` needs no interface: it has no external
 
 The shared instance matters because Git state, browser filesystem state, lazy initialization, credential module access, and disposal belong to one workspace lifetime. Creating one service per interface would split initialization and active repository state. The service lazily imports modules, caches initialization, and disposes every successfully imported module. Partial initialization remains safe to dispose.
 
-The Manager owns an operation gate and linked cancellation source. It prevents overlapping workspace operations, publishes busy state before awaiting the Accessor, and clears busy state in `finally`. Neither Resource contracts nor Clients own service lifetime.
+The Manager owns an operation gate and linked cancellation source. It prevents overlapping workspace operations, publishes busy state before awaiting the Accessor, and clears busy state in `finally`. Neither Accessor contract records nor Clients own service lifetime.
 
 ## Accessor operation contract
 
@@ -151,10 +151,10 @@ Every public operation except disposal accepts an optional `CancellationToken`. 
 
 ### Interface signatures
 
-The interfaces import `AlmToo.Resource.BrowserGitResource.Data`; operation shapes remain unchanged.
+The interfaces import `AlmToo.Accessor.BrowserGitAccessor.Interface`; operation shapes remain unchanged.
 
 ```csharp
-using AlmToo.Resource.BrowserGitResource.Data;
+using AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 
@@ -178,9 +178,9 @@ public interface IBrowserFileAccessor
 }
 ```
 
-## Resource contract catalogue
+## Accessor contract catalogue
 
-The canonical contract file is `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` in namespace `AlmToo.Resource.BrowserGitResource.Data`. It contains only the passive records and enums listed below. Public payload field order, names, nullability, and JSON behavior remained unchanged during relocation.
+The canonical contract file is `AlmToo/Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs` in namespace `AlmToo.Accessor.BrowserGitAccessor.Interface`. It contains only the passive records and enums listed below. Public payload field order, names, nullability, and JSON behavior remained unchanged during relocation.
 
 ### Result and failure contracts
 
@@ -232,7 +232,7 @@ The initial editable-text limit is 1 MiB. Unsupported, binary, invalid UTF-8, ov
 - `SynchronizationFailure` carries only a safe message and stable category; raw Accessor diagnostics remain below the Client boundary.
 - Apply is fast-forward-only and requires a fresh review, clean editor/tree preconditions, and exact explicit acceptance.
 
-No credential field exists in any Resource contract.
+No credential field exists in any Accessor contract record.
 
 ## End-to-end workflows
 
@@ -343,8 +343,8 @@ Cancellation publishes `WasCancelled`, a failed result, and credential-free text
 
 ### Resource purity
 
-- `AlmToo.Resource.BrowserGitResource.Data` contains passive records and enums only.
-- Resource contracts contain no methods, factory helpers, validation, computed workflow properties, mutable orchestration state, I/O, or executable bodies.
+- `AlmToo.Accessor.BrowserGitAccessor.Interface` contains passive records and enums only.
+- Accessor contract records contain no methods, factory helpers, validation, computed workflow properties, mutable orchestration state, I/O, or executable bodies.
 - `RepositoryWorkspaceState`, `RepositoryWorkspaceError`, `RepositoryWorkspaceResult`, and `RepositoryCommitInput` remain Manager-owned.
 
 ## Migration sequence and implementation status
@@ -353,9 +353,9 @@ Cancellation publishes `WasCancelled`, a failed result, and credential-free text
 |---:|---|---|
 | 1 | Establish Client -> Manager -> Accessor workflow, split Git/file capability interfaces, and scoped shared composition | Implemented |
 | 2 | Document complete current/target architecture and D018 ownership | Implemented by S04 T01 |
-| 3 | Create `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` with namespace `AlmToo.Resource.BrowserGitResource.Data` | Implemented by S04 T02 |
+| 3 | Create `AlmToo/Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs` with namespace `AlmToo.Accessor.BrowserGitAccessor.Interface` | Implemented by S04 T02 |
 | 4 | Move only passive records/enums; remove `GitOperationResult` factory methods and use explicit construction | Implemented by S04 T02 |
-| 5 | Import Resource contracts from Accessor interfaces/service, Manager/state, and tests; delete old Accessor DTO declarations | Implemented by S04 T02 |
+| 5 | Import Accessor contract records from Accessor interfaces/service, Manager/state, and tests; delete old Accessor DTO declarations | Implemented by S04 T02 |
 | 6 | Enforce singular placement, Resource purity, legal dependencies, and unchanged composition with negative fixtures | Implemented by S04 T02 |
 | 7 | Run Node, xUnit, warning-as-error build, and autonomous browser workflows | Node, xUnit, and build complete in S04 T02; autonomous browser re-proof remains S04 T03 |
 
@@ -423,7 +423,7 @@ This implementation-state review copies every section of `docs/IDESIGN-REVIEW.md
 | `RepositoryWorkspaceState` | Manager | Hold credential-free observable workflow state | passive Resource values | Accessor implementation, platform I/O |
 | `IBrowserGitAccessor`, `IBrowserFileAccessor` | Accessor | Define browser/platform capability boundaries | passive Resource records, framework cancellation/lifetime | Manager, Client, workflow state |
 | `browserGitEngine.js`, `BrowserGitAccessor`, and remaining JS modules | Accessor | Integrate browser filesystem, Git transport, credential storage, and translate failures | browser/vendor APIs, passive Resource records | Manager, Client, workflow sequencing |
-| `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` | Resource | Passive cross-boundary records and enums | data types only | methods, policy, validation, I/O, mutable Manager state |
+| `AlmToo/Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs` | Accessor contract | Passive cross-boundary records and enums | Accessor interfaces and data types only | methods, policy, validation, I/O, mutable Manager state |
 | `Program.cs` | Client composition root | Compose one scoped Accessor instance and concrete Manager | registration types | repository workflow or integration behavior |
 
 No Engine is present because there is no independent deterministic domain algorithm in this integration-focused subsystem.
@@ -484,7 +484,7 @@ These are capability facets of one genuine external platform boundary, not inter
 
 ### 6. Exceptions
 
-None. `Program.cs` references registration types solely as the Client composition root and owns no runtime repository workflow. The Resource contract uses the required singular placement and contains only passive data.
+None. `Program.cs` references registration types solely as the Client composition root and owns no runtime repository workflow. The Accessor contract record uses the required singular placement and contains only passive data.
 
 **Result:** NOT APPLICABLE — there are no intentional exceptions.
 
@@ -494,4 +494,4 @@ None. `Program.cs` references registration types solely as the Client compositio
 
 **Overall result:** PASS
 
-Repeat this review when an operation, payload, interface, dependency edge, composition lifetime, Resource ownership rule, or workflow responsibility changes.
+Repeat this review when an operation, payload, interface, dependency edge, composition lifetime, Accessor contract ownership rule, or workflow responsibility changes.

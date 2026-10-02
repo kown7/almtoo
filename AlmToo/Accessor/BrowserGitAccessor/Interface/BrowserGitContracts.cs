@@ -1,4 +1,4 @@
-namespace AlmToo.Resource.BrowserGitResource.Data;
+namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 public record GitOperationResult(
     string Operation,

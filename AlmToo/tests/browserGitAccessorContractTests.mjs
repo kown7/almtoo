@@ -5,17 +5,17 @@ import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
 const source = name => readFile(new URL(name, root), 'utf8');
 
-test('Browser Git interfaces and passive Resource contracts use their exact separated namespaces', async () => {
+test('Browser Git interfaces and passive contract records share the Accessor interface namespace', async () => {
   const [git, file, contracts] = await Promise.all([
     source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
     source('Accessor/BrowserGitAccessor/Interface/IBrowserFileAccessor.cs'),
-    source('Resource/BrowserGitResource/Data/BrowserGitContracts.cs')
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs')
   ]);
   for (const facet of [git, file]) {
-    assert.match(facet, /using AlmToo\.Resource\.BrowserGitResource\.Data;/);
+    assert.doesNotMatch(facet, /AlmToo\.Resource\.BrowserGitResource\.Data/);
     assert.match(facet, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface;/);
   }
-  assert.match(contracts, /namespace AlmToo\.Resource\.BrowserGitResource\.Data;/);
+  assert.match(contracts, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface;/);
   assert.doesNotMatch(git + file + contracts, /AlmToo\.Resources|\.Context\b/);
   for (const facet of [git, file]) assert.doesNotMatch(facet, /\b(?:record|enum)\s+(?:GitOperationResult|PushRequest|FilterFilesRequest)\b/);
   assert.match(git, /interface IBrowserGitAccessor : IAsyncDisposable/);
@@ -81,7 +81,7 @@ test('credential and push boundary is secret-safe, single-attempt, and review-bo
 test('synchronization interop admits only safe review data and removes raw diagnostics', async () => {
   const [service, contracts, engine] = await Promise.all([
     source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
-    source('Resource/BrowserGitResource/Data/BrowserGitContracts.cs'),
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'),
     source('wwwroot/js/browserGitEngine.js')
   ]);
   const synchronizationSurface = service.slice(service.indexOf('SynchronizeAsync('), service.indexOf('public async ValueTask<GitOperationResult<bool>> HasCredentialAsync'));

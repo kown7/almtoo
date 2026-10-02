@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
-using AlmToo.Resource.BrowserGitResource.Data;
 using Microsoft.JSInterop;
 
 namespace AlmToo.Accessor.BrowserGitAccessor.Service;

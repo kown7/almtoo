@@ -1,5 +1,3 @@
-using AlmToo.Resource.BrowserGitResource.Data;
-
 namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 /// <summary>Isolates the browser JavaScript and remote Git platform boundary.</summary>
