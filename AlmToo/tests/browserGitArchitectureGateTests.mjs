@@ -3,10 +3,10 @@ import { readdir, readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 const root = new URL('../', import.meta.url);
-const reviewPath = 'Accessors/Git/DESIGN.md';
+const reviewPath = 'Accessor/BrowserGitAccessor/DESIGN.md';
 const resourcePath = 'Resource/BrowserGitResource/Data/BrowserGitContracts.cs';
 const excludedDirectoryNames = new Set(['bin', 'obj', 'node_modules', 'test-results', 'playwright-report', '.git', '.gsd']);
-const dtoDeclaration = /\b(?:record|enum)\s+(?:GitOperationResult|GitOperationFailureKind|RepositoryOpenRequest|RepositoryInfo|FileFilterKind|FilterFilesRequest|FilterFilesResult|UpdateFilesRequest|TextFileUpdate|UpdateFilesResult|RepositoryFileEntry|RepositoryFileKind|TextFileContent|ChangedFile|GitChangeKind|CommitRequest|CommitInfo|PushReview|PushRequest|PushResult)\b/;
+const dtoDeclaration = /\b(?:record|enum)\s+(?:GitOperationResult|GitOperationFailureKind|RepositoryOpenRequest|RepositoryInfo|FileFilterKind|FilterFilesRequest|FilterFilesResult|UpdateFilesRequest|TextFileUpdate|UpdateFilesResult|RepositoryFileEntry|RepositoryFileKind|TextFileContent|ChangedFile|GitChangeKind|CommitRequest|CommitInfo|PushReview|PushRequest|PushResult|SynchronizationIntent|SynchronizationDecisionState|SynchronizationFailureCategory|SynchronizationRequest|IncomingCommitMetadata|ChangedFileSummary|SynchronizationReview|SynchronizationFailure)\b/;
 
 async function collectFiles(relativeDirectory, include) {
   const directory = new URL(`${relativeDirectory}/`, root);
@@ -55,8 +55,9 @@ export function inspectArchitecture(snapshot) {
   const failures = [];
   const production = new Map([...snapshot.clients, ...snapshot.managers, ...snapshot.accessors, ...snapshot.resources, ...snapshot.composition]);
 
-  failures.push(...matchingSources(snapshot.clients, /\b(?:IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|IVersionControlAccessor|BrowserGitService|IBrowserGitService|GitService)\b|AlmToo\.(?:Accessor|Accessors|Services\.Git)\b/, 'CLIENT_ACCESSOR_EDGE', 'repository Client must depend on the concrete Manager, never an Accessor type or namespace'));
+  failures.push(...matchingSources(snapshot.clients, /\b(?:IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|browserGitEngine|IVersionControlAccessor|BrowserGitService|IBrowserGitService|GitService)\b|AlmToo\.(?:Accessor|Accessors|Services\.Git)\b/, 'CLIENT_ACCESSOR_EDGE', 'repository Client must depend on the concrete Manager, never an Accessor type, browser Git engine, or namespace'));
   failures.push(...matchingSources(snapshot.clients, /\b(?:IJSRuntime|IJSObjectReference|JSImport)\b|\bInvokeAsync\s*</, 'CLIENT_GIT_INTEROP', 'repository Client must not own Git-related JavaScript interop'));
+  failures.push(...matchingSources(snapshot.clients, /\.Diagnostic\b|\b(?:personalAccessToken|accessToken)\b/i, 'CLIENT_DIAGNOSTIC_EXPOSURE', 'repository Client must not expose raw diagnostics or credential values'));
 
   for (const [path, source] of snapshot.managers) {
     const declared = new Set([...source.matchAll(/\b(?:class|record)\s+([A-Z]\w*Manager)\b/g)].map(match => match[1]));
@@ -79,7 +80,8 @@ export function inspectArchitecture(snapshot) {
   } else {
     if (!/namespace\s+AlmToo\.Resource\.BrowserGitResource\.Data\s*;/.test(resource)) failures.push(violation('RESOURCE_NAMESPACE', resourcePath, 'Resource contract must use the exact D016/D018 namespace'));
     if (!dtoDeclaration.test(resource)) failures.push(violation('RESOURCE_CONTENT', resourcePath, 'Resource contract must declare the passive Browser Git records and enums'));
-    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(resource)) failures.push(violation('RESOURCE_BEHAVIOR', resourcePath, 'Resource contract must contain passive records and enums only, with no methods or executable bodies'));
+    const executableResource = resource.replace(/^\s*\/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\b\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(executableResource)) failures.push(violation('RESOURCE_BEHAVIOR', resourcePath, 'Resource contract must contain passive records and enums only, with no methods or executable bodies'));
   }
   for (const [path, source] of snapshot.resources) {
     if (path !== resourcePath && dtoDeclaration.test(source)) failures.push(violation('RESOURCE_PATH', path, `Browser Git DTOs must be declared only at ${resourcePath}`));
@@ -106,6 +108,7 @@ export function inspectArchitecture(snapshot) {
   const required = [
     [layerReview, /Pages\/Home\.razor[\s\S]*\|\s*Client\s*\|/, 'Home Client layer mapping'],
     [layerReview, /RepositoryWorkspaceManager[\s\S]*\|\s*Manager\s*\|/, 'repository Manager layer mapping'],
+    [layerReview, /browserGitEngine\.js[\s\S]*\|\s*Accessor\s*\|/, 'browser Git engine Accessor layer mapping'],
     [layerReview, /IBrowserGitAccessor[\s\S]*\|\s*Accessor\s*\|/, 'Browser Git Accessor layer mapping'],
     [layerReview, /Resource\/BrowserGitResource\/Data\/BrowserGitContracts\.cs[\s\S]*\|\s*Resource\s*\|/, 'Browser Git Resource mapping'],
     [interfaceReview, /IBrowserGitAccessor[^\n]*platform boundary[^\n]*substitution seam/i, 'IBrowserGitAccessor boundary and substitution rationale'],
@@ -125,7 +128,7 @@ function assertViolation(snapshot, expectedRule, expectedPath) {
 
 function fixture(overrides = {}) {
   const validReview = [
-    '### 1. Layer assignments\n| Pages/Home.razor | Client | Render | Manager | Accessor |\n| RepositoryWorkspaceManager | Manager | Coordinate | Accessor | Manager |\n| IBrowserGitAccessor | Accessor | Integrate | Platform | Client |\n| Resource/BrowserGitResource/Data/BrowserGitContracts.cs | Resource | Transfer | Data | Behavior |\n**Result:** PASS',
+    '### 1. Layer assignments\n| Pages/Home.razor | Client | Render | Manager | Accessor |\n| RepositoryWorkspaceManager | Manager | Coordinate | Accessor | Manager |\n| browserGitEngine.js | Accessor | Integrate | Platform | Client |\n| IBrowserGitAccessor | Accessor | Integrate | Platform | Client |\n| Resource/BrowserGitResource/Data/BrowserGitContracts.cs | Resource | Transfer | Data | Behavior |\n**Result:** PASS',
     '### 2. Dependency direction\nOne way.\n**Result:** PASS',
     '### 3. Interface justification\n| IBrowserGitAccessor | browser Git platform boundary and substitution seam |\n| IBrowserFileAccessor | browser filesystem platform boundary and substitution seam |\nThe concrete RepositoryWorkspaceManager remains interface-free.\n**Result:** PASS',
     '### 4. Cohesion and decomposition\nCohesive.\n**Result:** PASS',
@@ -152,6 +155,7 @@ test('implementation satisfies the bounded browser Git iDesign architecture gate
 test('negative fixtures identify dependency and ownership violations at concrete paths', () => {
   assert.deepEqual(inspectArchitecture(fixture()), [], 'negative-fixture baseline must satisfy every gate rule');
   assertViolation(fixture({ clients: new Map([['Pages/Home.razor', 'using Git = AlmToo.Accessor.BrowserGitAccessor.Interface.IBrowserGitAccessor;']]) }), 'CLIENT_ACCESSOR_EDGE', 'Pages/Home.razor');
+  assertViolation(fixture({ clients: new Map([['Pages/Home.razor', 'await browserGitEngine.synchronize(request);']]) }), 'CLIENT_ACCESSOR_EDGE', 'Pages/Home.razor');
   assertViolation(fixture({ clients: new Map([['Components/RepositoryFileBrowser.razor', '@inject IJSRuntime GitRuntime']]) }), 'CLIENT_GIT_INTEROP', 'Components/RepositoryFileBrowser.razor');
   assertViolation(fixture({ managers: new Map([['Managers/Repositories/RepositoryWorkspaceManager.cs', 'sealed class RepositoryWorkspaceManager { BillingManager other; }']]) }), 'MANAGER_TO_MANAGER', 'Managers/Repositories/RepositoryWorkspaceManager.cs');
   assertViolation(fixture({ accessors: new Map([['Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs', 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record PushRequest(string Ref);']]) }), 'DTO_ACCESSOR_OWNERSHIP', 'Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs');

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
-const designUrl = new URL('../Accessors/Git/DESIGN.md', import.meta.url);
+const designUrl = new URL('../Accessor/BrowserGitAccessor/DESIGN.md', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
-const designPath = 'Accessors/Git/DESIGN.md';
+const designPath = 'Accessor/BrowserGitAccessor/DESIGN.md';
 
 async function readDesign() {
   return readFile(designUrl, 'utf8');
@@ -74,6 +74,7 @@ export function inspectDesign(document) {
     'Edit and save',
     'Status',
     'Commit',
+    'Synchronization review and apply',
     'Reviewed push',
     'Credential recovery and forget',
     'Cancellation and concurrency'
@@ -107,7 +108,7 @@ export function inspectDesign(document) {
     [ownership, /`IBrowserFileAccessor` is retained because it protects[^.]*platform boundary[^.]*substitution seam[^.]*\./i, 'IBrowserFileAccessor platform-boundary justification'],
     [ownership, /RepositoryWorkspaceManager`?\s+needs no interface[\s\S]*no (?:external or )?platform boundary/i, 'concrete Manager interface decision'],
     [composition, /scoped[\s\S]*same concrete scoped instance[\s\S]*dispose/i, 'shared scoped composition and disposal'],
-    [operations, /CloneOrOpenAsync[\s\S]*FilterFilesAsync[\s\S]*UpdateFilesAsync[\s\S]*GetStatusAsync[\s\S]*CommitAsync[\s\S]*InspectPushAsync[\s\S]*HasCredentialAsync[\s\S]*StoreCredentialAsync[\s\S]*ForgetCredentialAsync[\s\S]*PushAsync[\s\S]*DisposeAsync/, 'complete Accessor operation surface'],
+    [operations, /CloneOrOpenAsync[\s\S]*FilterFilesAsync[\s\S]*UpdateFilesAsync[\s\S]*GetStatusAsync[\s\S]*CommitAsync[\s\S]*InspectPushAsync[\s\S]*HasCredentialAsync[\s\S]*StoreCredentialAsync[\s\S]*ForgetCredentialAsync[\s\S]*PushAsync[\s\S]*SynchronizeAsync[\s\S]*DisposeAsync/, 'complete Accessor operation surface'],
     [resource, /records and enums[\s\S]*no methods or executable bodies/i, 'passive Resource constraint'],
     [resource, /No credential field exists/i, 'credential-free Resource contract'],
     [failuresSection, /JavaScript module import[\s\S]*Browser filesystem[\s\S]*GitHub clone[\s\S]*GitHub push[\s\S]*sessionStorage[\s\S]*Cancellation/i, 'external dependency failure paths'],
@@ -118,6 +119,7 @@ export function inspectDesign(document) {
     [load, /10x[\s\S]*SemaphoreSlim[\s\S]*fail fast/i, '10x breakpoint and protection'],
     [risks, /storage quotas[\s\S]*CORS[\s\S]*Large repositories[\s\S]*credential leak/i, 'known operational and security risks'],
     [extensions, /binary file[\s\S]*pagination[\s\S]*credential stores[\s\S]*remote hosts/i, 'bounded extension points'],
+    [operations, /SynchronizationRequest[\s\S]*SynchronizationReview[\s\S]*fast-forward-only/i, 'synchronization contract and safety boundary'],
     [review, /This implementation-state review copies every section of `docs\/IDESIGN-REVIEW\.md`/, 'implementation-state review provenance']
   ];
 

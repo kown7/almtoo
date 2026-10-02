@@ -16,7 +16,9 @@ public enum RepositoryWorkspaceOperation
     InspectPush,
     StoreCredential,
     ForgetCredential,
-    Push
+    Push,
+    ReviewSynchronization,
+    ApplySynchronization
 }
 
 public sealed record RepositoryWorkspaceError(
@@ -59,6 +61,22 @@ public sealed class RepositoryWorkspaceState
     public bool HasCredential { get; internal set; }
     public bool CredentialReplacementRequired { get; internal set; }
     public GitOperationFailureKind? PushFailureKind { get; internal set; }
+    public SynchronizationReview? SynchronizationReview { get; internal set; }
+    public SynchronizationDecisionState? SynchronizationDecision { get; internal set; }
+    public SynchronizationFailureCategory? SynchronizationFailureCategory { get; internal set; }
+    public string? SynchronizationFailureCode => SynchronizationFailureCategory switch
+    {
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.UnsavedEditorChanges => "unsaved-editor-changes",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.UncommittedWorkingTree => "uncommitted-working-tree",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.CredentialRejected => "credential-rejected",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.NetworkUnavailable => "network-unavailable",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.UnsupportedRef => "unsupported-ref",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.DivergentHistory => "divergent-history",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.Cancelled => "cancelled",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.InvalidRepository => "invalid-repository",
+        Resource.BrowserGitResource.Data.SynchronizationFailureCategory.Unknown => "unknown",
+        _ => null
+    };
     public string? PushFailureCategory => PushFailureKind switch
     {
         GitOperationFailureKind.CredentialRejected => "credential-rejected",

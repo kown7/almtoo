@@ -12,7 +12,8 @@
 .repository-hero h1,
 .repository-status h2,
 .file-preview h2,
-.push-panel h2 {
+.push-panel h2,
+.synchronization-panel h2 {
     margin: 0;
 }
 
@@ -30,6 +31,7 @@
 .repository-status,
 .file-preview,
 .push-panel,
+.synchronization-panel,
 .credential-reload-state {
     border: 1px solid #dbe3ef;
     border-radius: 1rem;
@@ -41,7 +43,8 @@
 .repository-form,
 .repository-status,
 .file-preview,
-.push-panel {
+.push-panel,
+.synchronization-panel {
     display: grid;
     gap: 1rem;
 }
@@ -181,7 +184,8 @@
     margin: 0;
 }
 
-.push-panel__heading {
+.push-panel__heading,
+.synchronization-panel__heading {
     align-items: center;
     display: flex;
     flex-wrap: wrap;
@@ -267,9 +271,105 @@
     margin-top: 0.2rem;
 }
 
-.push-panel__placeholder {
+.push-panel__placeholder,
+.synchronization-panel__placeholder {
     color: #64748b;
     margin: 0;
+}
+
+.synchronization-review {
+    background: #f8fafc;
+    border: 1px solid #dbe3ef;
+    border-radius: 0.8rem;
+    display: grid;
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.synchronization-review__summary {
+    margin: 0;
+}
+
+.synchronization-review__commit {
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    margin: 0;
+}
+
+.synchronization-review__commit div {
+    border-left: 0.25rem solid #2563eb;
+    padding-left: 0.8rem;
+}
+
+.synchronization-review__commit dt,
+.synchronization-review__files h3 {
+    color: #64748b;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+.synchronization-review__commit dd {
+    margin: 0.2rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+.synchronization-review__sha {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.synchronization-review__files {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.synchronization-review__files ul {
+    display: grid;
+    gap: 0.45rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.synchronization-review__files li {
+    align-items: baseline;
+    border-left: 0.25rem solid #0f766e;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    overflow-wrap: anywhere;
+    padding-left: 0.8rem;
+}
+
+.synchronization-review__change {
+    color: #0f766e;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.synchronization-form {
+    border-top: 1px solid #e2e8f0;
+    display: grid;
+    gap: 1rem;
+    padding-top: 1rem;
+}
+
+.synchronization-confirmation {
+    align-items: flex-start;
+    display: flex;
+    gap: 0.65rem;
+}
+
+.synchronization-confirmation input {
+    flex: 0 0 auto;
+    margin-top: 0.2rem;
+}
+
+.status-message[data-synchronization-failure]:not([data-synchronization-failure=""]) {
+    border-left: 0.3rem solid #b91c1c;
 }
 
 .file-editor__field {
@@ -322,6 +422,7 @@
     }
 
     .push-panel__heading,
+    .synchronization-panel__heading,
     .push-credential__heading,
     .credential-form,
     .credential-reload-state {

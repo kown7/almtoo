@@ -90,3 +90,48 @@ test('completes the browser-local repository workflow through push review', asyn
 
   expect(browserErrors, 'The autonomous repository workflow must not emit browser errors').toEqual([]);
 });
+
+test('reviews repository synchronization through safe Client state without applying it', async ({ page }) => {
+  test.setTimeout(180_000);
+  const browserErrors = observeBrowserErrors(page);
+
+  await page.goto('/');
+  await expect(page).toHaveTitle('Repository Browser');
+  await page.getByLabel('Repository URL').fill(publicRepositoryUrl);
+  await page.getByRole('button', { name: 'Open repository' }).click();
+  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
+  await expectManagerSettled(page);
+
+  const workspace = page.getByRole('region', { name: 'Browse workspace' });
+  const repositoryFileList = workspace.getByRole('list', { name: 'Repository file list' });
+  await expect(repositoryFileList).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review repository synchronization' })).toBeVisible();
+
+  const reviewButton = page.getByRole('button', { name: 'Review synchronization' });
+  await expect(reviewButton).toBeEnabled();
+  await reviewButton.click();
+
+  const synchronizationPanel = page.locator('.synchronization-panel');
+  const safeOutcome = synchronizationPanel.locator('[data-synchronization-decision], [data-synchronization-failure]');
+  await expect(safeOutcome).toBeVisible({ timeout: 90_000 });
+  await expect(repositoryFileList).toBeVisible();
+
+  const outcomeText = await safeOutcome.textContent();
+  expect(outcomeText, 'Synchronization review must provide actionable safe Client guidance').toMatch(/ready|incoming|current|ahead|diverg|cancel|save|commit|reopen|connect|support|safely/i);
+  expect(outcomeText, 'Synchronization review must not expose raw browser diagnostics').not.toMatch(/(?:stack trace|exception at|browserGitEngine|personal access token|access token)/i);
+
+  const readyReview = synchronizationPanel.locator('[data-synchronization-decision="ready-to-apply"]');
+  if (await readyReview.count()) {
+    const confirmation = readyReview.getByLabel(/I reviewed this exact incoming update/);
+    const applyButton = readyReview.getByRole('button', { name: 'Apply reviewed synchronization' });
+    await expect(confirmation).not.toBeChecked();
+    await expect(applyButton).toBeDisabled();
+    await confirmation.check();
+    await expect(applyButton).toBeEnabled();
+  } else {
+    await expect(safeOutcome).toHaveAttribute('role', /status|alert/);
+  }
+
+  await expect(repositoryFileList).toBeVisible();
+  expect(browserErrors, 'Synchronization review must not emit page or console errors').toEqual([]);
+});

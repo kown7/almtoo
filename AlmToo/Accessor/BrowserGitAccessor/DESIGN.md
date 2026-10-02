@@ -146,6 +146,7 @@ Every public operation except disposal accepts an optional `CancellationToken`. 
 | `StoreCredentialAsync` | Credential text | `GitOperationResult<bool>` | Store input in Accessor-owned tab scope without echoing it |
 | `ForgetCredentialAsync` | None | `GitOperationResult<bool>` | Clear tab-scoped credential and fail closed if unavailable |
 | `PushAsync` | `PushRequest` | `GitOperationResult<PushResult>` | Revalidate reviewed coordinates, retrieve the credential at transport time, push with lease protection, and sanitize output |
+| `SynchronizeAsync` | `SynchronizationRequest` | `GitOperationResult<SynchronizationReview>` | Fetch/review or apply a fast-forward-only synchronization and return credential-free review metadata and stable decisions |
 | `DisposeAsync` | None | `ValueTask` | Dispose imported JavaScript modules safely |
 
 ### Interface signatures
@@ -167,6 +168,7 @@ public interface IBrowserGitAccessor : IAsyncDisposable
     ValueTask<GitOperationResult<bool>> StoreCredentialAsync(string credential, CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<bool>> ForgetCredentialAsync(CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<PushResult>> PushAsync(PushRequest request, CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<SynchronizationReview>> SynchronizeAsync(SynchronizationRequest request, CancellationToken cancellationToken = default);
 }
 
 public interface IBrowserFileAccessor
@@ -223,6 +225,13 @@ The initial editable-text limit is 1 MiB. Unsupported, binary, invalid UTF-8, ov
 - `PushRequest` repeats exactly those four reviewed coordinates.
 - `PushResult(RepositoryUrl, Branch, DestinationRef, PushedCommitId)` must match the request on success.
 
+### Synchronization contracts
+
+- `SynchronizationRequest` distinguishes fetch/review from explicit apply acceptance.
+- `SynchronizationReview` carries incoming commit metadata, changed-file summaries, and a stable decision state.
+- `SynchronizationFailure` carries only a safe message and stable category; raw Accessor diagnostics remain below the Client boundary.
+- Apply is fast-forward-only and requires a fresh review, clean editor/tree preconditions, and exact explicit acceptance.
+
 No credential field exists in any Resource contract.
 
 ## End-to-end workflows
@@ -260,6 +269,14 @@ The Manager calls `GetStatusAsync` only for an active repository. The Accessor m
 2. The Accessor rejects control characters and invokes the local Git commit operation.
 3. On success the Manager stores `CommitInfo`, invalidates any older push review, refreshes status, and publishes the result.
 4. Commit never pushes and never requests a credential.
+
+### Synchronization review and apply
+
+1. The Client delegates review to `RepositoryWorkspaceManager`; the Manager calls `SynchronizeAsync` with review intent.
+2. The Accessor fetches remote state, classifies current/ahead/divergent/ready outcomes, and returns credential-free incoming metadata and changed-file summaries.
+3. Apply requires a fresh status check, no unsaved editor or uncommitted working-tree changes, and exact accepted review.
+4. The Manager calls the Accessor with apply intent only after those preconditions; the Accessor performs a fast-forward-only mutation.
+5. Cancellation and remote failures become stable safe categories; successful apply refreshes workspace status.
 
 ### Reviewed push
 
@@ -405,7 +422,7 @@ This implementation-state review copies every section of `docs/IDESIGN-REVIEW.md
 | `RepositoryWorkspaceManager` | Manager | Coordinate one complete repository workspace use case | Accessor interfaces, passive Resource records, framework utilities | other Managers, direct JS interop, rendering |
 | `RepositoryWorkspaceState` | Manager | Hold credential-free observable workflow state | passive Resource values | Accessor implementation, platform I/O |
 | `IBrowserGitAccessor`, `IBrowserFileAccessor` | Accessor | Define browser/platform capability boundaries | passive Resource records, framework cancellation/lifetime | Manager, Client, workflow state |
-| `BrowserGitAccessor` and JS modules | Accessor | Integrate browser filesystem, Git transport, credential storage, and translate failures | browser/vendor APIs, passive Resource records | Manager, Client, workflow sequencing |
+| `browserGitEngine.js`, `BrowserGitAccessor`, and remaining JS modules | Accessor | Integrate browser filesystem, Git transport, credential storage, and translate failures | browser/vendor APIs, passive Resource records | Manager, Client, workflow sequencing |
 | `AlmToo/Resource/BrowserGitResource/Data/BrowserGitContracts.cs` | Resource | Passive cross-boundary records and enums | data types only | methods, policy, validation, I/O, mutable Manager state |
 | `Program.cs` | Client composition root | Compose one scoped Accessor instance and concrete Manager | registration types | repository workflow or integration behavior |
 

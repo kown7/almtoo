@@ -32,6 +32,7 @@ test('Home injects the concrete repository Manager and has no Client to Accessor
   assert.match(home, /@using AlmToo\.Managers\.Repositories/);
   assert.doesNotMatch(allClients, /IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|AlmToo\.Accessor|AlmToo\.Services\.Git/);
   assert.doesNotMatch(allClients, /IJSRuntime|IJSObjectReference|JSImport|InvokeAsync<.*>\("(?:storeCredential|getCredentialForPush|forgetCredential|hasCredential)"/);
+  assert.doesNotMatch(allClients, /\.Diagnostic\b|personalAccessToken|accessToken/i);
   assert.doesNotMatch(allClients, /IRepositoryWorkspaceManager|IVersionControlAccessor|Resources/);
 });
 
@@ -143,6 +144,37 @@ test('failure and cancellation state remain accessible and manually recoverable'
   assert.match(home, /Push reviewed commit/);
 });
 
+test('synchronization review remains Manager-only, confirmation-gated, and safe for every stable outcome', async () => {
+  const home = await source('Pages/Home.razor');
+
+  for (const delegation of [
+    'Workspace.ReviewSynchronizationAsync()',
+    'Workspace.ApplySynchronizationAsync(State.SynchronizationReview)',
+    'Workspace.CancelCurrentOperation'
+  ]) assert.ok(home.includes(delegation), `missing synchronization Manager delegation: ${delegation}`);
+
+  assert.match(home, /State\.SynchronizationReview is \{ \} review/);
+  assert.match(home, /review\.IncomingCommit is \{ \} incomingCommit/);
+  assert.match(home, /incomingCommit\.AuthorName/);
+  assert.match(home, /incomingCommit\.Message/);
+  assert.match(home, /incomingCommit\.AuthoredAt/);
+  assert.match(home, /review\.ChangedFiles/);
+  assert.match(home, /id="confirm-synchronization"[\s\S]*checked="@synchronizationConfirmed"/);
+  assert.match(home, /State\.SynchronizationReview is not null && IsSynchronizationDecision\("ReadyToApply"\) && synchronizationConfirmed && !State\.IsBusy/);
+  assert.match(home, /if \(CanApplySynchronization && State\.SynchronizationReview is not null\)/);
+  assert.match(home, /synchronizationConfirmed = false;[\s\S]*Workspace\.ReviewSynchronizationAsync\(\)/);
+  assert.match(home, /data-synchronization-progress="@State\.Operation"[\s\S]*role="status"/);
+  assert.match(home, /data-synchronization-failure="@State\.SynchronizationFailureCode"[\s\S]*role="@\(State\.SynchronizationFailureCode is null \? "status" : "alert"\)/);
+
+  for (const outcome of [
+    'Current', 'Ahead', 'Divergent', 'Cancelled', 'Failed',
+    'unsaved-editor-changes', 'uncommitted-working-tree', 'credential-rejected', 'network-unavailable',
+    'unsupported-ref', 'divergent-history', 'invalid-repository', 'cancelled', 'unknown'
+  ]) assert.match(home, new RegExp(outcome), `missing stable synchronization outcome: ${outcome}`);
+
+  assert.doesNotMatch(home, /IBrowserGitAccessor|BrowserGitAccessor|IJSRuntime|browserGitEngine|\.Diagnostic\b|personalAccessToken|accessToken/i);
+});
+
 test('repository browser and push review styles retain stateful responsive surfaces', async () => {
   const [homeStyles, fileBrowserStyles, commitStyles] = await Promise.all([
     source('Pages/Home.razor.css'),
@@ -155,6 +187,10 @@ test('repository browser and push review styles retain stateful responsive surfa
   assert.match(homeStyles, /\.push-panel/);
   assert.match(homeStyles, /\.push-review__sha/);
   assert.match(homeStyles, /\.status-message\[data-push-failure\]/);
+  assert.match(homeStyles, /\.synchronization-panel/);
+  assert.match(homeStyles, /\.synchronization-review__commit/);
+  assert.match(homeStyles, /\.synchronization-confirmation/);
+  assert.match(homeStyles, /\.status-message\[data-synchronization-failure\]/);
   assert.match(fileBrowserStyles, /\.file-browser__entry--unsupported/);
   assert.match(commitStyles, /\.commit-form__confirmation/);
 });

@@ -71,3 +71,67 @@ public record PushResult(
     string Branch,
     string DestinationRef,
     string PushedCommitId);
+
+/// <summary>Describes whether synchronization should only inspect or may apply an accepted review.</summary>
+public enum SynchronizationIntent
+{
+    Fetch,
+    Review,
+    Apply
+}
+
+/// <summary>Stable, user-safe classification of the synchronization decision.</summary>
+public enum SynchronizationDecisionState
+{
+    Current,
+    Ahead,
+    Divergent,
+    ReadyToApply,
+    Applied,
+    Cancelled,
+    Failed
+}
+
+/// <summary>Stable categories that may cross the Resource-to-Manager boundary without Git diagnostics.</summary>
+public enum SynchronizationFailureCategory
+{
+    UnsavedEditorChanges,
+    UncommittedWorkingTree,
+    CredentialRejected,
+    NetworkUnavailable,
+    UnsupportedRef,
+    DivergentHistory,
+    Cancelled,
+    InvalidRepository,
+    Unknown
+}
+
+public record SynchronizationRequest(
+    string RepositoryUrl,
+    string Branch,
+    SynchronizationIntent Intent);
+
+/// <summary>Remote commit information used for review; it contains no credentials or transport diagnostics.</summary>
+public record IncomingCommitMetadata(
+    string CommitId,
+    string ParentCommitId,
+    string Message,
+    string AuthorName,
+    DateTimeOffset AuthoredAt);
+
+public record ChangedFileSummary(
+    string Path,
+    GitChangeKind ChangeKind);
+
+public record SynchronizationReview(
+    string RepositoryUrl,
+    string Branch,
+    string LocalCommitId,
+    IncomingCommitMetadata? IncomingCommit,
+    IReadOnlyList<ChangedFileSummary> ChangedFiles,
+    SynchronizationDecisionState Decision);
+
+/// <summary>A safe message and stable category; raw Accessor diagnostics remain outside this contract.</summary>
+public record SynchronizationFailure(
+    SynchronizationFailureCategory Category,
+    string Message);

@@ -171,6 +171,100 @@ public sealed class RepositoryWorkspaceManagerTests
     }
 
     [Fact]
+    public async Task Synchronization_review_preserves_decision_and_uses_review_intent()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        fake.StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Clean.", []));
+        fake.Synchronize = request => new GitOperationResult<SynchronizationReview>("synchronize", true, "Incoming changes.",
+            new(request.RepositoryUrl, request.Branch, "local", null, [], SynchronizationDecisionState.ReadyToApply));
+
+        Assert.True(await manager.ReviewSynchronizationAsync());
+
+        Assert.Equal(1, fake.SynchronizeCalls);
+        Assert.Equal("sync:Review", fake.Calls.Last());
+        Assert.Equal(SynchronizationDecisionState.ReadyToApply, manager.State.SynchronizationDecision);
+        Assert.Contains("ready", manager.State.Result?.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Synchronization_apply_requires_clean_tree_and_exact_review_then_refreshes_status()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        fake.StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Clean.", []));
+        Assert.True(await manager.ReviewSynchronizationAsync());
+        var review = Assert.IsType<SynchronizationReview>(manager.State.SynchronizationReview);
+
+        Assert.True(await manager.ApplySynchronizationAsync(review));
+
+        Assert.Equal(2, fake.SynchronizeCalls);
+        Assert.Contains("sync:Apply", fake.Calls);
+        Assert.Equal(SynchronizationDecisionState.Applied, manager.State.SynchronizationDecision);
+        Assert.Equal("status", fake.Calls.Last());
+    }
+
+    [Fact]
+    public async Task Synchronization_apply_rejects_unsaved_editor_before_accessor_call()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.SelectFileAsync(Readme.Path));
+        manager.EditSelectedFile("unsaved");
+        var review = new SynchronizationReview(Repository.RepositoryUrl, "main", "local", null, [], SynchronizationDecisionState.ReadyToApply);
+
+        Assert.False(await manager.ApplySynchronizationAsync(review));
+
+        Assert.Equal(0, fake.SynchronizeCalls);
+        Assert.Equal(SynchronizationFailureCategory.UnsavedEditorChanges, manager.State.SynchronizationFailureCategory);
+        Assert.DoesNotContain("diagnostic", manager.State.Error?.Message ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Synchronization_failure_maps_to_safe_category_without_accessor_diagnostic()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            Synchronize = _ => new GitOperationResult<SynchronizationReview>("synchronize", false, "raw remote response with token", Value: default,
+                Diagnostic: "PAT=secret raw stack", FailureKind: GitOperationFailureKind.NetworkUnavailable)
+        };
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+
+        Assert.False(await manager.ReviewSynchronizationAsync());
+
+        Assert.Equal(SynchronizationFailureCategory.NetworkUnavailable, manager.State.SynchronizationFailureCategory);
+        Assert.Contains("could not be reached", manager.State.Error?.Message);
+        Assert.DoesNotContain("PAT=secret", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Synchronization_cancellation_records_cancelled_state()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fake.SynchronizeHandler = async token =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new GitOperationResult<SynchronizationReview>("synchronize", true, "never", default);
+        };
+
+        var operation = manager.ReviewSynchronizationAsync();
+        await entered.Task;
+        manager.CancelCurrentOperation();
+
+        Assert.False(await operation);
+        Assert.Equal(SynchronizationFailureCategory.Cancelled, manager.State.SynchronizationFailureCategory);
+        Assert.Equal(SynchronizationDecisionState.Cancelled, manager.State.SynchronizationDecision);
+    }
+
+    [Fact]
     public async Task Push_rejects_mismatched_review_without_reinspection_or_transport()
     {
         var fake = new FakeBrowserAccessor();
@@ -297,10 +391,16 @@ public sealed class RepositoryWorkspaceManagerTests
         public Queue<GitOperationResult<PushReview>> InspectResults { get; } = new();
         public int InspectCalls { get; private set; }
         public int PushCalls { get; private set; }
+        public int SynchronizeCalls { get; private set; }
+        public Func<SynchronizationRequest, GitOperationResult<SynchronizationReview>> Synchronize { get; set; } = request =>
+            new GitOperationResult<SynchronizationReview>("synchronize", true, "Ready.", new(
+                request.RepositoryUrl, request.Branch, "local", new("incoming", "local", "Incoming", "Author", DateTimeOffset.UnixEpoch), [],
+                request.Intent == SynchronizationIntent.Apply ? SynchronizationDecisionState.Applied : SynchronizationDecisionState.ReadyToApply));
 
         public Func<FilterFilesRequest, GitOperationResult<FilterFilesResult>> Filter { get; set; }
         public Func<FilterFilesRequest, CancellationToken, ValueTask<GitOperationResult<FilterFilesResult>>>? FilterAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<IReadOnlyList<ChangedFile>>>>? StatusAsync { get; set; }
+        public Func<CancellationToken, Task<GitOperationResult<SynchronizationReview>>>? SynchronizeHandler { get; set; }
         public Func<string, GitOperationResult<bool>> StoreCredential { get; set; } = _ =>
             new GitOperationResult<bool>("store-credential", true, "Stored.", true);
         public Func<PushRequest, GitOperationResult<PushResult>> Push { get; set; } = request =>
@@ -366,6 +466,13 @@ public sealed class RepositoryWorkspaceManagerTests
             Calls.Add("push");
             PushCalls++;
             return ValueTask.FromResult(Push(request));
+        }
+
+        public async ValueTask<GitOperationResult<SynchronizationReview>> SynchronizeAsync(SynchronizationRequest request, CancellationToken cancellationToken = default)
+        {
+            Calls.Add($"sync:{request.Intent}");
+            SynchronizeCalls++;
+            return SynchronizeHandler is null ? Synchronize(request) : await SynchronizeHandler(cancellationToken);
         }
 
         public async ValueTask<GitOperationResult<FilterFilesResult>> FilterFilesAsync(FilterFilesRequest request, CancellationToken cancellationToken = default)
