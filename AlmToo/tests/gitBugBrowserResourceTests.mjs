@@ -61,6 +61,7 @@ async function makeUnsupported(root) {
     committer: { name: 'fixture', email: 'fixture@example.invalid', timestamp: 1, timezoneOffset: 0 }
   } });
   await git.writeRef({ fs, gitdir, ref, value: oid, force: true });
+  return id;
 }
 
 function resetGlobals() {
@@ -196,8 +197,11 @@ test('Resource exports decode fixture-proven list and detail DTOs without networ
 test('Resource exports classify missing Git-Bug metadata with fixed safe fields and no writes', async () => {
   const fixture = await copyFixture();
   await rm(path.join(fixture, 'repository', 'refs', 'bugs'), { recursive: true });
-  const result = await assertUnchangedRead(fixture, engine => engine.listGitBugIssues({ state: null, searchText: null, cursor: null, pageSize: 50 }));
-  assertSafeFailure(result, 'gitBugDataUnavailable');
+  const results = await assertUnchangedRead(fixture, async engine => [
+    await engine.listGitBugIssues({ state: null, searchText: null, cursor: null, pageSize: 50 }),
+    await engine.getGitBugIssue('0'.repeat(64))
+  ]);
+  for (const result of results) assertSafeFailure(result, 'gitBugDataUnavailable');
 });
 
 test('Resource exports classify unreadable referenced objects as malformed without partial data or writes', async () => {
@@ -207,18 +211,25 @@ test('Resource exports classify unreadable referenced objects as malformed witho
   const oid = await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${id}` });
   await unlink(path.join(gitdir, 'objects', oid.slice(0, 2), oid.slice(2)));
 
-  const result = await assertUnchangedRead(fixture, engine => engine.getGitBugIssue(id));
-  assertSafeFailure(result, 'gitBugDataMalformed');
+  const results = await assertUnchangedRead(fixture, async engine => [
+    await engine.listGitBugIssues({ state: null, searchText: null, cursor: null, pageSize: 50 }),
+    await engine.getGitBugIssue(id)
+  ]);
+  for (const result of results) assertSafeFailure(result, 'gitBugDataMalformed');
 });
 
 test('Resource exports classify an incompatible version without partial data or writes', async () => {
   const fixture = await copyFixture();
-  await makeUnsupported(fixture);
-  const result = await assertUnchangedRead(fixture, engine => engine.listGitBugIssues({ state: null, searchText: null, cursor: null, pageSize: 50 }));
-  assertSafeFailure(result, 'gitBugFormatUnsupported');
+  const id = await makeUnsupported(fixture);
+  const results = await assertUnchangedRead(fixture, async engine => [
+    await engine.listGitBugIssues({ state: null, searchText: null, cursor: null, pageSize: 50 }),
+    await engine.getGitBugIssue(id)
+  ]);
+  for (const result of results) assertSafeFailure(result, 'gitBugFormatUnsupported');
 });
 
 test('Resource exports reject malformed and oversized bridge requests before Git object reads', async () => {
+  const before = await snapshot(sourceFixture);
   const runtime = await openFixture(sourceFixture);
   const requests = [
     null,
@@ -233,4 +244,5 @@ test('Resource exports reject malformed and oversized bridge requests before Git
   }
   assertSafeFailure(await runtime.engine.getGitBugIssue('not-an-id'), 'gitBugDataMalformed');
   assert.deepEqual(runtime.calls, []);
+  assert.deepEqual(await snapshot(sourceFixture), before);
 });

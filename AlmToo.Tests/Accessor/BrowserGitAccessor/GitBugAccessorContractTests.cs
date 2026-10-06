@@ -118,66 +118,70 @@ public sealed class GitBugAccessorContractTests
     {
         var module = new FakeModule(new Dictionary<string, string>
         {
-            ["listGitBugIssues"] = Failure("gitBug.listIssues", bridgeFailure)
+            ["listGitBugIssues"] = Failure("gitBug.listIssues", bridgeFailure),
+            ["getGitBugIssue"] = Failure("gitBug.getIssue", bridgeFailure)
         });
         await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
 
-        var result = await accessor.ListIssuesAsync(new());
-        var serialized = JsonSerializer.Serialize(result);
+        var page = await accessor.ListIssuesAsync(new());
+        var detail = await accessor.GetIssueAsync(new(IssueId));
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(expectedFailure, result.FailureKind);
-        Assert.Contains(expectedMessage, result.Message);
-        Assert.Null(result.Value);
-        Assert.Null(result.Diagnostic);
-        Assert.DoesNotContain(PrivateValue, serialized, StringComparison.Ordinal);
-        Assert.DoesNotContain("example.test", serialized, StringComparison.Ordinal);
-        Assert.DoesNotContain("secret-token", serialized, StringComparison.Ordinal);
+        Assert.Equal("gitBug.listIssues", page.Operation);
+        Assert.Equal("gitBug.getIssue", detail.Operation);
+        AssertSafeFailure(page, expectedFailure, expectedMessage);
+        AssertSafeFailure(detail, expectedFailure, expectedMessage);
     }
 
     [Fact]
-    public async Task Malformed_bridge_value_fails_closed_without_private_content()
+    public async Task Malformed_list_and_detail_values_fail_closed_without_private_content()
     {
+        var malformedSummary = new
+        {
+            id = IssueId,
+            title = PrivateValue,
+            state = "invented",
+            labels = Array.Empty<string>(),
+            authorDisplayName = "Fixture Author"
+        };
         var module = new FakeModule(new Dictionary<string, string>
         {
             ["listGitBugIssues"] = Success("gitBug.listIssues", new
             {
-                issues = new[]
-                {
-                    new { id = IssueId, title = PrivateValue, state = "invented", labels = Array.Empty<string>(), authorDisplayName = "Fixture Author" }
-                },
+                issues = new[] { malformedSummary },
                 nextCursor = (string?)null,
                 totalCount = 1
+            }),
+            ["getGitBugIssue"] = Success("gitBug.getIssue", new
+            {
+                summary = malformedSummary,
+                description = PrivateValue,
+                comments = new[] { new { authorDisplayName = "Fixture Author", body = PrivateValue } }
             })
         });
         await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
 
-        var result = await accessor.ListIssuesAsync(new());
-        var serialized = JsonSerializer.Serialize(result);
+        var page = await accessor.ListIssuesAsync(new());
+        var detail = await accessor.GetIssueAsync(new(IssueId));
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(GitOperationFailureKind.GitBugDataMalformed, result.FailureKind);
-        Assert.Null(result.Diagnostic);
-        Assert.DoesNotContain(PrivateValue, serialized, StringComparison.Ordinal);
+        AssertSafeFailure(page, GitOperationFailureKind.GitBugDataMalformed, "could not be read safely");
+        AssertSafeFailure(detail, GitOperationFailureKind.GitBugDataMalformed, "could not be read safely");
     }
 
     [Fact]
-    public async Task Interop_exception_is_reduced_to_a_fixed_safe_failure()
+    public async Task Interop_exceptions_and_cancellation_are_reduced_to_fixed_safe_failures()
     {
         var module = new FakeModule(new Dictionary<string, string>
         {
-            ["listGitBugIssues"] = FakeModule.ThrowResponse
+            ["listGitBugIssues"] = FakeModule.ThrowResponse,
+            ["getGitBugIssue"] = FakeModule.CancelResponse
         });
         await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
 
-        var result = await accessor.ListIssuesAsync(new());
-        var serialized = JsonSerializer.Serialize(result);
+        var page = await accessor.ListIssuesAsync(new());
+        var detail = await accessor.GetIssueAsync(new(IssueId), new CancellationToken(canceled: true));
 
-        Assert.False(result.Succeeded);
-        Assert.Equal(GitOperationFailureKind.Unknown, result.FailureKind);
-        Assert.Equal("Git-Bug issues could not be loaded.", result.Message);
-        Assert.Null(result.Diagnostic);
-        Assert.DoesNotContain(PrivateValue, serialized, StringComparison.Ordinal);
+        AssertSafeFailure(page, GitOperationFailureKind.Unknown, "could not be loaded");
+        AssertSafeFailure(detail, GitOperationFailureKind.Unknown, "could not be loaded");
     }
 
     [Fact]
@@ -227,6 +231,25 @@ public sealed class GitBugAccessorContractTests
         Assert.Empty(module.Invocations);
     }
 
+    private static void AssertSafeFailure<T>(
+        GitOperationResult<T> result,
+        GitOperationFailureKind expectedFailure,
+        string expectedMessage)
+    {
+        var serialized = JsonSerializer.Serialize(result);
+        Assert.False(result.Succeeded);
+        Assert.Equal(expectedFailure, result.FailureKind);
+        Assert.Contains(expectedMessage, result.Message);
+        Assert.Null(result.Value);
+        Assert.Null(result.Diagnostic);
+        Assert.DoesNotContain(PrivateValue, serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain(IssueId, serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("refs/bugs", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("/repository/", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("example.test", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-token", serialized, StringComparison.Ordinal);
+    }
+
     private static void AssertInvalid<T>(GitOperationResult<T> result)
     {
         Assert.False(result.Succeeded);
@@ -269,6 +292,7 @@ public sealed class GitBugAccessorContractTests
     private sealed class FakeModule(IReadOnlyDictionary<string, string> responses) : IJSObjectReference
     {
         public const string ThrowResponse = "__throw_js_exception__";
+        public const string CancelResponse = "__throw_operation_canceled__";
 
         public List<string> Invocations { get; } = [];
         public Dictionary<string, object?[]> Arguments { get; } = [];
@@ -289,6 +313,10 @@ public sealed class GitBugAccessorContractTests
             if (json == ThrowResponse)
             {
                 throw new JSException(PrivateValue);
+            }
+            if (json == CancelResponse)
+            {
+                throw new OperationCanceledException(PrivateValue, cancellationToken);
             }
 
             var value = JsonSerializer.Deserialize<TValue>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));

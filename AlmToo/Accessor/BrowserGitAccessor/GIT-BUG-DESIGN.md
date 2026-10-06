@@ -2,7 +2,7 @@
 
 ## Status
 
-**Proposed design — no production implementation yet.** This document is the architecture and verification contract that must be approved before a Git-Bug browser feature is coded.
+**Implemented Accessor and Resource boundary.** The fixture-proven, read-only `IGitBugAccessor` facet and browser decoder are implemented and contract-locked; Manager and Client delivery remains deferred to later slices.
 
 | Field | Decision |
 | --- | --- |
@@ -21,8 +21,8 @@ Git-Bug is Git-repository-native: it keeps issue data outside the working tree a
 ### In scope for the first implementation milestone
 
 1. Detect whether the active browser-local repository contains supported Git-Bug metadata.
-2. List issues with stable identifier, title, state, labels, author display name when available, and last-updated time when available.
-3. Open one issue to show its complete title, state, description, labels, participants, and ordered comments when represented by the supported data version.
+2. List issues with stable identifier, title, open/closed state, nullable labels, and optional author display name.
+3. Read one issue with its fixture-proven summary, optional description, and ordered comments.
 4. Give users an honest empty state, unavailable-data state, or unsupported-format state without exposing raw Git objects, repository paths, or JavaScript diagnostics.
 5. Preserve the existing repository workspace and never change Git refs, objects, index, worktree files, remote configuration, or credentials during Git-Bug reads.
 
@@ -65,7 +65,7 @@ The existing repository workflow remains independent. It may establish the activ
 
 The public contract is intentionally a **read model**, not raw Git-Bug objects. Raw refs, object IDs, commits, filesystem paths, and parser-specific fields are Resource details and must not escape the Accessor.
 
-### Proposed passive records
+### Implemented passive records
 
 ```csharp
 public interface IGitBugAccessor
@@ -98,43 +98,39 @@ public sealed record GitBugIssueSummary(
     GitBugIssueId Id,
     string Title,
     GitBugIssueState State,
-    IReadOnlyList<string> Labels,
-    string? AuthorDisplayName,
-    DateTimeOffset? UpdatedAt);
+    IReadOnlyList<string>? Labels,
+    string? AuthorDisplayName);
 
 public sealed record GitBugIssueDetail(
     GitBugIssueSummary Summary,
     string? Description,
-    IReadOnlyList<GitBugComment> Comments,
-    IReadOnlyList<string> Participants);
+    IReadOnlyList<GitBugComment> Comments);
 
 public sealed record GitBugComment(
     string AuthorDisplayName,
-    string Body,
-    DateTimeOffset? CreatedAt);
+    string Body);
 ```
 
-Final member names and required/optional fields are not approved until they are checked against a fixture created by a supported Git-Bug release. The contract must not claim values that the decoder cannot reliably obtain.
+These members are limited to the pinned `v0.11.0` fixture evidence. Unproven timestamps, participants, identity fields beyond display name, and raw storage coordinates are intentionally absent.
 
 ### Result and failure semantics
 
-The facet reuses `GitOperationResult<T>` so all browser Git integration failures share a single safe result envelope. Before implementation, add only the Git-Bug-specific values needed to `GitOperationFailureKind`:
+The facet reuses `GitOperationResult<T>` so all browser Git integration failures share a single safe result envelope. The implemented Git-Bug-specific `GitOperationFailureKind` values are:
 
 | Failure kind | User-safe message | Diagnostic policy | Manager behavior |
 | --- | --- | --- | --- |
-| `GitBugDataUnavailable` | “This repository has no supported Git-Bug issue data.” | Fixed category only | Empty/unavailable state, no retry loop |
-| `GitBugFormatUnsupported` | “This Git-Bug data version is not supported yet.” | Supported-version identifier only | Explain limitation; preserve prior display until user dismisses/reloads |
-| `GitBugDataMalformed` | “Git-Bug issue data could not be read safely.” | Fixed parser category; no object content | Error state with retry |
-| existing `NetworkUnavailable` | Not expected for local reads; reserved for a future remote source | Existing safe diagnostic policy | Retry only when a remote source is deliberately added |
-| `Unknown` | “Git-Bug issues could not be loaded.” | Existing safe diagnostic policy | Retry affordance |
+| `GitBugDataUnavailable` | “This repository has no supported Git-Bug issue data.” | `Diagnostic` is null; fixed category only | Empty/unavailable state, no retry loop |
+| `GitBugFormatUnsupported` | “This Git-Bug data version is not supported yet.” | `Diagnostic` is null; no version, ref, or object detail | Explain limitation; preserve prior display until user dismisses/reloads |
+| `GitBugDataMalformed` | “Git-Bug issue data could not be read safely.” | `Diagnostic` is null; no object content | Error state with retry |
+| `Unknown` | “Git-Bug issues could not be loaded.” | `Diagnostic` is null; exception and cancellation detail are discarded | Retry affordance |
 
-Cancellation is not shown as an error. A later list/detail request supersedes an older request; the Manager ignores stale completions.
+At the implemented Accessor boundary, cancellation and interop exceptions are reduced to the fixed `Unknown` failure with a null diagnostic. A later Manager slice will own stale-request cancellation and presentation semantics.
 
 ## Resource design
 
 ### Browser bridge responsibilities
 
-`browserGitEngine.js` gains two read-only exports, named during implementation consistently with its existing bridge functions:
+`browserGitEngine.js` exposes two read-only exports:
 
 ```text
 listGitBugIssues(query)  -> BrowserGitResponse<GitBugIssuePageDto>
@@ -154,7 +150,7 @@ The managed `BrowserGitAccessor` owns JS module lifetime and maps DTOs exactly o
 
 ### Format-discovery gate
 
-The raw Git-Bug representation is an external protocol and must not be guessed from CLI output or inferred from a single hand-made ref. Before production decoding:
+The raw Git-Bug representation is an external protocol and was not guessed from CLI output or inferred from a single hand-made ref. The completed format-discovery gate:
 
 1. Install or obtain a pinned supported Git-Bug release in test infrastructure, not in browser production code.
 2. Create a disposable repository fixture containing at minimum: two open issues, one closed issue, description, labels, comments, a non-ASCII title/body, and a missing optional field.
@@ -200,7 +196,19 @@ Pass. The fixture, manifest, validator, and validator tests are **Resource/test 
 
 ### T02 iDesign review
 
-Pass. `gitBugFixtureDiscoveryTests.mjs` is **Resource/test infrastructure** proving the future browser Resource boundary with the existing browser Git dependency. It adds no production class, service, interface, or dependency edge; orchestration, UI, managed Accessor behavior, and production browser exports remain unchanged. The test-local decoder is intentionally not promoted to a service, and the existing `IGitBugAccessor` justification remains the genuine external-format/platform boundary documented above. No architectural exception is required.
+Pass. The `browserGitEngine.js` list/detail decoder is a **Resource** beneath the existing browser Git Accessor. It uses only fixture-proven version-4 replay semantics, bounded local Git reads, and fixed failure categories; it performs no network request, credential handling, Git mutation, UI orchestration, or managed contract import. No new service or interface was introduced, and the existing `IGitBugAccessor` remains the justified external-format/browser-platform boundary. No architectural exception is required.
+
+### T03 iDesign review
+
+- **Client:** every `.razor` and `.cs` source under `Pages` and `Components` is source-gated against `IGitBugAccessor`, Git-Bug Accessor contract types, `BrowserGitAccessor`, `browserGitEngine`, Accessor namespaces, and JS interop. Clients remain limited to future Manager-owned state and intent calls.
+- **Manager:** no Git-Bug Manager is implemented in this slice. The documented future concrete Manager remains the sole allowed Client dependency and may depend on `IGitBugAccessor`; no Manager-to-Manager or Manager-to-JS edge is introduced.
+- **Accessor:** `IGitBugAccessor` and passive contracts remain co-located at the genuine external-format and browser-platform boundary. The existing concrete `BrowserGitAccessor` implements the facet directly and all three Accessor facets resolve to that shared scoped instance.
+- **Resource:** `browserGitEngine.js` owns deterministic supported-format decoding and bounded local Git reads. Node tests prove list, detail, missing, malformed, unsupported, and invalid-request paths use no transport or write-capable Git operation and preserve repository snapshots.
+- **Cohesion and interfaces:** no wrapper, pass-through service, speculative Engine, or Manager interface was added. `IGitBugAccessor` remains necessary for credible local-decoder/server substitution and fixture-backed testing.
+- **Verification placement:** source-path dependency tests own layer direction; managed contract tests own validation, fixed safe result mapping, and interop failures; fixture-backed Resource tests own protocol decoding, no-network proof, and repository immutability.
+- **Exceptions:** no architectural exception is required.
+
+**Result:** PASS
 
 ## Manager and Client behavior
 
@@ -241,13 +249,13 @@ The Client must not call `IGitBugAccessor`, inspect ref names, marshal JS, parse
 
 ## Observability
 
-The Accessor emits the existing operation/result shape with fixed operation names such as `gitBug.listIssues` and `gitBug.getIssue`. Safe metrics/log fields are:
+The Accessor returns the existing operation/result shape with fixed operation names `gitBug.listIssues` and `gitBug.getIssue`, boolean success, and a fixed `failureKind`. There is no Git-Bug logging or telemetry sink in this slice. If aggregate telemetry is added later, its allowlist is limited to:
 
 ```text
-operation, outcome, failureKind, issueCountBucket, resultState, supportedFormatVersion
+operation, outcome, failureKind
 ```
 
-Forbidden telemetry fields are issue body, title, comments, user names, IDs, refs, remote URLs, request query, object hashes, diagnostics, and credentials. The Manager exposes a user-safe state transition that lets the Client display a retry/error state without logging private repository content.
+Forbidden telemetry fields are issue body, title, comments, user names, IDs, refs, paths, remote URLs, request query, object hashes, raw format versions, diagnostics, and credentials. Contract and negative tests serialize every fixed failure category and prove private issue text, URLs, and credential-like sentinels are absent.
 
 ## Verification strategy
 
@@ -255,19 +263,19 @@ Forbidden telemetry fields are issue body, title, comments, user names, IDs, ref
 | --- | --- | --- |
 | Contract | C# tests enforce passive contracts, result mapping, failure categories, and interface ownership. | `AlmToo.Tests/Accessor/BrowserGitAccessor/` |
 | Resource contract | Node tests exercise browser bridge exports using fixture repositories, including unsupported/malformed fixtures. | `AlmToo/tests/` |
-| Manager | Unit tests prove cancellation, stale-result rejection, repository-change reset, and no Accessor calls from Client code. | `AlmToo.Tests/Managers/` |
-| Architecture | Source-path contract test confirms Client → Manager → `IGitBugAccessor` → Browser resource direction and permits no forbidden JS interop. | `AlmToo/tests/` |
-| Browser integration | Playwright opens a fixture-backed browser-local repository, lists issues, opens one detail, and verifies no writes or credential requests. | `AlmToo/e2e/` |
+| Manager (deferred) | A later slice must prove cancellation, stale-result rejection, and repository-change reset. | `AlmToo.Tests/Managers/` |
+| Architecture | Source-path contract tests scan all Client paths and enforce Client → Manager → `IGitBugAccessor` → Browser Resource direction with no Client JS interop. | `AlmToo/tests/browserGitArchitectureGateTests.mjs` |
+| Browser integration (deferred) | A later Client slice must open a fixture-backed browser-local repository, list issues, open one detail, and verify no writes or credential requests. | `AlmToo/e2e/` |
 | Negative paths | Missing Git-Bug data, unsupported version, malformed objects, cancellation, invalid identifier, oversized query, and bridge exception all produce safe outcomes. | Unit, Node, and Playwright tests |
 
 The first coding slice cannot complete merely because list UI renders. It requires a fixture-backed proof that a read never changes repository state and that unsupported/malformed external data does not leak into Client state.
 
 ## Delivery sequence
 
-1. **Discovery and contract:** pin a Git-Bug version, build fixtures, write public contract and architecture tests, and prove the local decoder can identify supported metadata without writes.
-2. **Accessor facet:** implement/mapping-test the bridge and managed facet for list/detail reads with categorized failures.
-3. **Manager workflow:** implement state, cancellation, selection, and repository-change reset with Manager tests.
-4. **Client vertical slice:** add the accessible list/detail UI and run fixture-backed browser acceptance.
+1. **Discovery and contract — delivered:** pinned Git-Bug `v0.11.0`, sealed fixtures, and proved local decoding feasibility without writes.
+2. **Accessor facet — delivered:** implemented and mapping-tested list/detail browser decoding and the managed facet with categorized safe failures.
+3. **Manager workflow — deferred:** implement state, cancellation, selection, and repository-change reset with Manager tests.
+4. **Client vertical slice — deferred:** add the accessible list/detail UI and run fixture-backed browser acceptance.
 
 If step 1 finds the local representation unsuitable for isomorphic-git, stop before steps 2–4 and replan the facet as a GraphQL-backed `IGitBugAccessor`. That replacement remains at the same Accessor boundary; no Client or Manager needs to learn the transport.
 
@@ -291,7 +299,7 @@ Pass. `BrowserGitAccessor` remains the single browser-local Git platform service
 
 ### 5. Verification placement
 
-Pass subject to the format-discovery gate. Decoder semantics are verified at the Resource boundary, state/cancellation in Manager tests, architecture direction in source-path tests, and the user loop in browser tests.
+Pass for the implemented scope. Decoder semantics and repository immutability are verified at the Resource boundary, managed mapping and cancellation sanitization in Accessor tests, and dependency direction in source-path tests. Manager workflow and the user loop remain explicitly deferred.
 
 ### 6. Exceptions
 
