@@ -1,0 +1,143 @@
+@page "/git-bug"
+@using AlmToo.Components
+@using AlmToo.Managers.GitBug
+@using AlmToo.Managers.Repositories
+@implements IDisposable
+@inject GitBugWorkspaceManager GitBugWorkspace
+@inject RepositoryWorkspaceManager RepositoryWorkspace
+
+<PageTitle>Git-Bug Issues</PageTitle>
+
+<main class="gitbug-shell">
+    <header class="gitbug-hero">
+        <p class="gitbug-eyebrow">Browser-local repository metadata</p>
+        <h1>Git-Bug issues</h1>
+        <p>Browse issue data from the open repository without changing files, refs, or remote state.</p>
+    </header>
+
+    @if (!State.RepositoryAvailable)
+    {
+        <section class="gitbug-state-panel" aria-labelledby="gitbug-no-repository-heading">
+            <h2 id="gitbug-no-repository-heading">Open a repository first</h2>
+            <p>Return home and open a browser-local repository before browsing its Git-Bug issues.</p>
+            <a class="gitbug-action" href="/">Go to repository browser</a>
+        </section>
+    }
+    else if (State.Status == GitBugWorkspaceStatus.LoadingList)
+    {
+        <section class="gitbug-state-panel" role="status" aria-live="polite" aria-busy="true">
+            <h2>Loading issues</h2>
+            <p>Reading Git-Bug metadata from this browser-local repository...</p>
+        </section>
+    }
+    else if (State.Status == GitBugWorkspaceStatus.LoadingDetail)
+    {
+        <section class="gitbug-state-panel" role="status" aria-live="polite" aria-busy="true">
+            <h2>Loading issue detail</h2>
+            <p>Reading the selected issue and its comments...</p>
+            <button class="gitbug-secondary-action" type="button" @onclick="ReturnToIssueList">Back to issues</button>
+        </section>
+    }
+    else if (State.Status == GitBugWorkspaceStatus.ListReady)
+    {
+        <GitBugIssueList State="State" OnIssueSelected="OpenIssueAsync" />
+    }
+    else if (State.Status == GitBugWorkspaceStatus.DetailReady)
+    {
+        <GitBugIssueDetail State="State" OnBackRequested="ReturnToIssueList" />
+    }
+    else if (State.Status is GitBugWorkspaceStatus.Unavailable or GitBugWorkspaceStatus.Unsupported or GitBugWorkspaceStatus.Failed)
+    {
+        <section class="gitbug-state-panel gitbug-state-panel--notice"
+                 role="@(State.Status == GitBugWorkspaceStatus.Failed ? "alert" : "status")"
+                 aria-live="@(State.Status == GitBugWorkspaceStatus.Failed ? "assertive" : "polite")"
+                 data-gitbug-state="@State.Status.ToString().ToLowerInvariant()">
+            <h2>@StatusHeading</h2>
+            <p>@State.Message</p>
+            <div class="gitbug-state-panel__actions">
+                @if (State.SelectedIssueId is not null)
+                {
+                    <button class="gitbug-secondary-action" type="button" @onclick="ReturnToIssueList">Back to issues</button>
+                }
+                @if (State.CanRetry)
+                {
+                    <button class="gitbug-action" type="button" @onclick="RetryAsync" disabled="@State.IsBusy">Try again</button>
+                }
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="gitbug-state-panel" aria-labelledby="gitbug-ready-heading">
+            <h2 id="gitbug-ready-heading">Issues ready to load</h2>
+            <button class="gitbug-action" type="button" @onclick="LoadIssuesAsync">Load issues</button>
+        </section>
+    }
+</main>
+
+@code {
+    private bool disposed;
+    private GitBugWorkspaceState State => GitBugWorkspace.State;
+    private string StatusHeading => State.Status switch
+    {
+        GitBugWorkspaceStatus.Unavailable => "Git-Bug data unavailable",
+        GitBugWorkspaceStatus.Unsupported => "Git-Bug version unsupported",
+        _ => "Git-Bug issues could not be loaded"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        GitBugWorkspace.StateChanged += HandleGitBugStateChanged;
+        RepositoryWorkspace.StateChanged += HandleRepositoryStateChanged;
+        await SynchronizeRepositoryAsync();
+    }
+
+    private async Task SynchronizeRepositoryAsync()
+    {
+        GitBugWorkspace.SetRepository(RepositoryWorkspace.State.Repository);
+        if (State.RepositoryAvailable && State.Status == GitBugWorkspaceStatus.Idle)
+        {
+            await GitBugWorkspace.LoadIssuesAsync();
+        }
+    }
+
+    private async Task LoadIssuesAsync() => await GitBugWorkspace.LoadIssuesAsync();
+    private async Task OpenIssueAsync(string issueId) => await GitBugWorkspace.OpenIssueAsync(issueId);
+    private void ReturnToIssueList() => GitBugWorkspace.ReturnToIssueList();
+
+    private async Task RetryAsync()
+    {
+        if (State.SelectedIssueId is { } selectedIssueId)
+        {
+            await GitBugWorkspace.OpenIssueAsync(selectedIssueId.Value);
+        }
+        else
+        {
+            await GitBugWorkspace.LoadIssuesAsync();
+        }
+    }
+
+    private void HandleGitBugStateChanged()
+    {
+        if (!disposed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void HandleRepositoryStateChanged()
+    {
+        if (!disposed)
+        {
+            _ = InvokeAsync(SynchronizeRepositoryAsync);
+        }
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        GitBugWorkspace.StateChanged -= HandleGitBugStateChanged;
+        RepositoryWorkspace.StateChanged -= HandleRepositoryStateChanged;
+        GitBugWorkspace.CancelCurrentOperation();
+    }
+}

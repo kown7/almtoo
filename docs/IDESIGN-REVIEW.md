@@ -149,3 +149,15 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M007 S03 T02 Git-Bug issue Client review
+
+- [x] `Pages/GitBug.razor`, `GitBugIssueList.razor`, and `GitBugIssueDetail.razor` are assigned to the **Client** layer: they render only passive `GitBugWorkspaceState`, expose semantic list/detail controls, and delegate all issue intent to the concrete Manager.
+- [x] Dependency direction remains Client → `GitBugWorkspaceManager` → `IGitBugAccessor` → browser Resource. The page observes passive repository lifecycle state only to submit `SetRepository`; neither Manager calls the other.
+- [x] Client-safe default-list and string-ID overloads remain cohesive operations on the concrete Manager. No Client constructs Accessor request DTOs, and no pass-through interface or additional service is introduced.
+- [x] `IGitBugAccessor` remains the sole justified interface because it protects the external-format/browser-platform boundary, credible alternate implementation, and fixture seam. `GitBugWorkspaceManager` remains interface-free.
+- [x] All external issue text uses Razor text rendering rather than raw markup. Loading and failure states use live-region semantics, retry is Manager-controlled, and return from detail restores the retained Manager list context.
+- [x] Source tests own navigation, complete state rendering, passive children, text safety, accessible controls, responsive/focus styling, and forbidden Client dependencies. Browser fixture acceptance remains in T03.
+- [x] No architectural exception is required.
+
+**Result:** PASS

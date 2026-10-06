@@ -1,0 +1,68 @@
+@using AlmToo.Managers.GitBug
+
+@if (State.SelectedIssue is { } issue)
+{
+    <article class="gitbug-detail" aria-labelledby="gitbug-detail-heading">
+        <button class="gitbug-back" type="button" @onclick="OnBackRequested">
+            <span aria-hidden="true">←</span> Back to issues
+        </button>
+
+        <header class="gitbug-detail__header">
+            <p class="gitbug-eyebrow">Git-Bug issue detail</p>
+            <h2 id="gitbug-detail-heading">@issue.Summary.Title</h2>
+            <div class="gitbug-detail__metadata">
+                <span class="gitbug-state gitbug-state--@issue.Summary.State.ToString().ToLowerInvariant()">@issue.Summary.State</span>
+                @if (!string.IsNullOrWhiteSpace(issue.Summary.AuthorDisplayName))
+                {
+                    <span>Opened by @issue.Summary.AuthorDisplayName</span>
+                }
+            </div>
+            @if (issue.Summary.Labels is { Count: > 0 })
+            {
+                <div class="gitbug-labels" aria-label="Labels">
+                    @foreach (var label in issue.Summary.Labels)
+                    {
+                        <span class="gitbug-label">@label</span>
+                    }
+                </div>
+            }
+        </header>
+
+        <section class="gitbug-detail__description" aria-labelledby="gitbug-description-heading">
+            <h3 id="gitbug-description-heading">Description</h3>
+            @if (string.IsNullOrWhiteSpace(issue.Description))
+            {
+                <p class="gitbug-empty">No description was provided.</p>
+            }
+            else
+            {
+                <p class="gitbug-prose">@issue.Description</p>
+            }
+        </section>
+
+        <section class="gitbug-comments" aria-labelledby="gitbug-comments-heading">
+            <h3 id="gitbug-comments-heading">Comments (@issue.Comments.Count)</h3>
+            @if (issue.Comments.Count == 0)
+            {
+                <p class="gitbug-empty">No comments yet.</p>
+            }
+            else
+            {
+                <ol class="gitbug-comments__list">
+                    @foreach (var comment in issue.Comments)
+                    {
+                        <li class="gitbug-comment">
+                            <p class="gitbug-comment__author">@comment.AuthorDisplayName</p>
+                            <p class="gitbug-prose">@comment.Body</p>
+                        </li>
+                    }
+                </ol>
+            }
+        </section>
+    </article>
+}
+
+@code {
+    [Parameter, EditorRequired] public GitBugWorkspaceState State { get; set; } = null!;
+    [Parameter] public EventCallback OnBackRequested { get; set; }
+}

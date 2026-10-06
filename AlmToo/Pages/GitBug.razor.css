@@ -1,0 +1,227 @@
+.gitbug-shell {
+    display: grid;
+    gap: 1.5rem;
+    max-width: 64rem;
+}
+
+.gitbug-hero {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.gitbug-hero h1,
+.gitbug-state-panel h2,
+::deep .gitbug-list h2,
+::deep .gitbug-detail h2,
+::deep .gitbug-detail h3 {
+    margin: 0;
+}
+
+.gitbug-hero h1 {
+    font-size: clamp(2rem, 4vw, 3.5rem);
+}
+
+.gitbug-hero p:not(.gitbug-eyebrow) {
+    color: #475569;
+    font-size: 1.1rem;
+    margin: 0;
+    max-width: 48rem;
+}
+
+.gitbug-eyebrow,
+::deep .gitbug-eyebrow {
+    color: #64748b;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+.gitbug-state-panel,
+::deep .gitbug-list,
+::deep .gitbug-detail {
+    background: #fff;
+    border: 1px solid #dbe3ef;
+    border-radius: 1rem;
+    box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.08);
+    display: grid;
+    gap: 1rem;
+    padding: 1.25rem;
+}
+
+.gitbug-state-panel p {
+    margin: 0;
+}
+
+.gitbug-state-panel--notice[data-gitbug-state="failed"] {
+    border-left: 0.35rem solid #b91c1c;
+}
+
+.gitbug-state-panel--notice[data-gitbug-state="unsupported"] {
+    border-left: 0.35rem solid #a16207;
+}
+
+.gitbug-state-panel__actions,
+::deep .gitbug-list__heading,
+::deep .gitbug-detail__metadata {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: space-between;
+}
+
+.gitbug-action,
+.gitbug-secondary-action,
+::deep .gitbug-back {
+    align-self: start;
+    border-radius: 999px;
+    cursor: pointer;
+    display: inline-block;
+    font-weight: 700;
+    padding: 0.7rem 1rem;
+    text-decoration: none;
+}
+
+.gitbug-action {
+    background: #2563eb;
+    border: 1px solid #2563eb;
+    color: #fff;
+}
+
+.gitbug-secondary-action,
+::deep .gitbug-back {
+    background: #fff;
+    border: 1px solid #94a3b8;
+    color: #1e293b;
+}
+
+.gitbug-action:hover:not(:disabled),
+.gitbug-action:focus-visible {
+    background: #1d4ed8;
+}
+
+.gitbug-secondary-action:hover:not(:disabled),
+.gitbug-secondary-action:focus-visible,
+::deep .gitbug-back:hover,
+::deep .gitbug-back:focus-visible {
+    background: #f1f5f9;
+}
+
+::deep .gitbug-list__count,
+::deep .gitbug-empty {
+    color: #64748b;
+    margin: 0;
+}
+
+::deep .gitbug-list__items,
+::deep .gitbug-comments__list {
+    display: grid;
+    gap: 0.75rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+::deep .gitbug-list__select {
+    background: #f8fafc;
+    border: 1px solid #dbe3ef;
+    border-radius: 0.8rem;
+    color: #0f172a;
+    cursor: pointer;
+    display: grid;
+    gap: 0.65rem;
+    padding: 1rem;
+    text-align: left;
+    width: 100%;
+}
+
+::deep .gitbug-list__select:hover,
+::deep .gitbug-list__select:focus-visible {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.15);
+}
+
+::deep .gitbug-list__title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+::deep .gitbug-list__metadata,
+::deep .gitbug-labels {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+::deep .gitbug-state,
+::deep .gitbug-label {
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    padding: 0.2rem 0.55rem;
+}
+
+::deep .gitbug-state--open {
+    background: #dcfce7;
+    color: #166534;
+}
+
+::deep .gitbug-state--closed {
+    background: #e2e8f0;
+    color: #334155;
+}
+
+::deep .gitbug-label {
+    background: #dbeafe;
+    color: #1e40af;
+    overflow-wrap: anywhere;
+}
+
+::deep .gitbug-detail__header,
+::deep .gitbug-detail__description,
+::deep .gitbug-comments {
+    display: grid;
+    gap: 0.75rem;
+}
+
+::deep .gitbug-detail__description,
+::deep .gitbug-comments {
+    border-top: 1px solid #e2e8f0;
+    padding-top: 1rem;
+}
+
+::deep .gitbug-prose {
+    margin: 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+::deep .gitbug-comment {
+    background: #f8fafc;
+    border-left: 0.25rem solid #2563eb;
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.85rem 1rem;
+}
+
+::deep .gitbug-comment__author {
+    font-weight: 700;
+    margin: 0;
+}
+
+@media (max-width: 640px) {
+    .gitbug-shell {
+        max-width: 100%;
+    }
+
+    .gitbug-action,
+    .gitbug-secondary-action,
+    ::deep .gitbug-back {
+        text-align: center;
+        width: 100%;
+    }
+}

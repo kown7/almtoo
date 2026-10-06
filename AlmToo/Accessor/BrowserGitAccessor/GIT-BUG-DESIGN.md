@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented Accessor, Resource, and Manager boundary.** The fixture-proven, read-only `IGitBugAccessor` facet, browser decoder, and concrete `GitBugWorkspaceManager` are implemented and contract-locked; Client delivery remains deferred to the next task.
+**Implemented Accessor, Resource, Manager, and Client boundary.** The fixture-proven, read-only `IGitBugAccessor` facet, browser decoder, concrete `GitBugWorkspaceManager`, and accessible list/detail Client are implemented and contract-locked; browser fixture acceptance remains deferred to the next task.
 
 | Field | Decision |
 | --- | --- |
@@ -200,8 +200,8 @@ Pass. The `browserGitEngine.js` list/detail decoder is a **Resource** beneath th
 
 ### T03 iDesign review
 
-- **Client:** every `.razor` and `.cs` source under `Pages` and `Components` is source-gated against `IGitBugAccessor`, Git-Bug Accessor contract types, `BrowserGitAccessor`, `browserGitEngine`, Accessor namespaces, and JS interop. Clients remain limited to future Manager-owned state and intent calls.
-- **Manager:** no Git-Bug Manager is implemented in this slice. The documented future concrete Manager remains the sole allowed Client dependency and may depend on `IGitBugAccessor`; no Manager-to-Manager or Manager-to-JS edge is introduced.
+- **Client:** `Pages/GitBug.razor`, `GitBugIssueList.razor`, and `GitBugIssueDetail.razor` render passive `GitBugWorkspaceState`, emit accessible intent callbacks, and are source-gated against `IGitBugAccessor`, Git-Bug Accessor request DTO construction, `BrowserGitAccessor`, `browserGitEngine`, Accessor namespaces, raw HTML, and JS interop. The page observes repository lifecycle state only to call `SetRepository`; it renders no repository Manager state and performs no Git-Bug policy.
+- **Manager:** the concrete `GitBugWorkspaceManager` is the sole Git-Bug Client dependency. Client-safe default-list and string-ID overloads translate UI intent into bounded Accessor records while preserving the existing cancellation/stale-completion lifecycle; no Manager-to-Manager or Manager-to-JS edge is introduced.
 - **Accessor:** `IGitBugAccessor` and passive contracts remain co-located at the genuine external-format and browser-platform boundary. The existing concrete `BrowserGitAccessor` implements the facet directly and all three Accessor facets resolve to that shared scoped instance.
 - **Resource:** `browserGitEngine.js` owns deterministic supported-format decoding and bounded local Git reads. Node tests prove list, detail, missing, malformed, unsupported, and invalid-request paths use no transport or write-capable Git operation and preserve repository snapshots.
 - **Cohesion and interfaces:** no wrapper, pass-through service, speculative Engine, or Manager interface was added. `IGitBugAccessor` remains necessary for credible local-decoder/server substitution and fixture-backed testing.
@@ -277,7 +277,7 @@ The first coding slice cannot complete merely because list UI renders. It requir
 1. **Discovery and contract — delivered:** pinned Git-Bug `v0.11.0`, sealed fixtures, and proved local decoding feasibility without writes.
 2. **Accessor facet — delivered:** implemented and mapping-tested list/detail browser decoding and the managed facet with categorized safe failures.
 3. **Manager workflow — delivered:** implemented concrete state orchestration, safe failures, cancellation, selection, stale-result rejection, and repository-change reset with focused workflow tests.
-4. **Client vertical slice — deferred:** add the accessible list/detail UI and run fixture-backed browser acceptance.
+4. **Client vertical slice — delivered:** added accessible list/detail UI, safe loading/unavailable/unsupported/failed states, text-only external content rendering, and retained list context. Fixture-backed browser acceptance remains the following task.
 
 If step 1 finds the local representation unsuitable for isomorphic-git, stop before steps 2–4 and replan the facet as a GraphQL-backed `IGitBugAccessor`. That replacement remains at the same Accessor boundary; no Client or Manager needs to learn the transport.
 
@@ -301,7 +301,7 @@ Pass. `BrowserGitAccessor` remains the single browser-local Git platform service
 
 ### 5. Verification placement
 
-Pass for the implemented scope. Decoder semantics and repository immutability are verified at the Resource boundary, managed mapping and cancellation sanitization in Accessor tests, Manager workflow and stale-result handling in focused workflow tests, and dependency direction in source-path tests. The Client user loop remains explicitly deferred.
+Pass for the implemented scope. Decoder semantics and repository immutability are verified at the Resource boundary, managed mapping and cancellation sanitization in Accessor tests, Manager workflow and stale-result handling in focused workflow tests, and Client dependency/state/accessibility/text-safety behavior in source-path tests. The fixture-backed browser user loop remains explicitly deferred.
 
 ### 6. Exceptions
 

@@ -33,7 +33,7 @@ async function productionSnapshot() {
     ...await collectFiles('Pages', path => /\.(?:razor|cs)$/.test(path)),
     ...await collectFiles('Components', path => /\.(?:razor|cs)$/.test(path))
   ];
-  const managerPaths = await collectFiles('Managers/Repositories', path => path.endsWith('.cs'));
+  const managerPaths = await collectFiles('Managers', path => path.endsWith('.cs'));
   const accessorPaths = await collectFiles('Accessor/BrowserGitAccessor', path => path.endsWith('.cs'));
   return {
     clients: await readSources(clientPaths),
@@ -63,7 +63,7 @@ export function inspectArchitecture(snapshot) {
   const failures = [];
   const production = new Map([...snapshot.clients, ...snapshot.managers, ...snapshot.accessors, ...snapshot.contracts, ...snapshot.composition]);
 
-  failures.push(...matchingSources(snapshot.clients, /\b(?:IBrowserGitAccessor|IBrowserFileAccessor|IGitBugAccessor|BrowserGitAccessor|browserGitEngine|GitBugIssue(?:Id|Query|State|Page|Summary|Detail)|GitBugComment|IVersionControlAccessor|BrowserGitService|IBrowserGitService|GitService)\b|AlmToo\.(?:Accessor|Accessors|Services\.Git)\b/, 'CLIENT_ACCESSOR_EDGE', 'Client must depend on a concrete Manager and passive Manager state, never a Browser Git or Git-Bug Accessor contract, engine, or namespace'));
+  failures.push(...matchingSources(snapshot.clients, /\b(?:IBrowserGitAccessor|IBrowserFileAccessor|IGitBugAccessor|BrowserGitAccessor|browserGitEngine|GitBugIssue(?:Id|Query|State|Page|Summary)|GitBugComment|IVersionControlAccessor|BrowserGitService|IBrowserGitService|GitService)\b|AlmToo\.(?:Accessor|Accessors|Services\.Git)\b/, 'CLIENT_ACCESSOR_EDGE', 'Client must depend on a concrete Manager and passive Manager state, never a Browser Git or Git-Bug Accessor contract, engine, or namespace'));
   failures.push(...matchingSources(snapshot.clients, /\b(?:IJSRuntime|IJSObjectReference|JSImport)\b|\bInvokeAsync\s*</, 'CLIENT_GIT_INTEROP', 'Client must not own Git-related JavaScript interop'));
   failures.push(...matchingSources(snapshot.clients, /\.Diagnostic\b|\b(?:personalAccessToken|accessToken)\b/i, 'CLIENT_DIAGNOSTIC_EXPOSURE', 'Client must not expose raw diagnostics or credential values'));
 
@@ -114,10 +114,11 @@ export function inspectArchitecture(snapshot) {
     [/AddScoped<IBrowserGitAccessor>\s*\(\s*\w+\s*=>\s*\w+\.GetRequiredService<BrowserGitAccessor>\s*\(\s*\)\s*\)/, 'IBrowserGitAccessor factory resolving the shared concrete instance'],
     [/AddScoped<IBrowserFileAccessor>\s*\(\s*\w+\s*=>\s*\w+\.GetRequiredService<BrowserGitAccessor>\s*\(\s*\)\s*\)/, 'IBrowserFileAccessor factory resolving the shared concrete instance'],
     [/AddScoped<IGitBugAccessor>\s*\(\s*\w+\s*=>\s*\w+\.GetRequiredService<BrowserGitAccessor>\s*\(\s*\)\s*\)/, 'IGitBugAccessor factory resolving the shared concrete instance'],
-    [/AddScoped<RepositoryWorkspaceManager>\s*\(\s*\)/, 'concrete scoped RepositoryWorkspaceManager registration']
+    [/AddScoped<RepositoryWorkspaceManager>\s*\(\s*\)/, 'concrete scoped RepositoryWorkspaceManager registration'],
+    [/AddScoped<GitBugWorkspaceManager>\s*\(\s*\)/, 'concrete scoped GitBugWorkspaceManager registration']
   ];
   for (const [pattern, expectation] of registrations) if (!pattern.test(program)) failures.push(violation('SCOPED_COMPOSITION', 'Program.cs', `missing ${expectation}`));
-  if (/AddScoped<IRepositoryWorkspaceManager>/.test(program)) failures.push(violation('MANAGER_INTERFACE', 'Program.cs', 'the cohesive concrete Manager must remain interface-free'));
+  if (/AddScoped<I(?:Repository|GitBug)WorkspaceManager>/.test(program)) failures.push(violation('MANAGER_INTERFACE', 'Program.cs', 'cohesive concrete Managers must remain interface-free'));
 
   const headings = ['### 1. Layer assignments', '### 2. Dependency direction', '### 3. Interface justification', '### 4. Cohesion and decomposition', '### 5. Verification placement', '### 6. Exceptions', '## Compliance statement'];
   for (let index = 0; index < headings.length - 1; index += 1) {
@@ -182,7 +183,7 @@ function fixture(overrides = {}) {
       [contractPath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record GitOperationResult(string Operation, bool Succeeded, string Message);'],
       [gitBugInterfacePath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public interface IGitBugAccessor { ValueTask ListIssuesAsync(); ValueTask GetIssueAsync(); }']
     ]),
-    composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>(); services.AddScoped<IBrowserGitAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IBrowserFileAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IGitBugAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<RepositoryWorkspaceManager>();']]),
+    composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>(); services.AddScoped<IBrowserGitAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IBrowserFileAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IGitBugAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<RepositoryWorkspaceManager>(); services.AddScoped<GitBugWorkspaceManager>();']]),
     design: validReview,
     gitBugDesign: '### T03 iDesign review\nClient to Manager to Accessor to Resource. IGitBugAccessor protects the external-format and platform boundary. No architectural exception is required.\n**Result:** PASS\n## Manager and Client behavior'
   };

@@ -1,0 +1,54 @@
+@using AlmToo.Managers.GitBug
+
+<section class="gitbug-list" aria-labelledby="gitbug-list-heading">
+    <div class="gitbug-list__heading">
+        <div>
+            <p class="gitbug-eyebrow">Read-only issue browser</p>
+            <h2 id="gitbug-list-heading">Issues</h2>
+        </div>
+        <p class="gitbug-list__count" aria-label="Issue count">@State.TotalCount total</p>
+    </div>
+
+    @if (State.Issues.Count == 0)
+    {
+        <p class="gitbug-empty">No Git-Bug issues were found in this repository.</p>
+    }
+    else
+    {
+        <ul class="gitbug-list__items" aria-label="Git-Bug issue list">
+            @foreach (var issue in State.Issues)
+            {
+                <li class="gitbug-list__item">
+                    <button type="button"
+                            class="gitbug-list__select"
+                            aria-label="Open issue: @issue.Title"
+                            @onclick="() => OnIssueSelected.InvokeAsync(issue.Id.Value)"
+                            disabled="@State.IsBusy">
+                        <span class="gitbug-list__title">@issue.Title</span>
+                        <span class="gitbug-list__metadata">
+                            <span class="gitbug-state gitbug-state--@issue.State.ToString().ToLowerInvariant()">@issue.State</span>
+                            @if (!string.IsNullOrWhiteSpace(issue.AuthorDisplayName))
+                            {
+                                <span>by @issue.AuthorDisplayName</span>
+                            }
+                        </span>
+                        @if (issue.Labels is { Count: > 0 })
+                        {
+                            <span class="gitbug-labels" aria-label="Labels">
+                                @foreach (var label in issue.Labels)
+                                {
+                                    <span class="gitbug-label">@label</span>
+                                }
+                            </span>
+                        }
+                    </button>
+                </li>
+            }
+        </ul>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public GitBugWorkspaceState State { get; set; } = null!;
+    [Parameter] public EventCallback<string> OnIssueSelected { get; set; }
+}
