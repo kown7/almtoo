@@ -104,3 +104,14 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] Redacted Playwright transport and browser-Git stage classification remain test-only infrastructure: they reduce request events and wrapped Git calls to fixed labels, retain no URL, arguments, header, body, Git response, SHA, error text, or credential value, and add no production dependency or application boundary.
 
 **Result:** PASS
+
+## M007 S02 T01 Git-Bug Accessor facet review
+
+- [x] `IGitBugAccessor`, its passive records, and `BrowserGitAccessor` are assigned to the **Accessor** boundary; private bridge DTOs and validation remain implementation details below that boundary.
+- [x] The dependency direction remains Manager → `IGitBugAccessor` → `BrowserGitAccessor` → browser Resource. This task adds no Client or Manager dependency and exposes no `IJSRuntime`, Git ref, path, URL, credential, or raw diagnostic.
+- [x] `IGitBugAccessor` is justified because it protects the external Git-Bug storage/version and browser-platform boundary, has a credible future GraphQL/server substitution, and supplies the required fixture-backed test seam.
+- [x] The existing concrete `BrowserGitAccessor` implements the facet directly and is registered under it; no pass-through wrapper, method-per-service decomposition, or new Engine is introduced.
+- [x] Contract tests own managed DTO mapping, fixed failure classification, bounds, and telemetry sanitization. Resource decoding and repository immutability remain in the following browser Resource task.
+- [x] No architectural exception is required.
+
+**Result:** PASS

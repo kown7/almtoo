@@ -8,11 +8,19 @@ namespace AlmToo.Accessor.BrowserGitAccessor.Service;
 /// <summary>
 /// Cohesive browser-platform Accessor for the active Git workspace and its text files.
 /// </summary>
-public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccessor
+public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccessor, IGitBugAccessor
 {
     private const string ModulePath = "./js/browserGitEngine.js";
     private const string CredentialModulePath = "./js/pushCredentialSession.js";
     private const int MaxEditableTextBytes = 1024 * 1024;
+    private const int MaxGitBugQueryLength = 256;
+    private const int MaxGitBugPageSize = 100;
+    private const int MaxGitBugTitleLength = 4096;
+    private const int MaxGitBugLabelLength = 256;
+    private const int MaxGitBugAuthorLength = 512;
+    private const int MaxGitBugBodyLength = 1024 * 1024;
+    private const int MaxGitBugDetailBytes = 4 * 1024 * 1024;
+    private const int MaxGitBugComments = 1000;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private readonly IJSRuntime jsRuntime;
@@ -199,6 +207,50 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         {
             return SanitizedSynchronizationFailure(GitOperationFailureKind.Unknown);
         }
+    }
+
+    public async ValueTask<GitOperationResult<GitBugIssuePage>> ListIssuesAsync(
+        GitBugIssueQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = "gitBug.listIssues";
+        if (!IsValidGitBugQuery(query))
+        {
+            return SanitizedGitBugFailure<GitBugIssuePage>(operation, GitOperationFailureKind.Unknown);
+        }
+
+        var request = new GitBugIssueQueryDto
+        {
+            State = query.State?.ToString().ToLowerInvariant(),
+            SearchText = query.SearchText,
+            Cursor = query.Cursor,
+            PageSize = query.PageSize
+        };
+
+        return await InvokeGitBugWithValueAsync<GitBugIssuePageDto, GitBugIssuePage>(
+            operation,
+            "listGitBugIssues",
+            value => value.ToGitBugIssuePage(),
+            cancellationToken,
+            request);
+    }
+
+    public async ValueTask<GitOperationResult<GitBugIssueDetail>> GetIssueAsync(
+        GitBugIssueId issueId,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = "gitBug.getIssue";
+        if (!IsValidGitBugIssueId(issueId.Value))
+        {
+            return SanitizedGitBugFailure<GitBugIssueDetail>(operation, GitOperationFailureKind.Unknown);
+        }
+
+        return await InvokeGitBugWithValueAsync<GitBugIssueDetailDto, GitBugIssueDetail>(
+            operation,
+            "getGitBugIssue",
+            value => value.ToGitBugIssueDetail(),
+            cancellationToken,
+            issueId.Value);
     }
 
     public async ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default)
@@ -411,6 +463,69 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         _ => "The credential could not be forgotten."
     };
 
+    private async Task<GitOperationResult<TValue>> InvokeGitBugWithValueAsync<TInteropValue, TValue>(
+        string operation,
+        string identifier,
+        Func<TInteropValue, TValue> mapValue,
+        CancellationToken cancellationToken,
+        params object?[] args)
+    {
+        var result = await InvokeResponseAsync<TInteropValue>(operation, identifier, cancellationToken, args);
+        if (!result.Succeeded)
+        {
+            return SanitizedGitBugFailure<TValue>(operation, ParseGitBugFailureKind(result.FailureKind));
+        }
+
+        if (result.Value is null)
+        {
+            return SanitizedGitBugFailure<TValue>(operation, GitOperationFailureKind.GitBugDataMalformed);
+        }
+
+        try
+        {
+            return new GitOperationResult<TValue>(
+                operation,
+                true,
+                operation == "gitBug.listIssues" ? "Git-Bug issues were loaded." : "The Git-Bug issue was loaded.",
+                mapValue(result.Value),
+                Diagnostic: null,
+                FailureKind: null);
+        }
+        catch (Exception)
+        {
+            return SanitizedGitBugFailure<TValue>(operation, GitOperationFailureKind.GitBugDataMalformed);
+        }
+    }
+
+    private static GitOperationFailureKind ParseGitBugFailureKind(string? failureKind) => failureKind switch
+    {
+        "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
+        "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
+        "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+        _ => GitOperationFailureKind.Unknown
+    };
+
+    private static GitOperationResult<TValue> SanitizedGitBugFailure<TValue>(
+        string operation,
+        GitOperationFailureKind failureKind)
+    {
+        var message = failureKind switch
+        {
+            GitOperationFailureKind.GitBugDataUnavailable => "This repository has no supported Git-Bug issue data.",
+            GitOperationFailureKind.GitBugFormatUnsupported => "This Git-Bug data version is not supported yet.",
+            GitOperationFailureKind.GitBugDataMalformed => "Git-Bug issue data could not be read safely.",
+            _ => "Git-Bug issues could not be loaded."
+        };
+
+        return new GitOperationResult<TValue>(
+            operation,
+            false,
+            message,
+            Value: default,
+            Diagnostic: null,
+            FailureKind: failureKind);
+    }
+
     private async Task<GitOperationResult<TValue>> InvokeWithValueAsync<TInteropValue, TValue>(
         string operation,
         string identifier,
@@ -459,6 +574,9 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         "remoteAhead" => GitOperationFailureKind.RemoteAhead,
         "networkUnavailable" => GitOperationFailureKind.NetworkUnavailable,
         "unsupportedRef" => GitOperationFailureKind.UnsupportedRef,
+        "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
+        "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
+        "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
         "unknown" => GitOperationFailureKind.Unknown,
         _ => null
     };
@@ -687,6 +805,154 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 Diagnostic = diagnostic
             };
     }
+
+    private sealed record GitBugIssueQueryDto
+    {
+        [JsonPropertyName("state")]
+        public string? State { get; init; }
+
+        [JsonPropertyName("searchText")]
+        public string? SearchText { get; init; }
+
+        [JsonPropertyName("cursor")]
+        public string? Cursor { get; init; }
+
+        [JsonPropertyName("pageSize")]
+        public int PageSize { get; init; }
+    }
+
+    private sealed record GitBugIssuePageDto
+    {
+        [JsonPropertyName("issues")]
+        public IReadOnlyList<GitBugIssueSummaryDto>? Issues { get; init; }
+
+        [JsonPropertyName("nextCursor")]
+        public string? NextCursor { get; init; }
+
+        [JsonPropertyName("totalCount")]
+        public int TotalCount { get; init; }
+
+        public GitBugIssuePage ToGitBugIssuePage()
+        {
+            if (Issues is null
+                || Issues.Count > MaxGitBugPageSize
+                || TotalCount < Issues.Count
+                || TotalCount < 0
+                || !IsBoundedGitBugText(NextCursor, MaxGitBugQueryLength, allowNull: true))
+            {
+                throw new InvalidOperationException("The Git-Bug issue page did not match the expected contract.");
+            }
+
+            return new(
+                Issues.Select(issue => issue.ToGitBugIssueSummary()).ToArray(),
+                NextCursor,
+                TotalCount);
+        }
+    }
+
+    private sealed record GitBugIssueSummaryDto
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; init; } = string.Empty;
+
+        [JsonPropertyName("title")]
+        public string Title { get; init; } = string.Empty;
+
+        [JsonPropertyName("state")]
+        public string State { get; init; } = string.Empty;
+
+        [JsonPropertyName("labels")]
+        public IReadOnlyList<string>? Labels { get; init; }
+
+        [JsonPropertyName("authorDisplayName")]
+        public string? AuthorDisplayName { get; init; }
+
+        public GitBugIssueSummary ToGitBugIssueSummary()
+        {
+            if (!IsValidGitBugIssueId(Id)
+                || !IsBoundedGitBugText(Title, MaxGitBugTitleLength)
+                || !Enum.TryParse<GitBugIssueState>(State, ignoreCase: true, out var state)
+                || !Enum.IsDefined(state)
+                || !IsBoundedGitBugText(AuthorDisplayName, MaxGitBugAuthorLength, allowNull: true)
+                || (Labels is not null && (Labels.Count > 100
+                    || Labels.Any(label => !IsBoundedGitBugText(label, MaxGitBugLabelLength)))))
+            {
+                throw new InvalidOperationException("The Git-Bug issue summary did not match the expected contract.");
+            }
+
+            return new(new(Id), Title, state, Labels?.ToArray(), AuthorDisplayName);
+        }
+    }
+
+    private sealed record GitBugIssueDetailDto
+    {
+        [JsonPropertyName("summary")]
+        public GitBugIssueSummaryDto? Summary { get; init; }
+
+        [JsonPropertyName("description")]
+        public string? Description { get; init; }
+
+        [JsonPropertyName("comments")]
+        public IReadOnlyList<GitBugCommentDto>? Comments { get; init; }
+
+        public GitBugIssueDetail ToGitBugIssueDetail()
+        {
+            if (Summary is null
+                || Comments is null
+                || Comments.Count > MaxGitBugComments
+                || !IsBoundedGitBugText(Description, MaxGitBugBodyLength, allowNull: true))
+            {
+                throw new InvalidOperationException("The Git-Bug issue detail did not match the expected contract.");
+            }
+
+            var comments = Comments.Select(comment => comment.ToGitBugComment()).ToArray();
+            if (!TryGetUtf8ByteCount(Description ?? string.Empty, out var detailBytes)
+                || comments.Any(comment => !TryGetUtf8ByteCount(comment.Body, out _))
+                || comments.Aggregate(
+                    (long)detailBytes,
+                    (total, comment) => total + StrictUtf8.GetByteCount(comment.Body)) > MaxGitBugDetailBytes)
+            {
+                throw new InvalidOperationException("The Git-Bug issue detail exceeded the safe payload limit.");
+            }
+
+            return new(Summary.ToGitBugIssueSummary(), Description, comments);
+        }
+    }
+
+    private sealed record GitBugCommentDto
+    {
+        [JsonPropertyName("authorDisplayName")]
+        public string AuthorDisplayName { get; init; } = string.Empty;
+
+        [JsonPropertyName("body")]
+        public string Body { get; init; } = string.Empty;
+
+        public GitBugComment ToGitBugComment()
+        {
+            if (!IsBoundedGitBugText(AuthorDisplayName, MaxGitBugAuthorLength)
+                || !IsBoundedGitBugText(Body, MaxGitBugBodyLength))
+            {
+                throw new InvalidOperationException("The Git-Bug comment did not match the expected contract.");
+            }
+
+            return new(AuthorDisplayName, Body);
+        }
+    }
+
+    private static bool IsValidGitBugQuery(GitBugIssueQuery? query) =>
+        query is not null
+        && (!query.State.HasValue || Enum.IsDefined(query.State.Value))
+        && query.PageSize is >= 1 and <= MaxGitBugPageSize
+        && IsBoundedGitBugText(query.SearchText, MaxGitBugQueryLength, allowNull: true)
+        && IsBoundedGitBugText(query.Cursor, MaxGitBugQueryLength, allowNull: true);
+
+    private static bool IsValidGitBugIssueId(string? issueId) =>
+        issueId is { Length: 64 } && issueId.All(Uri.IsHexDigit);
+
+    private static bool IsBoundedGitBugText(string? value, int maximumLength, bool allowNull = false) =>
+        value is null
+            ? allowNull
+            : value.Length is > 0 && value.Length <= maximumLength && value.IndexOfAny(['\0', '\r']) < 0;
 
     private sealed record RepositoryInfoDto
     {

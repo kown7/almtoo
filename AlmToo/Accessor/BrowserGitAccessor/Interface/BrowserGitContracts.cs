@@ -21,8 +21,46 @@ public enum GitOperationFailureKind
     RemoteAhead,
     NetworkUnavailable,
     UnsupportedRef,
+    GitBugDataUnavailable,
+    GitBugFormatUnsupported,
+    GitBugDataMalformed,
     Unknown
 }
+
+public readonly record struct GitBugIssueId(string Value);
+
+public sealed record GitBugIssueQuery(
+    GitBugIssueState? State = null,
+    string? SearchText = null,
+    string? Cursor = null,
+    int PageSize = 50);
+
+public enum GitBugIssueState
+{
+    Open,
+    Closed
+}
+
+public sealed record GitBugIssuePage(
+    IReadOnlyList<GitBugIssueSummary> Issues,
+    string? NextCursor,
+    int TotalCount);
+
+public sealed record GitBugIssueSummary(
+    GitBugIssueId Id,
+    string Title,
+    GitBugIssueState State,
+    IReadOnlyList<string>? Labels,
+    string? AuthorDisplayName);
+
+public sealed record GitBugIssueDetail(
+    GitBugIssueSummary Summary,
+    string? Description,
+    IReadOnlyList<GitBugComment> Comments);
+
+public sealed record GitBugComment(
+    string AuthorDisplayName,
+    string Body);
 
 public record RepositoryOpenRequest(string RepositoryUrl, string WorkspaceName);
 public record RepositoryInfo(string RepositoryUrl, string WorkspaceName, string RootPath, bool WasCloned);
