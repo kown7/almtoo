@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using AlmToo;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 using AlmToo.Accessor.BrowserGitAccessor.Service;
+using AlmToo.Managers.GitBug;
 using AlmToo.Managers.Repositories;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
@@ -15,5 +16,6 @@ builder.Services.AddScoped<IBrowserGitAccessor>(services => services.GetRequired
 builder.Services.AddScoped<IBrowserFileAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
 builder.Services.AddScoped<IGitBugAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
 builder.Services.AddScoped<RepositoryWorkspaceManager>();
+builder.Services.AddScoped<GitBugWorkspaceManager>();
 
 await builder.Build().RunAsync();

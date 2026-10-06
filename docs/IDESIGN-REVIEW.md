@@ -137,3 +137,15 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M007 S03 T01 Git-Bug workspace Manager review
+
+- [x] `GitBugWorkspaceManager` and `GitBugWorkspaceState` are assigned to the **Manager** layer: the concrete service owns list/detail intent, flow-level validation, cancellation, stale-result rejection, repository lifecycle reset, and user-safe state transitions.
+- [x] Dependency direction remains Client → concrete Manager → `IGitBugAccessor`; the Manager references no Razor component, JavaScript interop, browser Resource, or other Manager.
+- [x] Repository lifecycle synchronization uses the passive `RepositoryInfo` contract through `SetRepository` and retains only a private comparison identity. Repository paths, URLs, query values, bridge diagnostics, and exception text are absent from passive Client state.
+- [x] `IGitBugAccessor` is retained because it protects the external Git-Bug storage/version and browser-platform boundary, has credible local-decoder and server-backed substitutions, and supplies the necessary fixture seam. No interface was added for the concrete Manager.
+- [x] One cohesive generation-based operation lifecycle cancels superseded work and prevents stale completion publication. Deterministic format parsing remains in the Resource; integration remains in the Accessor.
+- [x] Workflow tests own happy list/detail/return behavior, input bounds, typed failures, sanitization, cancellation, stale completion rejection, result identity validation, and repository-change reset.
+- [x] No architectural exception is required.
+
+**Result:** PASS

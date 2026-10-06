@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented Accessor and Resource boundary.** The fixture-proven, read-only `IGitBugAccessor` facet and browser decoder are implemented and contract-locked; Manager and Client delivery remains deferred to later slices.
+**Implemented Accessor, Resource, and Manager boundary.** The fixture-proven, read-only `IGitBugAccessor` facet, browser decoder, and concrete `GitBugWorkspaceManager` are implemented and contract-locked; Client delivery remains deferred to the next task.
 
 | Field | Decision |
 | --- | --- |
@@ -124,7 +124,7 @@ The facet reuses `GitOperationResult<T>` so all browser Git integration failures
 | `GitBugDataMalformed` | “Git-Bug issue data could not be read safely.” | `Diagnostic` is null; no object content | Error state with retry |
 | `Unknown` | “Git-Bug issues could not be loaded.” | `Diagnostic` is null; exception and cancellation detail are discarded | Retry affordance |
 
-At the implemented Accessor boundary, cancellation and interop exceptions are reduced to the fixed `Unknown` failure with a null diagnostic. A later Manager slice will own stale-request cancellation and presentation semantics.
+At the implemented Accessor boundary, cancellation and interop exceptions are reduced to the fixed `Unknown` failure with a null diagnostic. The Manager detects cancellation from its own operation token, cancels superseded requests, rejects stale completions, and maps the result to fixed presentation state.
 
 ## Resource design
 
@@ -217,13 +217,15 @@ Pass. The `browserGitEngine.js` list/detail decoder is a **Resource** beneath th
 The Manager is a concrete, cohesive workflow service; it does not need a second interface. It exposes passive state and these intent-level operations:
 
 ```text
+SetRepository(repository)
 LoadIssuesAsync(query, cancellationToken)
 OpenIssueAsync(issueId, cancellationToken)
 ReturnToIssueList()
 ClearIssueState()
+CancelCurrentOperation()
 ```
 
-It owns one operation gate/cancellation lifecycle comparable to the repository workspace workflow. It validates page size and identifier shape before calling the Accessor, resets stale selection when repository identity changes, and notifies Client observers only after coherent state transitions.
+It owns one generation-based cancellation lifecycle that allows newer list/detail intent to supersede older reads while rejecting every stale completion. It clamps page size, validates query and identifier bounds before calling the Accessor, resets all issue state when repository identity changes, and notifies Client observers only after coherent state transitions.
 
 Suggested state states are `Idle`, `LoadingList`, `ListReady`, `LoadingDetail`, `DetailReady`, `Unavailable`, `Unsupported`, and `Failed`. The state contains public read models and user-safe messages only; it never contains bridge diagnostics, repository paths, refs, object IDs, or credential material.
 
@@ -263,7 +265,7 @@ Forbidden telemetry fields are issue body, title, comments, user names, IDs, ref
 | --- | --- | --- |
 | Contract | C# tests enforce passive contracts, result mapping, failure categories, and interface ownership. | `AlmToo.Tests/Accessor/BrowserGitAccessor/` |
 | Resource contract | Node tests exercise browser bridge exports using fixture repositories, including unsupported/malformed fixtures. | `AlmToo/tests/` |
-| Manager (deferred) | A later slice must prove cancellation, stale-result rejection, and repository-change reset. | `AlmToo.Tests/Managers/` |
+| Manager | Workflow tests prove list/detail/return behavior, safe failure mapping, cancellation, stale-result rejection, input bounds, and repository-change reset. | `AlmToo.Tests/Managers/GitBug/GitBugWorkspaceManagerTests.cs` |
 | Architecture | Source-path contract tests scan all Client paths and enforce Client → Manager → `IGitBugAccessor` → Browser Resource direction with no Client JS interop. | `AlmToo/tests/browserGitArchitectureGateTests.mjs` |
 | Browser integration (deferred) | A later Client slice must open a fixture-backed browser-local repository, list issues, open one detail, and verify no writes or credential requests. | `AlmToo/e2e/` |
 | Negative paths | Missing Git-Bug data, unsupported version, malformed objects, cancellation, invalid identifier, oversized query, and bridge exception all produce safe outcomes. | Unit, Node, and Playwright tests |
@@ -274,7 +276,7 @@ The first coding slice cannot complete merely because list UI renders. It requir
 
 1. **Discovery and contract — delivered:** pinned Git-Bug `v0.11.0`, sealed fixtures, and proved local decoding feasibility without writes.
 2. **Accessor facet — delivered:** implemented and mapping-tested list/detail browser decoding and the managed facet with categorized safe failures.
-3. **Manager workflow — deferred:** implement state, cancellation, selection, and repository-change reset with Manager tests.
+3. **Manager workflow — delivered:** implemented concrete state orchestration, safe failures, cancellation, selection, stale-result rejection, and repository-change reset with focused workflow tests.
 4. **Client vertical slice — deferred:** add the accessible list/detail UI and run fixture-backed browser acceptance.
 
 If step 1 finds the local representation unsuitable for isomorphic-git, stop before steps 2–4 and replan the facet as a GraphQL-backed `IGitBugAccessor`. That replacement remains at the same Accessor boundary; no Client or Manager needs to learn the transport.
@@ -299,7 +301,7 @@ Pass. `BrowserGitAccessor` remains the single browser-local Git platform service
 
 ### 5. Verification placement
 
-Pass for the implemented scope. Decoder semantics and repository immutability are verified at the Resource boundary, managed mapping and cancellation sanitization in Accessor tests, and dependency direction in source-path tests. Manager workflow and the user loop remain explicitly deferred.
+Pass for the implemented scope. Decoder semantics and repository immutability are verified at the Resource boundary, managed mapping and cancellation sanitization in Accessor tests, Manager workflow and stale-result handling in focused workflow tests, and dependency direction in source-path tests. The Client user loop remains explicitly deferred.
 
 ### 6. Exceptions
 
