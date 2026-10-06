@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "postinstall": "node tools/copy-git-browser-assets.mjs",
-    "test": "node --test tests/browserGitEngineTests.mjs tests/pushCredentialSessionTests.mjs tests/liveSynchronizationFixtureTests.mjs tests/gitBugFixtureValidationTests.mjs tests/homePageContractTests.mjs tests/browserGitDesignContractTests.mjs tests/browserGitAccessorContractTests.mjs tests/browserGitArchitectureGateTests.mjs tests/githubPagesWorkflowContractTests.mjs",
-    "test:git-bug-fixture": "node tests/fixtures/gitBug/validate-fixture.mjs && node --test tests/gitBugFixtureValidationTests.mjs",
+    "test": "node --test tests/browserGitEngineTests.mjs tests/pushCredentialSessionTests.mjs tests/liveSynchronizationFixtureTests.mjs tests/gitBugFixtureValidationTests.mjs tests/gitBugFixtureDiscoveryTests.mjs tests/homePageContractTests.mjs tests/browserGitDesignContractTests.mjs tests/browserGitAccessorContractTests.mjs tests/browserGitArchitectureGateTests.mjs tests/githubPagesWorkflowContractTests.mjs",
+    "test:git-bug-fixture": "node tests/fixtures/gitBug/validate-fixture.mjs && node --test tests/gitBugFixtureValidationTests.mjs tests/gitBugFixtureDiscoveryTests.mjs",
     "test:workflow": "node --test tests/githubPagesWorkflowContractTests.mjs",
     "test:browser": "playwright test e2e/repositoryWorkflow.spec.mjs e2e/credentialSafety.spec.mjs",
     "test:browser:live": "node --env-file-if-exists=$HOME/.config/almtoo/live.env --env-file-if-exists=.env node_modules/@playwright/test/cli.js test e2e/liveSynchronization.spec.mjs"

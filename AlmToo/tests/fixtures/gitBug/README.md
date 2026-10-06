@@ -67,6 +67,18 @@ npm --prefix AlmToo run test:git-bug-fixture
 
 The validator has no network dependency and invokes neither Git nor Git-Bug. Missing data, malformed JSON, and any content/state mismatch fail closed with fixed safe categories.
 
+## Browser-local discovery proof
+
+`../../gitBugFixtureDiscoveryTests.mjs` uses the same pinned `isomorphic-git` package as the browser Git Resource to read issue and identity refs, commits, trees, and blobs. It proves the observed `version-4` issue format and identity schema version `2` reproduce the fixture's IDs, titles, state, nullable labels, author display names, descriptions, comments, and Unicode text.
+
+The tests derive three disposable variants from a copy of the sealed fixture:
+
+- removed issue refs → `metadata-absent`;
+- missing referenced object → `malformed`;
+- a synthetic next commit with a `version-5` marker → `unsupported-format`.
+
+Every success and failure case compares SHA-256 snapshots of all fixture files before and after discovery. Negative outcomes return no partial issue model. Test names and results contain categories only; they do not log issue content, refs, identities, object IDs, hashes, or object bytes.
+
 ## Compatibility boundary
 
-This fixture proves provenance and repository evidence only for Git-Bug `v0.11.0`. It does not imply compatibility with earlier or later releases, repositories lacking metadata, malformed metadata, packed-only variants, or hand-authored lookalikes. Resource-level discovery must establish support from observed repository data and return explicit absent, malformed, or unsupported outcomes for every other case; it must not partially decode an unknown format.
+This fixture proves browser-local discovery only for Git-Bug `v0.11.0` issue marker `version-4`, identity schema version `2`, and the operation forms actually observed in the fixture. It does not imply compatibility with earlier or later releases, repositories lacking metadata, malformed metadata, packed-only variants, hand-authored lookalikes, or operation/status forms absent from the fixture. All other representations fail closed as absent, malformed, or unsupported rather than yielding a partial model.

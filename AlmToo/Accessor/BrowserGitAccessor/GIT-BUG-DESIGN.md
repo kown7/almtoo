@@ -176,13 +176,31 @@ The fixture proves these repository facts without adding production behavior:
 - 28 reachable Git-Bug objects coexist with the initial worktree commit's three objects;
 - symbolic HEAD, every ref, index bytes, worktree bytes, expected JSON, and repository object bytes are hash-sealed and remain unchanged after validation.
 
-The checked-in CLI JSON is scenario evidence, not the production read protocol. T02 must derive browser-local format recognition from the copied refs and objects and must prove absent, malformed, and intentionally incompatible repositories fail with explicit categories. Until that proof exists, compatibility is limited to this fixture and the proposed list/detail field contract remains provisional.
+The checked-in CLI JSON is scenario evidence, not the production read protocol. Compatibility remains limited to this pinned fixture and the exact format evidence below; no other release, packed-only representation, or unobserved operation is supported by implication.
 
 The fixture validator emits only the release, aggregate scenario/ref/object counts, and an unchanged-state category. It emits no issue content, identity values, ref names, object IDs, hashes, or raw diagnostics.
+
+### Browser-local format evidence
+
+The T02 Resource test reads the fixture exclusively through the project-pinned `isomorphic-git` APIs `listRefs`, `resolveRef`, `readCommit`, `readTree`, and `readBlob`. For Git-Bug `v0.11.0`, it proves only this storage contract:
+
+- issue metadata is rooted at `refs/bugs/*`; each observed issue is a linear commit history;
+- every observed issue commit tree contains one empty `version-4` marker and an `ops` JSON blob with an `author.id` and `ops` array;
+- the referenced actor is resolved through `refs/identities/*`, whose observed `version` JSON blob has identity schema version `2` and a string `name`;
+- observed operations are creation (`type: 1`, title and message), comment (`type: 3`, message), closed status (`type: 4`, status `2`), and label changes (`type: 5`, added array and nullable removed array);
+- replaying those operations in commit order reproduces fixture IDs, titles, open/closed state, nullable labels, author display names, descriptions, and ordered comment bodies, including Unicode and absent optional labels.
+
+The proof deliberately does not approve participant derivation, update-time semantics, status values other than the observed open default and closed value, identity fields other than display name, or operation kinds absent from the fixture. Those proposed contract members remain nullable or subject to a later fixture-backed contract task.
+
+Discovery fails closed with exactly four test categories: `supported`, `metadata-absent`, `malformed`, and `unsupported-format`. Missing issue refs produce metadata-absent; an unreadable referenced object produces malformed; a synthetic next commit carrying `version-5` produces unsupported-format; and neither negative outcome returns partial issue data. A complete SHA-256 snapshot of each test repository before and after discovery proves the read path changes no refs, objects, index, worktree, expected data, or fixture metadata.
 
 ### T01 iDesign review
 
 Pass. The fixture, manifest, validator, and validator tests are **Resource/test infrastructure**. They depend only on the Node test harness and the existing pinned `isomorphic-git` package, introduce no production service or interface, and add no Client, Manager, Engine, or Accessor dependency edge. There is therefore no interface justification or architectural exception to record for this task.
+
+### T02 iDesign review
+
+Pass. `gitBugFixtureDiscoveryTests.mjs` is **Resource/test infrastructure** proving the future browser Resource boundary with the existing browser Git dependency. It adds no production class, service, interface, or dependency edge; orchestration, UI, managed Accessor behavior, and production browser exports remain unchanged. The test-local decoder is intentionally not promoted to a service, and the existing `IGitBugAccessor` justification remains the genuine external-format/platform boundary documented above. No architectural exception is required.
 
 ## Manager and Client behavior
 
@@ -282,8 +300,8 @@ None. A future GraphQL-backed implementation must revisit this review because it
 ## Approval checklist
 
 - [x] Git-Bug `v0.11.0` is pinned with a provenance- and hash-sealed fixture repository.
-- [ ] Fixture analysis proves the browser Git stack can locate and decode the required metadata without writes.
-- [ ] Contract fields are reconciled with actual fixture data.
+- [x] Fixture analysis proves the browser Git stack can locate and decode the required metadata without writes.
+- [x] Fixture-proven fields are reconciled: ID, title, open/closed state, nullable labels, author display name, description, and ordered comments; participants and other unobserved semantics remain unapproved.
 - [ ] License/interoperability review approves the independently implemented decoder approach.
-- [ ] The iDesign review above remains passing after concrete file names and tests are selected.
+- [x] The iDesign review above remains passing after concrete file names and tests are selected.
 - [ ] The milestone plan maps each delivery-sequence item to a slice with a verifiable exit criterion.
