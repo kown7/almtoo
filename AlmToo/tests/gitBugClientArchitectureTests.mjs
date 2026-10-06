@@ -103,3 +103,23 @@ test('Git-Bug styles preserve focus, long text, and responsive controls', async 
   assert.match(styles, /@media \(max-width: 640px\)/);
   assert.match(styles, /data-gitbug-state="failed"/);
 });
+
+test('Git-Bug browser acceptance is fixture-backed and enforces the read-only Client boundary', async () => {
+  const [specification, fixture] = await Promise.all([
+    source('e2e/gitBugIssueBrowser.spec.mjs'),
+    source('e2e/gitBugFixture.mjs')
+  ]);
+
+  for (const state of ['supported', 'unavailable', 'unsupported']) {
+    assert.match(specification, new RegExp(`openFixtureRepository\\(page, '${state}'\\)`));
+  }
+  assert.match(specification, /snapshotGitBugRepository\(page\)/);
+  assert.match(specification, /fixtureSnapshotDigest[\s\S]*toBe\(before\)/);
+  assert.match(specification, /remoteRequests[\s\S]*toEqual\(\[\]\)/);
+  assert.match(specification, /input\[type="password"\]/);
+  assert.match(specification, /Back to issues/);
+  assert.match(fixture, /tests\/fixtures\/gitBug\/v0\.11\.0/);
+  assert.match(fixture, /new globalThis\.LightningFS\('almtoo-git', \{ wipe: true \}\)/);
+  assert.match(fixture, /crypto\.subtle\.digest\('SHA-256'/);
+  assert.doesNotMatch(`${specification}\n${fixture}`, /personalAccessToken|sessionStorage|localStorage/);
+});
