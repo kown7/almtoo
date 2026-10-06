@@ -115,3 +115,14 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M007 S02 T02 Git-Bug browser Resource decoder review
+
+- [x] The new `browserGitEngine.js` Git-Bug reader is assigned to the **Resource** boundary: it resolves browser-local refs and objects, applies the fixture-proven format decoder, and emits passive bridge DTOs.
+- [x] Dependency direction remains `BrowserGitAccessor` → browser Resource → `isomorphic-git` and LightningFS. No Client, Manager, or managed contract type is imported by the Resource.
+- [x] No new service or interface is introduced. The existing `IGitBugAccessor` remains the justified external-format/browser-platform boundary; the decoder is a cohesive capability of the existing browser Git module rather than a pass-through abstraction.
+- [x] The Resource performs no workflow orchestration, remote request, credential handling, or Git mutation. It maps only deterministic version-4 replay semantics and fixed absent/unsupported/malformed outcomes.
+- [x] Bounds on refs, history, trees, operations, blobs, text, comments, labels, and aggregate detail protect the browser integration boundary; tests prove supported and negative reads preserve full repository snapshots.
+- [x] No architectural exception is required.
+
+**Result:** PASS

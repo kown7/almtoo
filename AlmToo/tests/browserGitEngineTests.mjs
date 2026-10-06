@@ -626,6 +626,33 @@ test('push failure classification does not write host errors or credentials to c
   assert.deepEqual(calls, []);
 });
 
+test('Git-Bug Resource exports normalize missing workspace and excessive-ref failures without object reads', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  let objectReadCount = 0;
+  installFakeGitRuntime({
+    async listRefs() { return Array.from({ length: 1001 }, (_, index) => index.toString(16).padStart(64, '0')); },
+    async readCommit() { objectReadCount += 1; assert.fail('Excessive refs must fail before commit reads.'); },
+    async readTree() { objectReadCount += 1; assert.fail('Excessive refs must fail before tree reads.'); },
+    async readBlob() { objectReadCount += 1; assert.fail('Excessive refs must fail before blob reads.'); }
+  });
+
+  const engine = await importFreshModule();
+  const missingWorkspace = await engine.listGitBugIssues({ state: null, searchText: null, cursor: null, pageSize: 50 });
+  assert.equal(missingWorkspace.failureKind, 'unknown');
+  assert.equal(missingWorkspace.diagnostic, null);
+
+  assert.equal((await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'git-bug-limits'
+  })).succeeded, true);
+  const excessiveRefs = await engine.listGitBugIssues({ state: null, searchText: null, cursor: null, pageSize: 50 });
+  assert.equal(excessiveRefs.failureKind, 'gitBugDataMalformed');
+  assert.equal(excessiveRefs.value, null);
+  assert.equal(excessiveRefs.diagnostic, null);
+  assert.equal(objectReadCount, 0);
+});
+
 test('Blazor Git service invokes operations exported by the browser Git module', async () => {
   const [serviceSource, moduleSource] = await Promise.all([
     readFile(serviceUrl, 'utf8'),

@@ -8,6 +8,25 @@ const vendorScripts = [
 const workspaceRoot = '/almtoo-workspaces';
 const corsProxy = 'https://cors.isomorphic-git.org';
 const maxEditableTextBytes = 1024 * 1024;
+const gitBugLimits = Object.freeze({
+  issueCount: 1000,
+  historyDepth: 1000,
+  aggregateHistoryDepth: 10000,
+  operationsPerCommit: 1000,
+  treeEntries: 1000,
+  pageSize: 100,
+  queryText: 256,
+  title: 4096,
+  label: 256,
+  author: 512,
+  bodyBytes: 1024 * 1024,
+  detailBytes: 4 * 1024 * 1024,
+  labels: 100,
+  comments: 1000,
+  blobBytes: 2 * 1024 * 1024
+});
+const gitBugSupportedMarker = 'version-4';
+const gitBugIssueIdPattern = /^[0-9a-f]{64}$/i;
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 const textEncoder = new TextEncoder();
 
@@ -451,6 +470,57 @@ function failureWithKind(operation, message, failureKind) {
   };
 }
 
+export async function listGitBugIssues(query) {
+  const operation = 'gitBug.listIssues';
+
+  try {
+    const normalized = validateGitBugQuery(query);
+    const issues = await readGitBugIssues(operation);
+    const search = normalized.searchText?.toLocaleLowerCase() ?? null;
+    const matching = issues.filter((issue) =>
+      (!normalized.state || issue.state === normalized.state)
+      && (!search || issue.title.toLocaleLowerCase().includes(search)));
+    const offset = normalized.cursor === null ? 0 : Number.parseInt(normalized.cursor, 10);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > matching.length) {
+      throw new Error('git-bug-query-invalid');
+    }
+    const page = matching.slice(offset, offset + normalized.pageSize).map(toGitBugSummary);
+    const nextOffset = offset + page.length;
+
+    return success(operation, 'Git-Bug issues were loaded.', {
+      issues: page,
+      nextCursor: nextOffset < matching.length ? String(nextOffset) : null,
+      totalCount: matching.length
+    });
+  } catch (error) {
+    return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
+  }
+}
+
+export async function getGitBugIssue(issueId) {
+  const operation = 'gitBug.getIssue';
+
+  try {
+    const id = requireBoundedGitBugText(issueId, 'issueId', 64);
+    if (!gitBugIssueIdPattern.test(id)) {
+      throw new Error('git-bug-query-invalid');
+    }
+    const issues = await readGitBugIssues(operation);
+    const issue = issues.find((candidate) => candidate.id === id);
+    if (!issue) {
+      throw new GitBugReadError('unavailable');
+    }
+
+    return success(operation, 'The Git-Bug issue was loaded.', {
+      summary: toGitBugSummary(issue),
+      description: issue.description,
+      comments: issue.comments.map(({ authorDisplayName, body }) => ({ authorDisplayName, body }))
+    });
+  } catch (error) {
+    return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
+  }
+}
+
 export async function push(review, personalAccessToken) {
   const operation = 'push';
   let token;
@@ -495,6 +565,259 @@ export async function push(review, personalAccessToken) {
   } finally {
     token = undefined;
   }
+}
+
+class GitBugReadError extends Error {
+  constructor(category) {
+    super(category);
+    this.category = category;
+  }
+}
+
+function normalizedGitBugFailure(operation, category) {
+  const failureKind = category === 'unavailable'
+    ? 'gitBugDataUnavailable'
+    : category === 'unsupported'
+      ? 'gitBugFormatUnsupported'
+      : category === 'unknown'
+        ? 'unknown'
+        : 'gitBugDataMalformed';
+  const message = failureKind === 'gitBugDataUnavailable'
+    ? 'This repository has no supported Git-Bug issue data.'
+    : failureKind === 'gitBugFormatUnsupported'
+      ? 'This Git-Bug data version is not supported yet.'
+      : failureKind === 'unknown'
+        ? 'Git-Bug issues could not be loaded.'
+        : 'Git-Bug issue data could not be read safely.';
+  return { operation, succeeded: false, message, value: null, diagnostic: null, failureKind };
+}
+
+function classifyGitBugFailure(error) {
+  return error instanceof GitBugReadError ? error.category : 'malformed';
+}
+
+function validateGitBugQuery(query) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) {
+    throw new Error('git-bug-query-invalid');
+  }
+  const state = query.state ?? null;
+  const searchText = query.searchText ?? null;
+  const cursor = query.cursor ?? null;
+  if ((state !== null && state !== 'open' && state !== 'closed')
+      || !Number.isInteger(query.pageSize)
+      || query.pageSize < 1
+      || query.pageSize > gitBugLimits.pageSize
+      || (searchText !== null && !isBoundedGitBugText(searchText, gitBugLimits.queryText))
+      || (cursor !== null && (!isBoundedGitBugText(cursor, gitBugLimits.queryText) || !/^\d+$/.test(cursor)))) {
+    throw new Error('git-bug-query-invalid');
+  }
+  return { state, searchText, cursor, pageSize: query.pageSize };
+}
+
+async function readGitBugIssues(operation) {
+  let workspace;
+  try {
+    workspace = await getActiveWorkspace(operation);
+  } catch {
+    throw new GitBugReadError('unknown');
+  }
+  const { fs, dir } = workspace;
+  const git = getGit();
+  let issueIds;
+  try {
+    issueIds = await git.listRefs({ fs, dir, filepath: 'refs/bugs' });
+  } catch {
+    throw new GitBugReadError('malformed');
+  }
+  if (!Array.isArray(issueIds) || issueIds.length === 0) {
+    throw new GitBugReadError('unavailable');
+  }
+  if (issueIds.length > gitBugLimits.issueCount
+      || issueIds.some((id) => typeof id !== 'string' || !gitBugIssueIdPattern.test(id))) {
+    throw new GitBugReadError('malformed');
+  }
+
+  const historyBudget = { remaining: gitBugLimits.aggregateHistoryDepth };
+  const identities = await readGitBugIdentities(git, fs, dir, historyBudget);
+  const issues = [];
+  for (const id of [...issueIds].sort()) {
+    issues.push(await readGitBugIssue(git, fs, dir, id, identities, historyBudget));
+  }
+  return issues;
+}
+
+async function readGitBugIdentities(git, fs, dir, historyBudget) {
+  const identities = new Map();
+  const ids = await git.listRefs({ fs, dir, filepath: 'refs/identities' });
+  if (!Array.isArray(ids) || ids.length > gitBugLimits.issueCount) {
+    throw new Error('git-bug-identities-invalid');
+  }
+  for (const id of ids) {
+    if (typeof id !== 'string' || !gitBugIssueIdPattern.test(id)) {
+      throw new Error('git-bug-identity-id-invalid');
+    }
+    const oid = await git.resolveRef({ fs, dir, ref: `refs/identities/${id}` });
+    consumeGitBugHistoryBudget(historyBudget);
+    const { commit } = await git.readCommit({ fs, dir, oid });
+    const { tree } = await git.readTree({ fs, dir, oid: commit.tree });
+    if (!Array.isArray(tree) || tree.length > gitBugLimits.treeEntries) {
+      throw new Error('git-bug-identity-tree-invalid');
+    }
+    const versionEntries = tree.filter((entry) => entry.path === 'version' && entry.type === 'blob');
+    if (versionEntries.length !== 1) {
+      throw new Error('git-bug-identity-version-absent');
+    }
+    const value = await readGitBugJsonBlob(git, fs, dir, versionEntries[0].oid);
+    if (value?.version !== 2 || !isBoundedGitBugText(value.name, gitBugLimits.author)) {
+      throw new Error('git-bug-identity-version-invalid');
+    }
+    identities.set(id, value.name);
+  }
+  return identities;
+}
+
+async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
+  const tip = await git.resolveRef({ fs, dir, ref: `refs/bugs/${id}` });
+  const commits = [];
+  const visited = new Set();
+  let oid = tip;
+  while (oid) {
+    if (visited.has(oid) || commits.length >= gitBugLimits.historyDepth) {
+      throw new Error('git-bug-history-invalid');
+    }
+    visited.add(oid);
+    consumeGitBugHistoryBudget(historyBudget);
+    const { commit } = await git.readCommit({ fs, dir, oid });
+    if (!commit || !Array.isArray(commit.parent) || commit.parent.length > 1) {
+      throw new Error('git-bug-history-nonlinear');
+    }
+    commits.unshift(commit);
+    oid = commit.parent[0];
+  }
+
+  let title;
+  let description;
+  let authorDisplayName = null;
+  let state = 'open';
+  let labels = null;
+  let detailBytes = 0;
+  const comments = [];
+
+  for (const [commitIndex, commit] of commits.entries()) {
+    const { tree } = await git.readTree({ fs, dir, oid: commit.tree });
+    if (!Array.isArray(tree) || tree.length > gitBugLimits.treeEntries) {
+      throw new Error('git-bug-issue-tree-invalid');
+    }
+    const markers = tree.filter((entry) => /^version-\d+$/.test(entry.path));
+    if (markers.length !== 1 || markers[0].type !== 'blob') {
+      throw new Error('git-bug-format-marker-invalid');
+    }
+    if (markers[0].path !== gitBugSupportedMarker) {
+      throw new GitBugReadError('unsupported');
+    }
+    const { blob: markerBlob } = await git.readBlob({ fs, dir, oid: markers[0].oid });
+    if (!(markerBlob instanceof Uint8Array) || markerBlob.byteLength !== 0) {
+      throw new Error('git-bug-format-marker-invalid');
+    }
+    const opsEntries = tree.filter((entry) => entry.path === 'ops' && entry.type === 'blob');
+    if (opsEntries.length !== 1) {
+      throw new Error('git-bug-ops-absent');
+    }
+    const payload = await readGitBugJsonBlob(git, fs, dir, opsEntries[0].oid);
+    if (!payload?.author || !Array.isArray(payload.ops)
+        || payload.ops.length === 0
+        || payload.ops.length > gitBugLimits.operationsPerCommit) {
+      throw new Error('git-bug-ops-envelope-invalid');
+    }
+    const actorId = payload.author.id;
+    if (typeof actorId !== 'string' || !identities.has(actorId)) {
+      throw new Error('git-bug-author-invalid');
+    }
+    const actor = identities.get(actorId);
+
+    for (const operation of payload.ops) {
+      if (!operation || !Number.isInteger(operation.type) || !Number.isFinite(operation.timestamp)) {
+        throw new Error('git-bug-operation-invalid');
+      }
+      if (operation.type === 1 && commitIndex === 0 && title === undefined) {
+        title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
+        description = requireBoundedGitBugBody(operation.message, 'description');
+        authorDisplayName = actor;
+        detailBytes += textEncoder.encode(description).byteLength * 2;
+        comments.push({ authorDisplayName: actor, body: description });
+      } else if (operation.type === 3) {
+        const body = requireBoundedGitBugBody(operation.message, 'comment');
+        detailBytes += textEncoder.encode(body).byteLength;
+        comments.push({ authorDisplayName: actor, body });
+      } else if (operation.type === 4 && operation.status === 2) {
+        state = 'closed';
+      } else if (operation.type === 5 && Array.isArray(operation.added)
+          && (operation.removed === null || Array.isArray(operation.removed))) {
+        labels ??= [];
+        const removed = operation.removed ?? [];
+        if (operation.added.length > gitBugLimits.labels || removed.length > gitBugLimits.labels
+            || [...operation.added, ...removed].some((label) => !isBoundedGitBugText(label, gitBugLimits.label))) {
+          throw new Error('git-bug-labels-invalid');
+        }
+        labels = labels.filter((label) => !removed.includes(label));
+        for (const label of operation.added) {
+          if (!labels.includes(label)) labels.push(label);
+        }
+        if (labels.length > gitBugLimits.labels) throw new Error('git-bug-labels-invalid');
+      } else {
+        throw new Error('git-bug-operation-unsupported');
+      }
+      if (comments.length > gitBugLimits.comments || detailBytes > gitBugLimits.detailBytes) {
+        throw new Error('git-bug-detail-too-large');
+      }
+    }
+  }
+
+  if (title === undefined || description === undefined) {
+    throw new Error('git-bug-creation-absent');
+  }
+  return { id, title, state, labels, authorDisplayName, description, comments };
+}
+
+function consumeGitBugHistoryBudget(historyBudget) {
+  historyBudget.remaining -= 1;
+  if (historyBudget.remaining < 0) {
+    throw new Error('git-bug-aggregate-history-too-large');
+  }
+}
+
+async function readGitBugJsonBlob(git, fs, dir, oid) {
+  const { blob } = await git.readBlob({ fs, dir, oid });
+  if (!(blob instanceof Uint8Array) || blob.byteLength > gitBugLimits.blobBytes) {
+    throw new Error('git-bug-blob-invalid');
+  }
+  return JSON.parse(textDecoder.decode(blob));
+}
+
+function toGitBugSummary({ id, title, state, labels, authorDisplayName }) {
+  return { id, title, state, labels, authorDisplayName };
+}
+
+function requireBoundedGitBugBody(value, name) {
+  const text = requireBoundedGitBugText(value, name, gitBugLimits.bodyBytes);
+  if (textEncoder.encode(text).byteLength > gitBugLimits.bodyBytes) {
+    throw new Error(`git-bug-${name}-too-large`);
+  }
+  return text;
+}
+
+function requireBoundedGitBugText(value, name, maximumLength) {
+  if (!isBoundedGitBugText(value, maximumLength)) {
+    throw new Error(`git-bug-${name}-invalid`);
+  }
+  return value;
+}
+
+function isBoundedGitBugText(value, maximumLength, allowEmpty = false) {
+  return typeof value === 'string'
+    && value.length <= maximumLength
+    && (allowEmpty || value.length > 0)
+    && !/[\0\r]/u.test(value);
 }
 
 async function ensureDependencies() {
