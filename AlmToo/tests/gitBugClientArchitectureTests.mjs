@@ -23,8 +23,10 @@ test('Git-Bug navigation and composition expose the concrete Manager Client', as
 
   assert.match(nav, /href="git-bug"[\s\S]*Git-Bug Issues/);
   assert.match(program, /AddScoped<GitBugWorkspaceManager>\(\)/);
-  assert.match(manager, /LoadIssuesAsync\(CancellationToken cancellationToken = default\)/);
-  assert.match(manager, /OpenIssueAsync\(string issueId, CancellationToken cancellationToken = default\)/);
+  assert.match(manager, /LoadIssuesAsync\(\)/);
+  assert.match(manager, /LoadIssuesAsync\([\s\S]*GitBugIssueQuery query,[\s\S]*CancellationToken cancellationToken = default\)/);
+  assert.match(manager, /OpenIssueAsync\(string issueId\)/);
+  assert.match(manager, /OpenIssueAsync\([\s\S]*GitBugIssueId issueId,[\s\S]*CancellationToken cancellationToken = default\)/);
   assert.doesNotMatch(program, /IGitBugWorkspaceManager/);
 });
 

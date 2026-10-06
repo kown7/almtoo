@@ -49,8 +49,8 @@ public sealed class GitBugWorkspaceManager : IDisposable
     }
 
     /// <summary>Loads the default bounded issue list for Client callers.</summary>
-    public Task<bool> LoadIssuesAsync(CancellationToken cancellationToken = default) =>
-        LoadIssuesAsync(new GitBugIssueQuery(PageSize: 50), cancellationToken);
+    public Task<bool> LoadIssuesAsync() =>
+        LoadIssuesAsync(new GitBugIssueQuery(PageSize: 50));
 
     public async Task<bool> LoadIssuesAsync(
         GitBugIssueQuery query,
@@ -96,8 +96,8 @@ public sealed class GitBugWorkspaceManager : IDisposable
     }
 
     /// <summary>Opens a current-list issue from a Client-safe string identifier.</summary>
-    public Task<bool> OpenIssueAsync(string issueId, CancellationToken cancellationToken = default) =>
-        OpenIssueAsync(new GitBugIssueId(issueId), cancellationToken);
+    public Task<bool> OpenIssueAsync(string issueId) =>
+        OpenIssueAsync(new GitBugIssueId(issueId));
 
     public async Task<bool> OpenIssueAsync(
         GitBugIssueId issueId,
