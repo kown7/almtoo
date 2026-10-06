@@ -1,0 +1,64 @@
+{
+    "id": "830f9fc37548149e5016a3c89ee50947e51d18109dd247bbea6cb49240413ad2",
+    "human_id": "830f9fc",
+    "create_time": {
+        "timestamp": 1791324679,
+        "time": "2026-10-07T00:11:19+02:00"
+    },
+    "edit_time": {
+        "timestamp": 1791324680,
+        "time": "2026-10-07T00:11:20+02:00"
+    },
+    "status": "closed",
+    "labels": [
+        "documentation",
+        "resolved"
+    ],
+    "title": "Closed issue with history",
+    "author": {
+        "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+        "human_id": "00a93c5",
+        "name": "Fixture Author",
+        "login": ""
+    },
+    "actors": [
+        {
+            "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+            "human_id": "00a93c5",
+            "name": "Fixture Author",
+            "login": ""
+        }
+    ],
+    "participants": [
+        {
+            "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+            "human_id": "00a93c5",
+            "name": "Fixture Author",
+            "login": ""
+        }
+    ],
+    "comments": [
+        {
+            "id": "883300f9ffc37594814f9e50c16a33c89e7e509547e541d188109d1d2474bbea",
+            "human_id": "883300f",
+            "author": {
+                "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+                "human_id": "00a93c5",
+                "name": "Fixture Author",
+                "login": ""
+            },
+            "message": "This issue is retained to prove closed-state discovery."
+        },
+        {
+            "id": "853803f9fec375f4814c9e50816a3cc89e4e509f47e591d184109d5d247bbbea",
+            "human_id": "853803f",
+            "author": {
+                "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+                "human_id": "00a93c5",
+                "name": "Fixture Author",
+                "login": ""
+            },
+            "message": "Fixed before the fixture was captured."
+        }
+    ]
+}

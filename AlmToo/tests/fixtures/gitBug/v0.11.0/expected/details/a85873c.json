@@ -1,0 +1,64 @@
+{
+    "id": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+    "human_id": "a85873c",
+    "create_time": {
+        "timestamp": 1791324679,
+        "time": "2026-10-07T00:11:19+02:00"
+    },
+    "edit_time": {
+        "timestamp": 1791324679,
+        "time": "2026-10-07T00:11:19+02:00"
+    },
+    "status": "open",
+    "labels": [
+        "defect",
+        "priority:high"
+    ],
+    "title": "Unicode café regression 🐛",
+    "author": {
+        "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+        "human_id": "00a93c5",
+        "name": "Fixture Author",
+        "login": ""
+    },
+    "actors": [
+        {
+            "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+            "human_id": "00a93c5",
+            "name": "Fixture Author",
+            "login": ""
+        }
+    ],
+    "participants": [
+        {
+            "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+            "human_id": "00a93c5",
+            "name": "Fixture Author",
+            "login": ""
+        }
+    ],
+    "comments": [
+        {
+            "id": "aa88558738c2537c45c33d1cca6b824c08510e43b155c51cd4ff385a3f0c01ae",
+            "human_id": "aa88558",
+            "author": {
+                "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+                "human_id": "00a93c5",
+                "name": "Fixture Author",
+                "login": ""
+            },
+            "message": "Opening the résumé view shows naïve text.\n\nExpected: 日本語 and emoji 🚀 remain intact."
+        },
+        {
+            "id": "a184568735c2534c45ca3d1c3a6b884c08310e4ab155751cd2ff38ea3f0701ae",
+            "human_id": "a184568",
+            "author": {
+                "id": "00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3",
+                "human_id": "00a93c5",
+                "name": "Fixture Author",
+                "login": ""
+            },
+            "message": "Confirmed on the browser fixture.\nSecond line with Ελληνικά."
+        }
+    ]
+}

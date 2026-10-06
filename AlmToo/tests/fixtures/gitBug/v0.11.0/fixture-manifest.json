@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-07T00:11:20+02:00",
+  "gitBug": {
+    "release": "v0.11.0",
+    "commit": "d1819bd1dbd6",
+    "releasePublishedAt": "2026-09-22T15:14:19Z",
+    "releaseUrl": "https://github.com/git-bug/git-bug/releases/tag/v0.11.0",
+    "binaryUrl": "https://github.com/git-bug/git-bug/releases/download/v0.11.0/git-bug_linux_amd64",
+    "binarySha256": "431199b5997ec8e6de9fa7e2caab13fe222268b0110d0c85a4354907197e7ce9",
+    "checksumsUrl": "https://github.com/git-bug/git-bug/releases/download/v0.11.0/checksums.txt",
+    "checksumsSha256": "2a5f2c1c5b2924e70238f9eb8c47dbb3d13b34c850b2fc009178ec32bd7a6123"
+  },
+  "scenarios": {
+    "unicodeOpen": {
+      "id": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "state": "open",
+      "labels": 2,
+      "comments": 2,
+      "unicode": true
+    },
+    "minimalOpen": {
+      "id": "e51017b91a393da8fdc5575771ac2d1f4bba60fee8bfdaaecbfff991728a9fb8",
+      "state": "open",
+      "labels": null,
+      "comments": 1,
+      "optionalLogin": ""
+    },
+    "closed": {
+      "id": "830f9fc37548149e5016a3c89ee50947e51d18109dd247bbea6cb49240413ad2",
+      "state": "closed",
+      "labels": 2,
+      "comments": 2
+    }
+  },
+  "repositoryState": {
+    "head": "ref: refs/heads/main",
+    "refs": {
+      "refs/bugs/830f9fc37548149e5016a3c89ee50947e51d18109dd247bbea6cb49240413ad2": "45932411ab3353859e95901e95365d619dd7bfa1",
+      "refs/bugs/a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "refs/bugs/e51017b91a393da8fdc5575771ac2d1f4bba60fee8bfdaaecbfff991728a9fb8": "d1dec578b49d8415ce639d18cbd2d4c6956e7bcb",
+      "refs/heads/main": "0bb115b33d18934e9680282e92062a94a36bcb60",
+      "refs/identities/00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3": "2a612c7dd9ee4783b853ed066c38c982f6b79a4f"
+    },
+    "index": {
+      "bytes": 104,
+      "sha256": "1ef2a879b7f9cf6a8115db7fab2b27bdf81a5c780b55a56a5863f1f5661efd48"
+    },
+    "worktree": {
+      "README.md": "7e1ebaf14a7836f2d89522fc3e4c4db3f256866a3468d0d22365c3de41e8df77"
+    },
+    "gitBugMetadata": {
+      "issueRefCount": 3,
+      "identityRefCount": 1,
+      "reachableObjectCount": 28,
+      "allObjectCount": 31,
+      "aggregateSha256": "98b2077c63e5a844563dfdf4483fa5de2627cf5f245c7086025f036bb8398b08"
+    }
+  },
+  "dataFileSha256": {
+    "repository/HEAD": "28d25bf82af4c0e2b72f50959b2beb859e3e60b9630a5e8c603dad4ddb2b6e80",
+    "repository/config": "05becdb83bb897f6103c8d91439e2e9092144edf5b3955a746fce4975c12bfdc",
+    "repository/index": "1ef2a879b7f9cf6a8115db7fab2b27bdf81a5c780b55a56a5863f1f5661efd48",
+    "repository/objects/07/fe1afb99b8202671f3bc2d9a4579eb1d3c803f": "08437f32eb105b6e2f6e518b7ae3bb008a8310f3dd3ad253c02fa17291d33366",
+    "repository/objects/0b/b115b33d18934e9680282e92062a94a36bcb60": "0dcca299a4a1b940806dcaea2eacbd55ff917f763dfd9ce6eaffceea79ac4d6e",
+    "repository/objects/0f/8c83e89a5cfa335e127ad9f367104398aeb8ee": "249124570b60f1a5ea06e85f8ebf73a3c07c08041a80bb8bb2159abfe92d8e48",
+    "repository/objects/1e/2abb57b2559ad1e4c289bac17adceb83554108": "b8b8cd6e3699f8afde4513ac0d7ea8b7feff9aa07535ef0fd0da4d73328bc6b9",
+    "repository/objects/2a/612c7dd9ee4783b853ed066c38c982f6b79a4f": "728a9d4d0404dda66de3c6e711d7868eb9051ecd00d1ace95e4d7bb2c13d3ee0",
+    "repository/objects/2b/0f1c1960b235089c3335f6563f0d156feea8a2": "aeca9d567e5d3db8c7a582488793a7ffac67ade7a9652db33e7167ed99f7db8f",
+    "repository/objects/39/a2d734c24554c35bd76e37324d35afd9225043": "945238442757d982c9616ba3e21ea6b220e6c7a3ab893dd600cac8b23eb3fd0b",
+    "repository/objects/3d/6744ad8c8a9dbd647f91598de7e70291eb602b": "1bb27c4e027543a154e00d50bb75bf8b06707bb4d2209d29cd3653ba01de3b4a",
+    "repository/objects/45/932411ab3353859e95901e95365d619dd7bfa1": "b10c4ed3408897979c77dcfae03d4da830e20b9eaabd3c800498bda39af18951",
+    "repository/objects/4b/486c5b9ed573eb2b6c8da13c89e213b367daf5": "b46b3ebc635f927c6f0d46bc825a5b8f8b8bda38e950adc025fda8adf6f6a156",
+    "repository/objects/5a/6bff33adeff2dc6d7dadd92a60834baca40d98": "1878ca267ce50c400e6dd921f6cacfe2effeee6294cb53eb227805c6cb5c3931",
+    "repository/objects/5c/b5be20e9e01f0f551e0584d81d029730e50043": "cff4f49ec4d0b851b1ad78e5bbe267b6b689f9024d938c653889f2e8f47ebb5b",
+    "repository/objects/67/ac7e93a8f8406fc0c824cd31c637d521256b0e": "0230332d1fdc6d9263487a5f5b764b850be77ab9215db2415efcfafd6ae32b14",
+    "repository/objects/89/7fe3d4aac82478b344803b92b2b6b65f41e715": "345ae48922b21dac981cd5fa67fb7dae7dec92b02ad1ecdd4573bb16be3490cf",
+    "repository/objects/91/28d39cc42d8b8fba3490b9aeaefbfe0ab36324": "82b2fd1bbc1094d045ce61e0f9902f2d783efb5b6356505df3c869d38ab7110f",
+    "repository/objects/94/d4fde8708ffa7e954c51df9a7c656300f98374": "19589e7de65d5146c85d5ff6a2e26cfd725cacc85568ea29597d3d77f867a505",
+    "repository/objects/95/7fb1c1c08341c3c7a6057805ea6987322641b0": "eba43f237670e89cce0d2421c7030221521e8d4be160bc1edc02bf8272b6441c",
+    "repository/objects/95/b5f20d4e6d608da5bd598c58f4d97ada3eb6ec": "f40eb59b90851269ae00b57819cc8adbc526a5999e3e954e66c5e50fb4859299",
+    "repository/objects/a5/42b960dcf6708cb93ea4caca53d7aba61ee5b0": "7eead65ae24e50a1a72bc2c24d6f51ce11262fbfec28873772b1035561ed9d82",
+    "repository/objects/ad/e4a66525650eea06d38cecc8cc9c0c3cf0cb5f": "0195147415dd382fea85da5a9cda93006e0f10ec69c5ed3fe7248c530c5fadfa",
+    "repository/objects/b3/f93e60d915543b2c5ae63745585600a6d7dbe3": "c415f94bd1b2a62cbf85771fde1c43e1ff86b3a2b2e27c36323b6fc8918c6382",
+    "repository/objects/b8/8757c53706c3d1bd04e29b155ebaa629a69de5": "e4ee35abcb8b6c72370961666790bf7df62afbda3d02faa2e4c3b9abb9454b95",
+    "repository/objects/c3/1f6e03665c256b4c54fb90d59b0b50ed002002": "e0d47067457625aa2474ce4b1e988a475e9bb59c8cd7d855fb1d943b82c71ccb",
+    "repository/objects/cf/afbd580e9e5603b6d7da504fdb9b08bd1756fc": "a5fee787726fbdd2cdfb2567b07ee4eb2fa4f5e2dc54fa5b478cdeade9f19551",
+    "repository/objects/d1/dec578b49d8415ce639d18cbd2d4c6956e7bcb": "f2710eebe483e936b9544b6985327ace81997cdff245b4df2b15ab4bc1f667e9",
+    "repository/objects/dc/94f4ac1448e886913ad56d8e32881bfb374744": "42a21393729d5cc002cb1fee1576017296ca46306340a694c3943890cfd73eb3",
+    "repository/objects/e6/5a66fbfdf4ad9b6bb405fd016bf3d17a242427": "db1194ab0cdb177293db3e3eb791ba737c9999a3719c98bb5594d51dfdc6b38f",
+    "repository/objects/e6/9de29bb2d1d6434b8b29ae775ad8c2e48c5391": "1ae5abbc25e639d460d6be3a2ca503e7a21d7712f759894adf39967c929ffa2a",
+    "repository/objects/f2/3ad8925f22ce4cef6399888bdc02bb5db641ed": "458d1532ffc158179b59b7d39e3dd37b9f4b8547ac15e73bb1485e3a1f415014",
+    "repository/objects/f3/43f01c50c0a479e52f86d0ac2c0bfb555d8c2b": "6e58544a775288078a6b590a59a49399c1bd09ad6072342824d760011020182f",
+    "repository/objects/fa/802b2190bb3e885d60afce4d88d7a35c831877": "f85c8b8940d16626e2aa27701ca72df8fb20677a9d27e8a2526dc35234b1f504",
+    "repository/refs/bugs/830f9fc37548149e5016a3c89ee50947e51d18109dd247bbea6cb49240413ad2": "a08ff7cffceb6d676325c7c6f44ccc14ad7dd9eebc8acb2d81506bf400439424",
+    "repository/refs/bugs/a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1": "bf76306698f6fef9bcea7c64cd205ffcb0d77f23d727b939e0f7dcd65c9707d3",
+    "repository/refs/bugs/e51017b91a393da8fdc5575771ac2d1f4bba60fee8bfdaaecbfff991728a9fb8": "5e7d1458f200ef85d4bd83c19bdfe22f8e07c87fcf5654172b7d8c8243ed1e80",
+    "repository/refs/heads/main": "234c89fd876b77e36cf446665147623c19cf9c97a278659a7ef6bca1d72e7ecc",
+    "repository/refs/identities/00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3": "8d3c161deb18cb14d501cdf9008fbb6de61017f60081533eb6c8654f81bd7085",
+    "worktree/README.md": "7e1ebaf14a7836f2d89522fc3e4c4db3f256866a3468d0d22365c3de41e8df77",
+    "expected/details/830f9fc.json": "c9cf61347673dc3456f7e5efe515e053541f84d3a46510e3e517d0e2d3c459f0",
+    "expected/details/a85873c.json": "09ff45acc963817f71a2af7aa8ad66316435b1a52b75235bf2ac7d1196548eb9",
+    "expected/details/e51017b.json": "f158ae4d0e962625626be52481ca0321ab9e2536c12b526232671467d53f361e",
+    "expected/issues.json": "4e7d9612ed731e84cf2c73c274a24aa5646ac5d102db6b806ed737a6c1c9705a",
+    "expected/scenario-ids.json": "56dc21105641779c2e3e4356581b928a93e24600098eb2321f0d583649ee1d29"
+  }
+}
