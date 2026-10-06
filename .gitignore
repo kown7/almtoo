@@ -54,7 +54,11 @@ vendor/
 coverage/
 .cache/
 tmp/
+.tmp/
 
 # Generated local verification evidence; preserve externally or on evidence branches.
 .artifacts/browser/
 AlmToo/test-results/
+
+# ── GSD baseline (auto-generated) ──
+.claude/settings.local.json
