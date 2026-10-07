@@ -161,3 +161,12 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M007 S03 T03 local reopen review
+
+- [x] `browserGitEngine.js` remains the existing **Resource** beneath `BrowserGitAccessor`; reopening an already-local workspace no longer makes optional remote Git-Bug reference requests.
+- [x] The change preserves Client → Manager → Accessor → Resource dependency direction, adds no service or interface, and keeps remote metadata retrieval confined to the initial clone workflow.
+- [x] Browser acceptance proves fixture-backed list and detail reads make no off-origin request, mutate no repository content, and handle unavailable and unsupported metadata safely.
+- [x] No architectural exception is required.
+
+**Result:** PASS

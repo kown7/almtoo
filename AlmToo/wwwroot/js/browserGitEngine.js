@@ -125,7 +125,6 @@ export async function cloneOrOpen(request) {
         const branchCommit = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
         await git.checkout({ fs, dir, ref: branchCommit, force: true, noUpdateHead: true });
       }
-      await fetchGitBugRefs({ fs, git, http: getGitHttp(), dir, repositoryUrl });
       activeRepository = { repositoryUrl, workspaceName, dir };
       return success(operation, 'Opened the existing browser-local repository.', {
         repositoryUrl,
