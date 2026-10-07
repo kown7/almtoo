@@ -195,6 +195,44 @@ test('cloneOrOpen routes public repository clones through the browser CORS proxy
   assert.equal(cloneOptions.depth, 1);
 });
 
+test('cloneOrOpen reopens an existing browser-local repository without remote Git-Bug discovery', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  let cloneCalls = 0;
+  let remoteDiscoveryCalls = 0;
+  installFakeGitRuntime({
+    async clone() {
+      cloneCalls += 1;
+    },
+    async currentBranch() {
+      return null;
+    },
+    async listServerRefs() {
+      remoteDiscoveryCalls += 1;
+      return [];
+    }
+  }, {
+    async stat(candidate) {
+      if (candidate.endsWith('/.git')) {
+        return { isFile: () => false, size: 0 };
+      }
+
+      return { isFile: () => true, size: 0 };
+    }
+  });
+
+  const engine = await importFreshModule();
+  const result = await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'already-local'
+  });
+
+  assert.equal(result.succeeded, true);
+  assert.equal(result.value.wasCloned, false);
+  assert.equal(cloneCalls, 0);
+  assert.equal(remoteDiscoveryCalls, 0);
+});
+
 test('repository paths reject parent directory traversal as structured operation failures', async () => {
   resetBrowserGlobals();
   installLoadingDocument();
