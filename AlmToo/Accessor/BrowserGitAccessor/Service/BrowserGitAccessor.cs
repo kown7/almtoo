@@ -900,7 +900,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             if (Summary is null
                 || Comments is null
                 || Comments.Count > MaxGitBugComments
-                || !IsBoundedGitBugText(Description, MaxGitBugBodyLength, allowNull: true))
+                || !IsBoundedGitBugText(Description, MaxGitBugBodyLength, allowNull: true, allowEmpty: true))
             {
                 throw new InvalidOperationException("The Git-Bug issue detail did not match the expected contract.");
             }
@@ -949,10 +949,16 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     private static bool IsValidGitBugIssueId(string? issueId) =>
         issueId is { Length: 64 } && issueId.All(Uri.IsHexDigit);
 
-    private static bool IsBoundedGitBugText(string? value, int maximumLength, bool allowNull = false) =>
+    private static bool IsBoundedGitBugText(
+        string? value,
+        int maximumLength,
+        bool allowNull = false,
+        bool allowEmpty = false) =>
         value is null
             ? allowNull
-            : value.Length is > 0 && value.Length <= maximumLength && value.IndexOfAny(['\0', '\r']) < 0;
+            : (allowEmpty || value.Length > 0)
+                && value.Length <= maximumLength
+                && value.IndexOfAny(['\0', '\r']) < 0;
 
     private sealed record RepositoryInfoDto
     {

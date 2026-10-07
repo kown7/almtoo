@@ -34,6 +34,62 @@ let dependenciesPromise;
 let filesystem;
 let activeRepository;
 
+async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
+  const namespaces = [
+    { prefix: 'refs/bugs/' },
+    { prefix: 'refs/identities/' }
+  ];
+  let fetchedCount = 0;
+
+  for (const { prefix } of namespaces) {
+    let serverRefs;
+
+    try {
+      serverRefs = await git.listServerRefs({
+        http,
+        url: repositoryUrl,
+        corsProxy,
+        prefix
+      });
+    } catch {
+      // Git-Bug metadata is optional. A repository must still open when its remote
+      // cannot advertise optional refs (for example, while offline).
+      continue;
+    }
+
+    const refs = (serverRefs ?? [])
+      .filter(({ ref }) => typeof ref === 'string'
+        && ref.startsWith(prefix)
+        && gitBugIssueIdPattern.test(ref.slice(prefix.length)))
+      .slice(0, gitBugLimits.issueCount);
+
+    for (const { ref } of refs) {
+      const fetched = await git.fetch({
+        fs,
+        http,
+        dir,
+        url: repositoryUrl,
+        corsProxy,
+        ref,
+        remoteRef: ref,
+        singleBranch: true
+      });
+
+      if (typeof fetched?.fetchHead !== 'string' || !fetched.fetchHead) {
+        throw new Error(`Git-Bug ref ${ref} did not produce a fetch head.`);
+      }
+
+      // isomorphic-git returns the fetched tip but does not persist a ref when
+      // fetching an arbitrary non-branch ref, so retain the Git-Bug namespace
+      // that the read-only parser consumes.
+      await git.writeRef({ fs, dir, ref, value: fetched.fetchHead, force: true });
+      fetchedCount += 1;
+    }
+  }
+
+  return fetchedCount;
+}
+
 export async function initialize() {
   try {
     await ensureDependencies();
@@ -69,6 +125,7 @@ export async function cloneOrOpen(request) {
         const branchCommit = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
         await git.checkout({ fs, dir, ref: branchCommit, force: true, noUpdateHead: true });
       }
+      await fetchGitBugRefs({ fs, git, http: getGitHttp(), dir, repositoryUrl });
       activeRepository = { repositoryUrl, workspaceName, dir };
       return success(operation, 'Opened the existing browser-local repository.', {
         repositoryUrl,
@@ -79,15 +136,17 @@ export async function cloneOrOpen(request) {
     }
 
     await mkdirp(fs, dir);
+    const http = getGitHttp();
     await git.clone({
       fs,
-      http: getGitHttp(),
+      http,
       dir,
       url: repositoryUrl,
       corsProxy,
       singleBranch: true,
       depth: 1
     });
+    await fetchGitBugRefs({ fs, git, http, dir, repositoryUrl });
 
     activeRepository = { repositoryUrl, workspaceName, dir };
 
@@ -741,10 +800,12 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
       }
       if (operation.type === 1 && commitIndex === 0 && title === undefined) {
         title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
-        description = requireBoundedGitBugBody(operation.message, 'description');
+        description = requireBoundedGitBugBody(operation.message, 'description', true);
         authorDisplayName = actor;
         detailBytes += textEncoder.encode(description).byteLength * 2;
-        comments.push({ authorDisplayName: actor, body: description });
+        if (description.length > 0) {
+          comments.push({ authorDisplayName: actor, body: description });
+        }
       } else if (operation.type === 3) {
         const body = requireBoundedGitBugBody(operation.message, 'comment');
         detailBytes += textEncoder.encode(body).byteLength;
@@ -798,16 +859,16 @@ function toGitBugSummary({ id, title, state, labels, authorDisplayName }) {
   return { id, title, state, labels, authorDisplayName };
 }
 
-function requireBoundedGitBugBody(value, name) {
-  const text = requireBoundedGitBugText(value, name, gitBugLimits.bodyBytes);
+function requireBoundedGitBugBody(value, name, allowEmpty = false) {
+  const text = requireBoundedGitBugText(value, name, gitBugLimits.bodyBytes, allowEmpty);
   if (textEncoder.encode(text).byteLength > gitBugLimits.bodyBytes) {
     throw new Error(`git-bug-${name}-too-large`);
   }
   return text;
 }
 
-function requireBoundedGitBugText(value, name, maximumLength) {
-  if (!isBoundedGitBugText(value, maximumLength)) {
+function requireBoundedGitBugText(value, name, maximumLength, allowEmpty = false) {
+  if (!isBoundedGitBugText(value, maximumLength, allowEmpty)) {
     throw new Error(`git-bug-${name}-invalid`);
   }
   return value;
