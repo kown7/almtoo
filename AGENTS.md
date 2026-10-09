@@ -20,6 +20,8 @@ Treat it as required project policy, not optional background material.
 
 Every architecture-affecting plan and review must complete [`docs/IDESIGN-REVIEW.md`](docs/IDESIGN-REVIEW.md). A change is not complete while that review has an unexplained failure.
 
+**Interface review stop:** At the start of every slice, and again whenever execution reveals a materially changed service, contract, Accessor, Resource, or retained interface, pause before implementation continues or any commit/merge is made. Complete the relevant `docs/IDESIGN-REVIEW.md` checklist and record an explicit PASS or a user-visible blocker. This stop applies even when no new interface is added.
+
 When adding or retaining an interface, include a one-sentence justification naming the boundary, substitution need, or platform dependency it protects.
 
 
