@@ -915,7 +915,9 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 throw new InvalidOperationException("The Git-Bug issue detail exceeded the safe payload limit.");
             }
 
-            return new(Summary.ToGitBugIssueSummary(), Description, comments);
+            // Git-Bug v4 permits an empty creation message. The typed Accessor
+            // contract exposes that optional text as safe, non-null state.
+            return new(Summary.ToGitBugIssueSummary(), Description ?? string.Empty, comments);
         }
     }
 

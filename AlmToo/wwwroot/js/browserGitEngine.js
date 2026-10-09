@@ -583,8 +583,12 @@ export async function getGitBugIssue(issueId) {
 
     return success(operation, 'The Git-Bug issue was loaded.', {
       summary: toGitBugSummary(issue),
-      description: issue.description,
-      comments: issue.comments.map(({ authorDisplayName, body }) => ({ authorDisplayName, body }))
+      // Git-Bug v4 permits an empty creation message. Keep that optional text
+      // visible as safe state while never synthesizing a blank comment.
+      description: issue.description ?? '',
+      comments: issue.comments
+        .filter(({ body }) => body.length > 0)
+        .map(({ authorDisplayName, body }) => ({ authorDisplayName, body }))
     });
   } catch (error) {
     return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
