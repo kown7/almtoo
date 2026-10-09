@@ -64,6 +64,32 @@ async function makeUnsupported(root) {
   return id;
 }
 
+async function makeEmptyCreationIssue(root) {
+  const gitdir = path.join(root, 'repository');
+  const id = 'f'.repeat(64);
+  const identity = (await git.listRefs({ fs, gitdir, filepath: 'refs/identities' }))[0];
+  const ops = await git.writeBlob({
+    fs,
+    gitdir,
+    blob: new TextEncoder().encode(JSON.stringify({
+      author: { id: identity },
+      ops: [{ type: 1, timestamp: 1, title: 'Issue with no description', message: '' }]
+    }))
+  });
+  const marker = await git.writeBlob({ fs, gitdir, blob: new Uint8Array() });
+  const tree = await git.writeTree({ fs, gitdir, tree: [
+    { mode: '100644', path: 'ops', oid: ops, type: 'blob' },
+    { mode: '100644', path: 'version-4', oid: marker, type: 'blob' }
+  ] });
+  const oid = await git.writeCommit({ fs, gitdir, commit: {
+    tree, parent: [], message: '',
+    author: { name: 'fixture', email: 'fixture@example.invalid', timestamp: 1, timezoneOffset: 0 },
+    committer: { name: 'fixture', email: 'fixture@example.invalid', timestamp: 1, timezoneOffset: 0 }
+  } });
+  await git.writeRef({ fs, gitdir, ref: `refs/bugs/${id}`, value: oid, force: true });
+  return id;
+}
+
 function resetGlobals() {
   delete globalThis.document;
   delete globalThis.LightningFS;
@@ -226,6 +252,30 @@ test('Resource exports classify an incompatible version without partial data or 
     await engine.getGitBugIssue(id)
   ]);
   for (const result of results) assertSafeFailure(result, 'gitBugFormatUnsupported');
+});
+
+test('Resource exports preserve an empty creation description without synthesizing a blank comment', async () => {
+  const fixture = await copyFixture();
+  const id = await makeEmptyCreationIssue(fixture);
+  const [listed, detailed] = await assertUnchangedRead(fixture, async engine => [
+    await engine.listGitBugIssues({ state: null, searchText: 'no description', cursor: null, pageSize: 50 }),
+    await engine.getGitBugIssue(id)
+  ]);
+
+  assert.equal(listed.succeeded, true);
+  assert.deepEqual(listed.value.issues, [{
+    id,
+    title: 'Issue with no description',
+    state: 'open',
+    labels: null,
+    authorDisplayName: 'Fixture Author'
+  }]);
+  assert.equal(detailed.succeeded, true);
+  assert.deepEqual(detailed.value, {
+    summary: listed.value.issues[0],
+    description: '',
+    comments: []
+  });
 });
 
 test('Resource exports reject malformed and oversized bridge requests before Git object reads', async () => {
