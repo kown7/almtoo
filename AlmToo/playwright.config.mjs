@@ -24,7 +24,8 @@ export default defineConfig({
   webServer: {
     command: 'dotnet run --project AlmToo.csproj --urls http://127.0.0.1:5208',
     url: baseURL,
-    reuseExistingServer: false,
+    // Reuse a manually started local server during development; CI always starts a fresh one.
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     stdout: 'pipe',
     stderr: 'pipe'

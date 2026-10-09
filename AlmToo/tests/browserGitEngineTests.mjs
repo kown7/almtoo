@@ -89,6 +89,13 @@ function installFakeGitRuntime(gitOverrides = {}, fsOverrides = {}) {
   globalThis.LightningFS = FakeLightningFS;
   globalThis.git = {
     async clone() {},
+    async listServerRefs() {
+      return [];
+    },
+    async fetch() {
+      return { fetchHead: 'abc123' };
+    },
+    async writeRef() {},
     async resolveRef() {
       return 'HEAD';
     },
@@ -176,9 +183,30 @@ test('cloneOrOpen routes public repository clones through the browser CORS proxy
   resetBrowserGlobals();
   installLoadingDocument();
   let cloneOptions;
+  const serverRefsOptions = [];
+  const fetchOptions = [];
+  const writtenRefs = [];
+  const issueId = 'a'.repeat(64);
+  const identityId = 'b'.repeat(64);
   installFakeGitRuntime({
     async clone(options) {
       cloneOptions = options;
+    },
+    async listServerRefs(options) {
+      serverRefsOptions.push(options);
+      return options.prefix === 'refs/bugs/'
+        ? [
+          { ref: `refs/bugs/${issueId}`, oid: 'bug-tip' },
+          { ref: 'refs/bugs/not-an-issue-id', oid: 'ignored' }
+        ]
+        : [{ ref: `refs/identities/${identityId}`, oid: 'identity-tip' }];
+    },
+    async fetch(options) {
+      fetchOptions.push(options);
+      return { fetchHead: options.ref.endsWith(issueId) ? 'bug-tip' : 'identity-tip' };
+    },
+    async writeRef(options) {
+      writtenRefs.push(options);
     }
   });
 
@@ -193,6 +221,55 @@ test('cloneOrOpen routes public repository clones through the browser CORS proxy
   assert.equal(cloneOptions.corsProxy, 'https://cors.isomorphic-git.org');
   assert.equal(cloneOptions.singleBranch, true);
   assert.equal(cloneOptions.depth, 1);
+  assert.deepEqual(serverRefsOptions.map(({ prefix }) => prefix), ['refs/bugs/', 'refs/identities/']);
+  assert.ok(serverRefsOptions.every(({ url }) => url === cloneOptions.url));
+  assert.deepEqual(fetchOptions.map(({ ref }) => ref), [
+    `refs/bugs/${issueId}`,
+    `refs/identities/${identityId}`
+  ]);
+  assert.ok(fetchOptions.every(({ remoteRef, singleBranch }) => remoteRef && singleBranch));
+  assert.deepEqual(writtenRefs.map(({ ref, value }) => ({ ref, value })), [
+    { ref: `refs/bugs/${issueId}`, value: 'bug-tip' },
+    { ref: `refs/identities/${identityId}`, value: 'identity-tip' }
+  ]);
+});
+
+test('cloneOrOpen reopens an existing browser-local repository without remote Git-Bug discovery', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  let cloneCalls = 0;
+  let remoteDiscoveryCalls = 0;
+  installFakeGitRuntime({
+    async clone() {
+      cloneCalls += 1;
+    },
+    async currentBranch() {
+      return null;
+    },
+    async listServerRefs() {
+      remoteDiscoveryCalls += 1;
+      return [];
+    }
+  }, {
+    async stat(candidate) {
+      if (candidate.endsWith('/.git')) {
+        return { isFile: () => false, size: 0 };
+      }
+
+      return { isFile: () => true, size: 0 };
+    }
+  });
+
+  const engine = await importFreshModule();
+  const result = await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'already-local'
+  });
+
+  assert.equal(result.succeeded, true);
+  assert.equal(result.value.wasCloned, false);
+  assert.equal(cloneCalls, 0);
+  assert.equal(remoteDiscoveryCalls, 0);
 });
 
 test('cloneOrOpen reopens an existing browser-local repository without remote Git-Bug discovery', async () => {
