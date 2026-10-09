@@ -199,7 +199,11 @@ test('cloneOrOpen routes public repository clones through the browser CORS proxy
           { ref: `refs/bugs/${issueId}`, oid: 'bug-tip' },
           { ref: 'refs/bugs/not-an-issue-id', oid: 'ignored' }
         ]
-        : [{ ref: `refs/identities/${identityId}`, oid: 'identity-tip' }];
+        : [
+          { ref: `refs/identities/${identityId}`, oid: 'identity-tip' },
+          { ref: 'refs/identities/not-an-identity-id', oid: 'ignored' },
+          { ref: 'refs/other/not-a-git-bug-ref', oid: 'ignored' }
+        ];
     },
     async fetch(options) {
       fetchOptions.push(options);
@@ -234,11 +238,15 @@ test('cloneOrOpen routes public repository clones through the browser CORS proxy
   ]);
 });
 
-test('cloneOrOpen reopens an existing browser-local repository without remote Git-Bug discovery', async () => {
+test('cloneOrOpen reopens an existing browser-local repository and refreshes bounded Git-Bug refs', async () => {
   resetBrowserGlobals();
   installLoadingDocument();
   let cloneCalls = 0;
-  let remoteDiscoveryCalls = 0;
+  const serverRefsOptions = [];
+  const fetchOptions = [];
+  const writtenRefs = [];
+  const issueId = 'c'.repeat(64);
+  const identityId = 'd'.repeat(64);
   installFakeGitRuntime({
     async clone() {
       cloneCalls += 1;
@@ -246,9 +254,18 @@ test('cloneOrOpen reopens an existing browser-local repository without remote Gi
     async currentBranch() {
       return null;
     },
-    async listServerRefs() {
-      remoteDiscoveryCalls += 1;
-      return [];
+    async listServerRefs(options) {
+      serverRefsOptions.push(options);
+      return options.prefix === 'refs/bugs/'
+        ? [{ ref: `refs/bugs/${issueId}`, oid: 'bug-tip' }]
+        : [{ ref: `refs/identities/${identityId}`, oid: 'identity-tip' }];
+    },
+    async fetch(options) {
+      fetchOptions.push(options);
+      return { fetchHead: options.ref.endsWith(issueId) ? 'bug-tip' : 'identity-tip' };
+    },
+    async writeRef(options) {
+      writtenRefs.push(options);
     }
   }, {
     async stat(candidate) {
@@ -269,7 +286,45 @@ test('cloneOrOpen reopens an existing browser-local repository without remote Gi
   assert.equal(result.succeeded, true);
   assert.equal(result.value.wasCloned, false);
   assert.equal(cloneCalls, 0);
-  assert.equal(remoteDiscoveryCalls, 0);
+  assert.deepEqual(serverRefsOptions.map(({ prefix }) => prefix), ['refs/bugs/', 'refs/identities/']);
+  assert.deepEqual(fetchOptions.map(({ ref }) => ref), [
+    `refs/bugs/${issueId}`,
+    `refs/identities/${identityId}`
+  ]);
+  assert.deepEqual(writtenRefs.map(({ ref, value }) => ({ ref, value })), [
+    { ref: `refs/bugs/${issueId}`, value: 'bug-tip' },
+    { ref: `refs/identities/${identityId}`, value: 'identity-tip' }
+  ]);
+});
+
+test('cloneOrOpen keeps ordinary repository open successful when optional Git-Bug discovery fails', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  let cloneCalls = 0;
+  installFakeGitRuntime({
+    async clone() {
+      cloneCalls += 1;
+    },
+    async listServerRefs({ prefix }) {
+      if (prefix === 'refs/bugs/') {
+        return [{ ref: `refs/bugs/${'e'.repeat(64)}`, oid: 'bug-tip' }];
+      }
+      throw new TypeError('remote metadata unavailable');
+    },
+    async fetch() {
+      throw new Error('optional Git-Bug object unavailable');
+    }
+  });
+
+  const engine = await importFreshModule();
+  const result = await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'optional-metadata-failure'
+  });
+
+  assert.equal(result.succeeded, true);
+  assert.equal(result.value.wasCloned, true);
+  assert.equal(cloneCalls, 1);
 });
 
 test('repository paths reject parent directory traversal as structured operation failures', async () => {
