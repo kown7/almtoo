@@ -131,10 +131,11 @@ export async function seedGitBugFixture(page, variant = 'supported') {
   return { repositoryUrl, workspacePath };
 }
 
-export async function snapshotGitBugRepository(page) {
+export async function snapshotGitBugRepository(page, repositoryWorkspacePath = workspacePath) {
   return page.evaluate(async workspacePath => {
-    const filesystem = globalThis.__almTooGitBugFixtureFs;
-    if (!filesystem) throw new Error('Git-Bug fixture filesystem is not installed.');
+    const filesystem = globalThis.__almTooGitBugFixtureFs
+      ?? new globalThis.LightningFS('almtoo-git', { wipe: false });
+    if (!filesystem) throw new Error('Git-Bug browser filesystem is not available.');
     const files = [];
     const visit = async (directory, relative = '') => {
       const names = [...await filesystem.promises.readdir(directory)].sort();
@@ -154,7 +155,7 @@ export async function snapshotGitBugRepository(page) {
     };
     await visit(workspacePath);
     return Object.fromEntries(files);
-  }, workspacePath);
+  }, repositoryWorkspacePath);
 }
 
 export function fixtureSnapshotDigest(snapshot) {

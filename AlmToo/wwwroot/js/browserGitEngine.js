@@ -57,33 +57,42 @@ async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
       continue;
     }
 
-    const refs = (serverRefs ?? [])
-      .filter(({ ref }) => typeof ref === 'string'
-        && ref.startsWith(prefix)
-        && gitBugIssueIdPattern.test(ref.slice(prefix.length)))
+    const refs = (Array.isArray(serverRefs) ? serverRefs : [])
+      .filter((advertised) => {
+        const ref = advertised?.ref;
+        return typeof ref === 'string'
+          && ref.startsWith(prefix)
+          && gitBugIssueIdPattern.test(ref.slice(prefix.length));
+      })
       .slice(0, gitBugLimits.issueCount);
 
-    for (const { ref } of refs) {
-      const fetched = await git.fetch({
-        fs,
-        http,
-        dir,
-        url: repositoryUrl,
-        corsProxy,
-        ref,
-        remoteRef: ref,
-        singleBranch: true
-      });
+    for (const advertised of refs) {
+      const ref = advertised.ref;
+      try {
+        const fetched = await git.fetch({
+          fs,
+          http,
+          dir,
+          url: repositoryUrl,
+          corsProxy,
+          ref,
+          remoteRef: ref,
+          singleBranch: true
+        });
 
-      if (typeof fetched?.fetchHead !== 'string' || !fetched.fetchHead) {
-        throw new Error(`Git-Bug ref ${ref} did not produce a fetch head.`);
+        if (typeof fetched?.fetchHead !== 'string' || !fetched.fetchHead) {
+          continue;
+        }
+
+        // isomorphic-git returns the fetched tip but does not persist a ref when
+        // fetching an arbitrary non-branch ref, so retain the Git-Bug namespace
+        // that the read-only parser consumes.
+        await git.writeRef({ fs, dir, ref, value: fetched.fetchHead, force: true });
+        fetchedCount += 1;
+      } catch {
+        // An individual optional ref may be stale or unavailable. Do not make
+        // ordinary repository open depend on every Git-Bug object succeeding.
       }
-
-      // isomorphic-git returns the fetched tip but does not persist a ref when
-      // fetching an arbitrary non-branch ref, so retain the Git-Bug namespace
-      // that the read-only parser consumes.
-      await git.writeRef({ fs, dir, ref, value: fetched.fetchHead, force: true });
-      fetchedCount += 1;
     }
   }
 
@@ -125,6 +134,9 @@ export async function cloneOrOpen(request) {
         const branchCommit = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
         await git.checkout({ fs, dir, ref: branchCommit, force: true, noUpdateHead: true });
       }
+      // Reopen the ordinary branch state first, then best-effort refresh optional
+      // Git-Bug metadata without making the local repository depend on the remote.
+      await fetchGitBugRefs({ fs, git, http: getGitHttp(), dir, repositoryUrl });
       activeRepository = { repositoryUrl, workspaceName, dir };
       return success(operation, 'Opened the existing browser-local repository.', {
         repositoryUrl,
@@ -571,8 +583,12 @@ export async function getGitBugIssue(issueId) {
 
     return success(operation, 'The Git-Bug issue was loaded.', {
       summary: toGitBugSummary(issue),
-      description: issue.description,
-      comments: issue.comments.map(({ authorDisplayName, body }) => ({ authorDisplayName, body }))
+      // Git-Bug v4 permits an empty creation message. Keep that optional text
+      // visible as safe state while never synthesizing a blank comment.
+      description: issue.description ?? '',
+      comments: issue.comments
+        .filter(({ body }) => body.length > 0)
+        .map(({ authorDisplayName, body }) => ({ authorDisplayName, body }))
     });
   } catch (error) {
     return normalizedGitBugFailure(operation, classifyGitBugFailure(error));

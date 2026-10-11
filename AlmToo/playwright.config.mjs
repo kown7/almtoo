@@ -9,6 +9,9 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   reporter: 'list',
+  metadata: {
+    gitBugRemoteRepository: process.env.ALMTOO_GITBUG_REMOTE_URL ?? 'https://github.com/kown7/gitbugtest.git'
+  },
   use: {
     baseURL,
     trace: 'retain-on-failure',

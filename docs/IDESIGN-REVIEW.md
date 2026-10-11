@@ -164,9 +164,18 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 
 ## M007 S03 T03 local reopen review
 
-- [x] `browserGitEngine.js` remains the existing **Resource** beneath `BrowserGitAccessor`; reopening an already-local workspace no longer makes optional remote Git-Bug reference requests.
-- [x] The change preserves Client → Manager → Accessor → Resource dependency direction, adds no service or interface, and keeps remote metadata retrieval confined to the initial clone workflow.
-- [x] Browser acceptance proves fixture-backed list and detail reads make no off-origin request, mutate no repository content, and handle unavailable and unsupported metadata safely.
+- [x] `browserGitEngine.js` remains the existing **Resource** beneath `BrowserGitAccessor`; reopening an already-local workspace refreshes optional remote Git-Bug references only through the existing browser Git transport boundary.
+- [x] The change preserves Client → Manager → Accessor → Resource dependency direction, adds no service or interface, and keeps Git-Bug remote discovery best-effort and separate from ordinary branch restoration.
+- [x] Browser acceptance proves fixture-backed list and detail reads remain local after refs are persisted, while unavailable or malformed optional metadata does not fail ordinary repository open.
 - [x] No architectural exception is required.
+
+**Result:** PASS
+
+## M008 S01 remote Git-Bug ref acquisition review
+
+- [x] `browserGitEngine.js` remains the existing **Resource** beneath `BrowserGitAccessor`; optional `refs/bugs/*` and `refs/identities/*` discovery stays at the browser Git transport boundary for both initial clone and an existing local workspace whose remote is available.
+- [x] `GitBugWorkspaceManager`, Razor Clients, and Accessor contracts do not gain remote-ref or JS interop responsibilities; dependency direction remains Client → Manager → Accessor → Resource.
+- [x] The existing `IGitBugAccessor` interface is retained as the typed read-only boundary between the Manager and Resource-backed Git-Bug data. No new interface is introduced because no alternate implementation or additional substitution boundary is required.
+- [x] Optional metadata discovery remains best-effort and bounded; ordinary repository open behavior and user-safe failure handling remain unchanged when the remote is unavailable.
 
 **Result:** PASS
