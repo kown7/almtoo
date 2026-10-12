@@ -495,3 +495,59 @@ None. `Program.cs` references registration types solely as the Client compositio
 **Overall result:** PASS
 
 Repeat this review when an operation, payload, interface, dependency edge, composition lifetime, Accessor contract ownership rule, or workflow responsibility changes.
+
+## Git-Bug S01 write contract: typed model, storage, and failure boundary
+
+This is the shared **Git-Bug S01 Write Contract** with `GIT-BUG-DESIGN.md`. Both documents intentionally use the same operation names, failure kinds, canonical storage invariants, redaction rules, layer assignments, and proof boundary. This section documents the contract for later write slices; **S01 does not implement production mutation**.
+
+### Typed write vocabulary and operation names
+
+The future `IGitBugAccessor` write facet will accept immutable, credential-free records equivalent to `GitBugIssueEditRequest`, `GitBugCommentCreateRequest`, `GitBugWritePreconditions`, and `GitBugWriteReview`, and return immutable records equivalent to `GitBugIssueEditResult`, `GitBugCommentCreateResult`, and `GitBugWriteReceipt`. The operation names are fixed:
+
+| Operation | Manager intent | Accessor boundary |
+|---|---|---|
+| `gitBug.issue.edit` | Request a bounded title/description replacement | Typed issue result or typed failure |
+| `gitBug.comment.create` | Request one bounded comment append | Typed comment result or typed failure |
+| `gitBug.write.review` | Establish repository, issue, and expected-version preconditions | Immutable review record |
+| `gitBug.write.commit` | Commit one reviewed repository mutation unit | Credential-free mutation receipt |
+
+The Manager owns review order, explicit acceptance, cancellation, and user-facing state. The Accessor owns browser/platform integration, response translation, precondition enforcement, and safe failure mapping. No write operation implicitly pushes, changes unrelated refs, retries a conflict, or carries a credential, raw JS value, raw Git object, stack trace, or serialized payload through Manager or Client.
+
+### Canonical Git-Bug storage and serialization
+
+The only S01 storage evidence is the pinned `v0.11.0` fixture. Later write code must remain within its proven repository-native layout: issue histories under `refs/bugs/*`, identity data under `refs/identities/*`, and version-marker plus `ops` JSON in the issue commit trees. It must never use a worktree shadow database.
+
+Serialization is deterministic and bounded: fixed field names/order, UTF-8 JSON, no incidental whitespace or locale/timezone formatting, canonical null/optional-field handling, and bounded identifiers, refs, operation kinds, title/description/comment text, labels, histories, and aggregate objects. Inputs are fully validated before the first object/ref mutation. A successful receipt is impossible for a partial write; writes are confined to the active repository and approved Git-Bug refs, leaving worktree, index, remote configuration, credentials, and unrelated refs unchanged. The review records repository identity, issue identity, expected current version/revision, and the exact reviewed operation; a changed revision is a conflict requiring fresh review.
+
+These rules are an Accessor/Resource boundary, not Manager policy. The Resource/bridge owns canonical encoding and Git object/ref integration; the Accessor owns managed translation and failure classification. No raw JavaScript or Git-Bug serialization enters Manager or Client.
+
+### Shared failure taxonomy and redaction
+
+The write contract uses exactly these stable categories:
+
+| Failure kind | Safe behavior |
+|---|---|
+| `GitBugWriteInvalidRequest` | Reject bounds, required-field, identifier, duplicate, or ambiguity errors before mutation |
+| `GitBugWritePreconditionFailed` | Preserve data and require repository/issue/version preconditions to be re-established |
+| `GitBugWriteConflict` | Preserve data and require fresh review; never merge or replay automatically |
+| `GitBugWriteUnsupportedFormat` | Fail closed when the pinned storage/version contract cannot represent the operation |
+| `GitBugWriteUnavailable` | Surface unavailable browser filesystem/object-store/capability state without partial success |
+| `GitBugWriteSerializationFailed` | Reject non-canonical or unbounded encoding without reporting repository mutation |
+| `GitBugWriteUnknown` | Credential-free fallback for a safe, otherwise unclassified failure |
+
+Each failure preserves the fixed operation name and exposes only a safe message, stable category, stage, and bounded aggregate counts. Diagnostics, where permitted below the Manager, redact issue text, author names, paths, refs, object IDs, URLs, credentials, raw JS exceptions, and complete response bodies. Timeouts and connection loss map to `GitBugWriteUnavailable` or `GitBugWriteUnknown` and never cause implicit replay. Manager state may expose busy/result/error and failure category, but never serialization bytes, refs, object IDs, or diagnostics.
+
+### S01 proof boundary and later proof
+
+S01 proves the shared design vocabulary, storage/serialization invariants, bounded diagnostics, layer ownership, and fixture contract only. S02 will add compile-time-safe immutable C# request/result records and boundary tests; S03 will fixture-prove deterministic serialization and malformed/unsupported/unavailable/conflict classifications. A later mutation slice must separately prove actual browser writes, repository immutability on failure, conflict behavior, and browser acceptance. This document does not claim those production writes exist.
+
+### S01 iDesign review checklist
+
+- [x] **Layer assignments:** Git-Bug UI remains Client; write review and workflow order remain Manager; `IGitBugAccessor` and `BrowserGitAccessor` remain Accessor; Git-Bug serialization and Git object/ref handling remain Accessor-owned integration with Resource/test evidence.
+- [x] **Dependency direction:** runtime calls remain `Client -> Manager -> Accessor -> browser/platform`; passive records cross the boundary laterally. Client and Manager do not call JavaScript, parse Git-Bug storage, or serialize Git-Bug operations.
+- [x] **Interface justification:** `IGitBugAccessor` protects the external Git-Bug format/browser platform boundary, credible local/server substitutions, and fixture seam. No pass-through interface or interface-per-record is added.
+- [x] **Cohesion and decomposition:** Manager orchestration, Accessor integration/translation, and Resource encoding remain cohesive; no speculative Engine is introduced.
+- [x] **Verification placement:** .NET contract tests own typed boundary invariants; Node fixture tests own canonical serialization and safe failure scenarios; browser mutation proof is deferred to a later slice.
+- [x] **Exceptions:** none. Raw JS and Git-Bug serialization remain below Manager and Client, and no unexplained architectural exception is retained.
+
+The matching section in `GIT-BUG-DESIGN.md` is authoritative for the facet-specific detail. Any vocabulary or storage change must update both documents and repeat this review.
