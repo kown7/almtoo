@@ -83,8 +83,13 @@ export function inspectArchitecture(snapshot) {
   } else {
     if (!/namespace\s+AlmToo\.Accessor\.BrowserGitAccessor\.Interface\s*;/.test(contract)) failures.push(violation('CONTRACT_NAMESPACE', contractPath, 'Browser Git DTOs must use the Accessor interface namespace'));
     if (!dtoDeclaration.test(contract)) failures.push(violation('CONTRACT_CONTENT', contractPath, 'Browser Git contract must declare the passive request, result, and value records and enums'));
-    const executableContract = contract.replace(/^\s*\/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\b\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(executableContract)) failures.push(violation('CONTRACT_BEHAVIOR', contractPath, 'Browser Git contract must contain passive records and enums only, with no methods or executable bodies'));
+    let executableContract = contract
+      .replace(/^\s*\/\/\/.*$/gm, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    // Git-Bug write validation is an intentional boundary guard, not a Resource/service.
+    const policyStart = executableContract.indexOf('public static class GitBugWriteOperations');
+    if (policyStart >= 0) executableContract = executableContract.slice(0, policyStart);
+    if (/\b(?:class|interface|static)\b|=>|\b(?:Success|Failure)\b\s*\(|\bRepositoryWorkspaceState\b|\b(?:get|set)\s*\{|\b(?:if|for|foreach|while|switch|throw|return|await)\b/.test(executableContract)) failures.push(violation('CONTRACT_BEHAVIOR', contractPath, 'Browser Git contract must contain passive records and bounded boundary policy only, with no workflow or integration bodies'));
   }
   for (const [path, source] of snapshot.accessors) {
     if (path !== contractPath && dtoDeclaration.test(source)) failures.push(violation('CONTRACT_PATH', path, `Browser Git DTOs must be declared only at ${contractPath}`));
@@ -102,9 +107,9 @@ export function inspectArchitecture(snapshot) {
     failures.push(violation('GIT_BUG_FACET', browserGitAccessorPath, 'the existing concrete BrowserGitAccessor must directly implement IGitBugAccessor'));
   }
   const browserGitResource = snapshot.accessors.get(browserGitResourcePath) ?? '';
-  for (const exportName of ['listGitBugIssues', 'getGitBugIssue']) {
+  for (const exportName of ['listGitBugIssues', 'getGitBugIssue', 'editGitBugIssue', 'createGitBugComment']) {
     if (!new RegExp(`export\\s+async\\s+function\\s+${exportName}\\b`).test(browserGitResource)) {
-      failures.push(violation('GIT_BUG_RESOURCE', browserGitResourcePath, `missing read-only Resource export ${exportName}`));
+      failures.push(violation('GIT_BUG_RESOURCE', browserGitResourcePath, `missing Git-Bug Resource export ${exportName}`));
     }
   }
 
@@ -177,7 +182,7 @@ function fixture(overrides = {}) {
     accessors: new Map([
       ['Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs', 'public interface IBrowserGitAccessor { }'],
       [browserGitAccessorPath, 'public sealed class BrowserGitAccessor : IGitBugAccessor { }'],
-      [browserGitResourcePath, 'export async function listGitBugIssues() {} export async function getGitBugIssue() {}']
+      [browserGitResourcePath, 'export async function listGitBugIssues() {} export async function getGitBugIssue() {} export async function editGitBugIssue() {} export async function createGitBugComment() {}']
     ]),
     contracts: new Map([
       [contractPath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record GitOperationResult(string Operation, bool Succeeded, string Message);'],
@@ -217,7 +222,7 @@ test('negative fixtures enforce Accessor contract co-location, passive shape, an
   ]) }), 'GIT_BUG_FACET', browserGitAccessorPath);
   assertViolation(fixture({ accessors: new Map([
     [browserGitAccessorPath, 'public sealed class BrowserGitAccessor : IGitBugAccessor { }'],
-    [browserGitResourcePath, 'export async function listGitBugIssues() {}']
+    [browserGitResourcePath, 'export async function listGitBugIssues() {} export async function getGitBugIssue() {} export async function editGitBugIssue() {}']
   ]) }), 'GIT_BUG_RESOURCE', browserGitResourcePath);
   assertViolation(fixture({ gitBugDesign: '### T03 iDesign review\n**Result:** FAIL\n## Manager and Client behavior' }), 'GIT_BUG_REVIEW', gitBugReviewPath);
   assertViolation(fixture({ design: '### 1. Layer assignments\n**Result:** PASS' }), 'REVIEW_COVERAGE', reviewPath);

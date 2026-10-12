@@ -218,7 +218,11 @@ public sealed class GitBugAccessorContractTests
     [Fact]
     public async Task Write_contracts_validate_before_bridge_and_map_supported_requests_safely()
     {
-        var module = new FakeModule(new Dictionary<string, string>());
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["editGitBugIssue"] = FakeModule.ThrowResponse,
+            ["createGitBugComment"] = FakeModule.ThrowResponse
+        });
         await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
         var issueId = new GitBugIssueId(IssueId);
         var preconditions = new GitBugWritePreconditions(
@@ -242,16 +246,16 @@ public sealed class GitBugAccessorContractTests
             edit.Serialization));
 
         Assert.False(validResult.Succeeded);
-        Assert.Equal(GitOperationFailureKind.GitBugWriteUnavailable, validResult.FailureKind);
+        Assert.Equal(GitOperationFailureKind.Unknown, validResult.FailureKind);
         Assert.Equal(GitBugWriteOperations.IssueEdit, validResult.Operation);
         Assert.False(invalidResult.Succeeded);
         Assert.Equal(GitOperationFailureKind.GitBugWriteInvalidRequest, invalidResult.FailureKind);
         Assert.False(commentResult.Succeeded);
-        Assert.Equal(GitOperationFailureKind.GitBugWriteUnavailable, commentResult.FailureKind);
+        Assert.Equal(GitOperationFailureKind.Unknown, commentResult.FailureKind);
         Assert.Null(validResult.Diagnostic);
         Assert.Null(invalidResult.Diagnostic);
         Assert.Null(commentResult.Diagnostic);
-        Assert.Empty(module.Invocations);
+        Assert.Equal(new[] { "initialize", "editGitBugIssue", "createGitBugComment" }, module.Invocations);
     }
 
     [Theory]

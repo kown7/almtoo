@@ -823,6 +823,120 @@ test('Git-Bug Resource exports normalize missing workspace and excessive-ref fai
   assert.equal(objectReadCount, 0);
 });
 
+test('Git-Bug issue edits and comments write only the approved bug ref without push or worktree effects', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  const issueId = 'a'.repeat(64);
+  const currentRevision = 'b'.repeat(40);
+  const actorId = 'c'.repeat(64);
+  const writes = { blobs: [], trees: [], commits: [], refs: [], pushes: 0, adds: 0, removes: 0 };
+  const opsOid = 'd'.repeat(40);
+  const markerOid = 'e'.repeat(40);
+  installFakeGitRuntime({
+    async listRefs({ filepath }) {
+      if (filepath === 'refs/bugs') return [issueId];
+      if (filepath === 'refs/identities') return [actorId];
+      return [];
+    },
+    async resolveRef({ ref }) {
+      assert.equal(ref, `refs/bugs/${issueId}`);
+      return currentRevision;
+    },
+    async readCommit({ oid }) {
+      assert.equal(oid, currentRevision);
+      return { commit: { tree: 'tree-oid', parent: [] } };
+    },
+    async readTree({ oid }) {
+      assert.equal(oid, 'tree-oid');
+      return { tree: [
+        { path: 'version-4', type: 'blob', oid: markerOid },
+        { path: 'ops', type: 'blob', oid: opsOid }
+      ] };
+    },
+    async readBlob({ oid }) {
+      if (oid === markerOid) return { blob: new Uint8Array() };
+      assert.equal(oid, opsOid);
+      return { blob: new TextEncoder().encode(JSON.stringify({ author: { id: actorId }, ops: [{ type: 1, title: 'Original', message: 'Original body', timestamp: 1 }] })) };
+    },
+    async writeBlob({ blob }) { writes.blobs.push(new TextDecoder().decode(blob)); return 'new-ops-oid'; },
+    async writeTree({ tree }) { writes.trees.push(tree); return 'new-tree-oid'; },
+    async commit(options) { writes.commits.push(options); return 'new-revision'; },
+    async writeRef(options) { writes.refs.push(options); }
+  }, {
+    async flush() { writes.flushed = true; }
+  });
+
+  const engine = await importFreshModule();
+  assert.equal((await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git', workspaceName: 'git-bug-writes'
+  })).succeeded, true);
+
+  const edit = await engine.editGitBugIssue({
+    issueId,
+    title: 'Updated café 🐛',
+    description: 'Updated description',
+    preconditions: { expectedRevision: currentRevision },
+    serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
+  });
+  const comment = await engine.createGitBugComment({
+    issueId,
+    body: 'Follow-up 日本語 🚀',
+    preconditions: { expectedRevision: currentRevision },
+    serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
+  });
+
+  assert.equal(edit.succeeded, true);
+  assert.equal(comment.succeeded, true);
+  assert.equal(edit.value.commitCreated, false);
+  assert.equal(comment.value.commitCreated, false);
+  assert.equal(writes.commits.length, 2, 'Git-Bug history requires local commits, but no ordinary repository commit is created');
+  assert.ok(writes.commits.every(({ ref, parent, tree }) => ref === `refs/bugs/${issueId}` && parent[0] === currentRevision && tree === 'new-tree-oid'));
+  assert.deepEqual(writes.refs.map(({ ref }) => ref), [`refs/bugs/${issueId}`, `refs/bugs/${issueId}`]);
+  assert.equal(writes.pushes, 0);
+  assert.equal(writes.adds, 0);
+  assert.equal(writes.removes, 0);
+  assert.equal(writes.flushed, true);
+  assert.match(writes.blobs[0], /Updated description/);
+  assert.match(writes.blobs[1], /Follow-up/);
+  assert.equal(JSON.stringify({ edit, comment }).includes(issueId), true);
+  assert.equal(JSON.stringify({ edit, comment }).includes('refs/'), false);
+});
+
+test('Git-Bug write requests fail closed for invalid format and revision conflict without mutation or raw diagnostics', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  const issueId = 'f'.repeat(64);
+  const currentRevision = '1'.repeat(40);
+  let commitCount = 0;
+  installFakeGitRuntime({
+    async resolveRef() { return currentRevision; },
+    async commit() { commitCount += 1; return '2'.repeat(40); },
+    async writeRef() { commitCount += 1; }
+  });
+  const engine = await importFreshModule();
+  await engine.cloneOrOpen({ repositoryUrl: 'https://github.com/octocat/Hello-World.git', workspaceName: 'git-bug-failures' });
+
+  const invalid = await engine.createGitBugComment({
+    issueId: 'not-an-id',
+    body: 'safe comment',
+    preconditions: { expectedRevision: currentRevision },
+    serialization: { storageVersion: 'v0.10.0', encoding: 'utf-16', deterministic: false }
+  });
+  const conflict = await engine.createGitBugComment({
+    issueId,
+    body: 'safe comment',
+    preconditions: { expectedRevision: 'stale-revision' },
+    serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
+  });
+
+  assert.equal(invalid.failureKind, 'gitBugWriteInvalidRequest');
+  assert.equal(conflict.failureKind, 'gitBugWriteConflict');
+  assert.equal(invalid.diagnostic, null);
+  assert.equal(conflict.diagnostic, null);
+  assert.equal(commitCount, 0);
+  assert.doesNotMatch(JSON.stringify({ invalid, conflict }), /stale-revision|refs\/bugs|[a-f0-9]{40}/i);
+});
+
 test('Blazor Git service invokes operations exported by the browser Git module', async () => {
   const [serviceSource, moduleSource] = await Promise.all([
     readFile(serviceUrl, 'utf8'),

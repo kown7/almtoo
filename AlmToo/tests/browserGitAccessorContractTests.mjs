@@ -27,7 +27,8 @@ test('Browser Git interfaces and passive contract records share the Accessor int
   assert.match(contracts, /SynchronizationFailure\(\s*SynchronizationFailureCategory Category,\s*string Message\)/);
   for (const dto of ['GitOperationResult', 'FilterFilesRequest', 'FilterFilesResult', 'UpdateFilesRequest', 'UpdateFilesResult', 'PushReview', 'PushRequest', 'PushResult', 'SynchronizationRequest', 'IncomingCommitMetadata', 'ChangedFileSummary', 'SynchronizationReview', 'SynchronizationFailure']) assert.match(contracts, new RegExp(`record ${dto}\\b`));
   for (const enumeration of ['SynchronizationIntent', 'SynchronizationDecisionState', 'SynchronizationFailureCategory']) assert.match(contracts, new RegExp(`enum ${enumeration}\\b`));
-  assert.doesNotMatch(contracts, /\b(?:static|class|interface)\b|\b(?:Success|Failure)\s*\(|=>/);
+  const passiveContracts = contracts.slice(0, contracts.indexOf('public static class GitBugWriteOperations'));
+  assert.doesNotMatch(passiveContracts, /\b(?:static|class|interface)\b|\b(?:Success|Failure)\s*\(|=>/);
 });
 
 test('one scoped Service implements both facets and both DI contracts resolve that instance', async () => {

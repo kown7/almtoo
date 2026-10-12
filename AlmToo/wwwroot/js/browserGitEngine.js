@@ -774,6 +774,7 @@ function normalizedGitBugWriteFailure(operation, error) {
   const category = error instanceof GitBugReadError ? error.category : '';
   const message = typeof error?.message === 'string' ? error.message : '';
   const failureKind = message === 'git-bug-write-invalid-request'
+    || (/^git-bug-/u.test(message) && /(?:invalid|too-large)$/u.test(message))
     ? 'gitBugWriteInvalidRequest'
     : category === 'unsupported'
       ? 'gitBugWriteUnsupportedFormat'

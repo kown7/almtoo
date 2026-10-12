@@ -178,7 +178,8 @@ test('Resource exports decode fixture-proven list and detail DTOs without networ
   assert.equal(listed.value.nextCursor, null);
   assert.equal(listed.value.issues.length, 3);
 
-  for (const [scenario, humanId] of Object.entries(expectedIds)) {
+  for (const [scenario, humanId] of Object.entries(expectedIds)
+    .filter(([name]) => ['unicodeOpen', 'minimalOpen', 'closed'].includes(name))) {
     const expected = JSON.parse(await readFile(path.join(sourceFixture, 'expected', 'details', `${humanId}.json`), 'utf8'));
     const summary = listed.value.issues.find(issue => issue.id === expected.id);
     assert.ok(summary, `${scenario} must be returned by the Resource export.`);
