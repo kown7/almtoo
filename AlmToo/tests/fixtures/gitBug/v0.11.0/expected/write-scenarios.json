@@ -1,0 +1,56 @@
+{
+  "validIssueEdit": {
+    "scenarioId": "write-issue-edit-unicode",
+    "operation": "gitBug.issue.edit",
+    "failureKind": null,
+    "request": {
+      "repositoryKey": "fixture-v0.11.0",
+      "issueId": "a85873c",
+      "expectedRevision": "fa802b2",
+      "title": "Unicode café regression fixed 🐛",
+      "description": "Updated description with deterministic UTF-8 text."
+    },
+    "serialized": "{\"description\":\"Updated description with deterministic UTF-8 text.\",\"expectedRevision\":\"fa802b2\",\"issueId\":\"a85873c\",\"operation\":\"gitBug.issue.edit\",\"repositoryKey\":\"fixture-v0.11.0\",\"title\":\"Unicode café regression fixed 🐛\"}"
+  },
+  "validCommentCreate": {
+    "scenarioId": "write-comment-create-unicode",
+    "operation": "gitBug.comment.create",
+    "failureKind": null,
+    "request": {
+      "repositoryKey": "fixture-v0.11.0",
+      "issueId": "e51017b",
+      "expectedRevision": "d1dec57",
+      "body": "Follow-up comment: 日本語 🚀",
+      "authorDisplayName": "Fixture Author"
+    },
+    "serialized": "{\"authorDisplayName\":\"Fixture Author\",\"body\":\"Follow-up comment: 日本語 🚀\",\"expectedRevision\":\"d1dec57\",\"issueId\":\"e51017b\",\"operation\":\"gitBug.comment.create\",\"repositoryKey\":\"fixture-v0.11.0\"}"
+  },
+  "malformedRequest": {
+    "scenarioId": "failure-malformed-request",
+    "operation": "gitBug.issue.edit",
+    "failureKind": "GitBugWriteInvalidRequest",
+    "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "", "title": "", "description": "" },
+    "serialized": null
+  },
+  "unsupportedFormat": {
+    "scenarioId": "failure-unsupported-format",
+    "operation": "gitBug.write.commit",
+    "failureKind": "GitBugWriteUnsupportedFormat",
+    "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "830f9fc", "expectedRevision": "4593241" },
+    "serialized": null
+  },
+  "unavailableStorage": {
+    "scenarioId": "failure-unavailable-storage",
+    "operation": "gitBug.write.commit",
+    "failureKind": "GitBugWriteUnavailable",
+    "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "830f9fc", "expectedRevision": "4593241" },
+    "serialized": null
+  },
+  "revisionConflict": {
+    "scenarioId": "failure-revision-conflict",
+    "operation": "gitBug.write.commit",
+    "failureKind": "GitBugWriteConflict",
+    "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "830f9fc", "expectedRevision": "stale-revision" },
+    "serialized": null
+  }
+}

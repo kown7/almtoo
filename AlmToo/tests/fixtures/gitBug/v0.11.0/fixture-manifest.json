@@ -33,6 +33,62 @@
       "comments": 2
     }
   },
+  "writeScenarios": {
+    "validIssueEdit": {
+      "scenarioId": "write-issue-edit-unicode",
+      "operation": "gitBug.issue.edit",
+      "failureKind": null,
+      "request": {
+        "repositoryKey": "fixture-v0.11.0",
+        "issueId": "a85873c",
+        "expectedRevision": "fa802b2",
+        "title": "Unicode café regression fixed 🐛",
+        "description": "Updated description with deterministic UTF-8 text."
+      },
+      "serialized": "{\"description\":\"Updated description with deterministic UTF-8 text.\",\"expectedRevision\":\"fa802b2\",\"issueId\":\"a85873c\",\"operation\":\"gitBug.issue.edit\",\"repositoryKey\":\"fixture-v0.11.0\",\"title\":\"Unicode café regression fixed 🐛\"}"
+    },
+    "validCommentCreate": {
+      "scenarioId": "write-comment-create-unicode",
+      "operation": "gitBug.comment.create",
+      "failureKind": null,
+      "request": {
+        "repositoryKey": "fixture-v0.11.0",
+        "issueId": "e51017b",
+        "expectedRevision": "d1dec57",
+        "body": "Follow-up comment: 日本語 🚀",
+        "authorDisplayName": "Fixture Author"
+      },
+      "serialized": "{\"authorDisplayName\":\"Fixture Author\",\"body\":\"Follow-up comment: 日本語 🚀\",\"expectedRevision\":\"d1dec57\",\"issueId\":\"e51017b\",\"operation\":\"gitBug.comment.create\",\"repositoryKey\":\"fixture-v0.11.0\"}"
+    },
+    "malformedRequest": {
+      "scenarioId": "failure-malformed-request",
+      "operation": "gitBug.issue.edit",
+      "failureKind": "GitBugWriteInvalidRequest",
+      "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "", "title": "", "description": "" },
+      "serialized": null
+    },
+    "unsupportedFormat": {
+      "scenarioId": "failure-unsupported-format",
+      "operation": "gitBug.write.commit",
+      "failureKind": "GitBugWriteUnsupportedFormat",
+      "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "830f9fc", "expectedRevision": "4593241" },
+      "serialized": null
+    },
+    "unavailableStorage": {
+      "scenarioId": "failure-unavailable-storage",
+      "operation": "gitBug.write.commit",
+      "failureKind": "GitBugWriteUnavailable",
+      "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "830f9fc", "expectedRevision": "4593241" },
+      "serialized": null
+    },
+    "revisionConflict": {
+      "scenarioId": "failure-revision-conflict",
+      "operation": "gitBug.write.commit",
+      "failureKind": "GitBugWriteConflict",
+      "request": { "repositoryKey": "fixture-v0.11.0", "issueId": "830f9fc", "expectedRevision": "stale-revision" },
+      "serialized": null
+    }
+  },
   "repositoryState": {
     "head": "ref: refs/heads/main",
     "refs": {
@@ -102,6 +158,7 @@
     "expected/details/a85873c.json": "09ff45acc963817f71a2af7aa8ad66316435b1a52b75235bf2ac7d1196548eb9",
     "expected/details/e51017b.json": "f158ae4d0e962625626be52481ca0321ab9e2536c12b526232671467d53f361e",
     "expected/issues.json": "4e7d9612ed731e84cf2c73c274a24aa5646ac5d102db6b806ed737a6c1c9705a",
-    "expected/scenario-ids.json": "56dc21105641779c2e3e4356581b928a93e24600098eb2321f0d583649ee1d29"
+    "expected/scenario-ids.json": "ffc2efa1c63b03abf19089d3698e38c1977999b36b693a20ac42185fd038b106",
+    "expected/write-scenarios.json": "1cc9680fef145fcaef697740af98a017c8565955cdf3b6c010ed6f153c9a73ee"
   }
 }

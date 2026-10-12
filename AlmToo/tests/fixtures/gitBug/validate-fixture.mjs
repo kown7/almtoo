@@ -20,6 +20,23 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalize(value[key])]));
+  }
+  return value;
+}
+
+const writeOperations = new Set(['gitBug.issue.edit', 'gitBug.comment.create', 'gitBug.write.commit']);
+const writeFailures = new Set([
+  'GitBugWriteInvalidRequest',
+  'GitBugWriteUnsupportedFormat',
+  'GitBugWriteUnavailable',
+  'GitBugWriteConflict'
+]);
+const maxWriteText = 2048;
+
 async function filesBelow(root) {
   const result = [];
 
@@ -83,10 +100,12 @@ async function checkScenarioContract(root, manifest) {
   const expectedDirectory = path.join(root, 'expected');
   const issues = JSON.parse(await readFile(path.join(expectedDirectory, 'issues.json'), 'utf8'));
   const scenarioIds = JSON.parse(await readFile(path.join(expectedDirectory, 'scenario-ids.json'), 'utf8'));
-  const details = Object.fromEntries(await Promise.all(Object.entries(scenarioIds).map(async ([name, id]) => [
-    name,
-    JSON.parse(await readFile(path.join(expectedDirectory, 'details', `${id}.json`), 'utf8'))
-  ])));
+  const details = Object.fromEntries(await Promise.all(Object.entries(scenarioIds)
+    .filter(([, id]) => typeof id === 'string')
+    .map(async ([name, id]) => [
+      name,
+      JSON.parse(await readFile(path.join(expectedDirectory, 'details', `${id}.json`), 'utf8'))
+    ])));
 
   assert.equal(issues.length, 3);
   assert.deepEqual(issues.map(issue => issue.status).sort(), ['closed', 'open', 'open']);
@@ -108,6 +127,30 @@ async function checkScenarioContract(root, manifest) {
     assert.equal(detail.id, manifest.scenarios[name].id);
     const ref = `refs/bugs/${detail.id}`;
     assert.ok(Object.hasOwn(manifest.repositoryState.refs, ref));
+  }
+
+  const writeScenarios = JSON.parse(await readFile(path.join(expectedDirectory, 'write-scenarios.json'), 'utf8'));
+  assert.deepEqual(writeScenarios, manifest.writeScenarios);
+  assert.deepEqual(scenarioIds.writeScenarioIds, Object.values(writeScenarios).map(scenario => scenario.scenarioId));
+  assert.equal(new Set(scenarioIds.writeScenarioIds).size, scenarioIds.writeScenarioIds.length);
+
+  for (const scenario of Object.values(writeScenarios)) {
+    assert.match(scenario.scenarioId, /^(?:write|failure)-[a-z0-9-]+$/);
+    assert.ok(writeOperations.has(scenario.operation));
+    assert.ok(scenario.request && typeof scenario.request === 'object');
+    for (const value of Object.values(scenario.request)) {
+      if (typeof value === 'string') assert.ok(value.length <= maxWriteText);
+    }
+    if (scenario.failureKind === null) {
+      assert.notEqual(scenario.operation, 'gitBug.write.commit');
+      assert.match(scenario.request.repositoryKey, /^[a-z0-9.-]+$/);
+      assert.match(scenario.request.issueId, /^[a-z0-9]+$/);
+      assert.match(scenario.request.expectedRevision, /^[a-z0-9-]+$/);
+      assert.equal(scenario.serialized, JSON.stringify(canonicalize({ ...scenario.request, operation: scenario.operation })));
+    } else {
+      assert.ok(writeFailures.has(scenario.failureKind));
+      assert.equal(scenario.serialized, null);
+    }
   }
 }
 
