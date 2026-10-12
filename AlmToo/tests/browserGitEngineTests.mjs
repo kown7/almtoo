@@ -327,7 +327,7 @@ test('cloneOrOpen keeps ordinary repository open successful when optional Git-Bu
   assert.equal(cloneCalls, 1);
 });
 
-test('cloneOrOpen reopens an existing browser-local repository without remote Git-Bug discovery', async () => {
+test('cloneOrOpen reopens an existing browser-local repository with optional Git-Bug discovery', async () => {
   resetBrowserGlobals();
   installLoadingDocument();
   let cloneCalls = 0;
@@ -362,7 +362,7 @@ test('cloneOrOpen reopens an existing browser-local repository without remote Gi
   assert.equal(result.succeeded, true);
   assert.equal(result.value.wasCloned, false);
   assert.equal(cloneCalls, 0);
-  assert.equal(remoteDiscoveryCalls, 0);
+  assert.equal(remoteDiscoveryCalls, 2);
 });
 
 test('repository paths reject parent directory traversal as structured operation failures', async () => {

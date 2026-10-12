@@ -80,14 +80,22 @@ async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
           singleBranch: true
         });
 
-        if (typeof fetched?.fetchHead !== 'string' || !fetched.fetchHead) {
+        // Some isomorphic-git versions complete an arbitrary ref fetch without
+        // returning fetchHead. The advertised object id is still authoritative
+        // and the fetched object graph is available locally, so retain that id
+        // rather than silently dropping the ref.
+        const hasFetchedTip = typeof fetched?.fetchHead === 'string' && fetched.fetchHead.length > 0;
+        const fetchedTip = hasFetchedTip ? fetched.fetchHead : advertised.oid;
+        if (typeof fetchedTip !== 'string'
+            || !fetchedTip
+            || (!hasFetchedTip && !/^[0-9a-f]{40}$/i.test(fetchedTip))) {
           continue;
         }
 
         // isomorphic-git returns the fetched tip but does not persist a ref when
         // fetching an arbitrary non-branch ref, so retain the Git-Bug namespace
         // that the read-only parser consumes.
-        await git.writeRef({ fs, dir, ref, value: fetched.fetchHead, force: true });
+        await git.writeRef({ fs, dir, ref, value: fetchedTip, force: true });
         fetchedCount += 1;
       } catch {
         // An individual optional ref may be stale or unavailable. Do not make
@@ -774,6 +782,7 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
   let authorDisplayName = null;
   let state = 'open';
   let labels = null;
+  let pendingDescription;
   let detailBytes = 0;
   const comments = [];
 
@@ -815,7 +824,7 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
       }
       if (operation.type === 1 && commitIndex === 0 && title === undefined) {
         title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
-        description = requireBoundedGitBugBody(operation.message, 'description', true);
+        description = pendingDescription ?? requireBoundedGitBugBody(operation.message, 'description', true);
         authorDisplayName = actor;
         detailBytes += textEncoder.encode(description).byteLength * 2;
         if (description.length > 0) {
@@ -825,6 +834,11 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
         const body = requireBoundedGitBugBody(operation.message, 'comment');
         detailBytes += textEncoder.encode(body).byteLength;
         comments.push({ authorDisplayName: actor, body });
+      } else if (operation.type === 6) {
+        // Git-Bug v4 uses type 6 for an issue description edit. Commits are
+        // traversed newest-first, so retain the newest edit until creation is
+        // encountered rather than rejecting an otherwise readable issue.
+        pendingDescription = requireBoundedGitBugBody(operation.message, 'description', true);
       } else if (operation.type === 4 && operation.status === 2) {
         state = 'closed';
       } else if (operation.type === 5 && Array.isArray(operation.added)
