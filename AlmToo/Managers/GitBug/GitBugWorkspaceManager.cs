@@ -11,8 +11,10 @@ public sealed class GitBugWorkspaceManager : IDisposable
     private readonly object operationSync = new();
     private CancellationTokenSource? activeOperation;
     private RepositoryIdentity? repositoryIdentity;
+    private string repositoryWorkspaceName = string.Empty;
     private long operationGeneration;
     private bool hasListContext;
+    private GitBugIssueQuery lastQuery = new(PageSize: 50);
     private bool disposed;
 
     public GitBugWorkspaceManager(IGitBugAccessor accessor)
@@ -40,6 +42,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
             }
 
             repositoryIdentity = identity;
+            repositoryWorkspaceName = repository?.WorkspaceName ?? string.Empty;
             supersededOperation = InvalidateActiveOperation();
             ResetState(identity is not null);
         }
@@ -68,6 +71,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
         }
 
         var normalizedQuery = query with { PageSize = Math.Clamp(query.PageSize, 1, MaximumPageSize) };
+        lastQuery = normalizedQuery;
         var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.LoadingList, () =>
         {
             State.SelectedIssueId = null;
@@ -141,6 +145,237 @@ public sealed class GitBugWorkspaceManager : IDisposable
         }
     }
 
+    /// <summary>Edits the selected issue locally after validating the Client-provided fields.</summary>
+    public async Task<bool> EditSelectedIssueAsync(
+        string? title,
+        string? description,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (!TryGetWriteContext(GitBugWriteOperations.IssueEdit, title, description, allowEmptyBody: true,
+                out var issueId, out var repository, out var message))
+        {
+            return Reject(message!);
+        }
+
+        var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.EditingIssue, () =>
+        {
+            State.WriteOperation = GitBugWriteOperations.IssueEdit;
+            State.LastWriteSucceeded = null;
+            State.LastRefreshSucceeded = null;
+        });
+        var request = new GitBugIssueEditRequest(issueId, title!, description!,
+            new(repository, issueId, string.Empty, GitBugWriteOperations.IssueEdit),
+            new(GitBugWriteContract.SupportedStorageVersion, GitBugWriteContract.Utf8Encoding, true));
+
+        try
+        {
+            var result = await accessor.EditIssueAsync(request, operation.Token);
+            if (!result.Succeeded || result.Value is null)
+            {
+                return Complete(operation, () => ApplyWriteFailure(result.FailureKind));
+            }
+
+            return await RefreshAfterWriteAsync(operation, issueId);
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return Complete(operation, ApplyWriteCancellation);
+        }
+        catch (Exception)
+        {
+            return Complete(operation, ApplyWriteException);
+        }
+        finally
+        {
+            EndOperation(operation);
+        }
+    }
+
+    /// <summary>Adds a local Git-Bug comment to the selected issue.</summary>
+    public async Task<bool> AddCommentToSelectedIssueAsync(
+        string? body,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (!TryGetWriteContext(GitBugWriteOperations.CommentCreate, body, body, allowEmptyBody: false,
+                out var issueId, out var repository, out var message))
+        {
+            return Reject(message!);
+        }
+
+        var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.AddingComment, () =>
+        {
+            State.WriteOperation = GitBugWriteOperations.CommentCreate;
+            State.LastWriteSucceeded = null;
+            State.LastRefreshSucceeded = null;
+        });
+        var request = new GitBugCommentCreateRequest(issueId, body!,
+            new(repository, issueId, string.Empty, GitBugWriteOperations.CommentCreate),
+            new(GitBugWriteContract.SupportedStorageVersion, GitBugWriteContract.Utf8Encoding, true));
+
+        try
+        {
+            var result = await accessor.CreateCommentAsync(request, operation.Token);
+            if (!result.Succeeded || result.Value is null)
+            {
+                return Complete(operation, () => ApplyWriteFailure(result.FailureKind));
+            }
+
+            return await RefreshAfterWriteAsync(operation, issueId);
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return Complete(operation, ApplyWriteCancellation);
+        }
+        catch (Exception)
+        {
+            return Complete(operation, ApplyWriteException);
+        }
+        finally
+        {
+            EndOperation(operation);
+        }
+    }
+
+    private bool TryGetWriteContext(string operation, string? first, string? second, bool allowEmptyBody,
+        out GitBugIssueId issueId, out GitBugRepositoryIdentity repository, out string? message)
+    {
+        issueId = default;
+        repository = default!;
+        message = null;
+        if (!State.RepositoryAvailable || repositoryIdentity is null)
+        {
+            message = "Open a repository before editing Git-Bug issues.";
+            return false;
+        }
+
+        if (State.SelectedIssueId is not { } selected || State.SelectedIssue is null || selected != State.SelectedIssue.Summary.Id)
+        {
+            message = "Choose an issue before changing Git-Bug data.";
+            return false;
+        }
+
+        if (!IsValidIssueId(selected))
+        {
+            message = "Choose a valid issue before changing Git-Bug data.";
+            return false;
+        }
+
+        var value = operation == GitBugWriteOperations.IssueEdit ? first : second;
+        if (value is null || (operation == GitBugWriteOperations.IssueEdit && second is null)
+            || (!allowEmptyBody && value.Length == 0) || value.IndexOfAny(['\0', '\r', '\n']) >= 0)
+        {
+            message = "Enter valid Git-Bug text without control characters.";
+            return false;
+        }
+
+        if (operation == GitBugWriteOperations.IssueEdit && (first!.Length > GitBugWriteContract.MaximumTitleLength
+            || second!.Length > GitBugWriteContract.MaximumBodyLength
+            || second.IndexOfAny(['\0', '\r', '\n']) >= 0))
+        {
+            message = "The Git-Bug issue text is too long.";
+            return false;
+        }
+
+        if (operation == GitBugWriteOperations.CommentCreate && value.Length > GitBugWriteContract.MaximumBodyLength)
+        {
+            message = "The Git-Bug comment is too long.";
+            return false;
+        }
+
+        issueId = selected;
+        repository = new(repositoryIdentity.RepositoryUrl, repositoryWorkspaceName);
+        return true;
+    }
+
+    private async Task<bool> RefreshAfterWriteAsync(OperationContext operation, GitBugIssueId issueId)
+    {
+        var detail = await accessor.GetIssueAsync(issueId, operation.Token);
+        var list = hasListContext ? await accessor.ListIssuesAsync(lastQuery, operation.Token) : null;
+        return Complete(operation, () =>
+        {
+            if (operation.Token.IsCancellationRequested)
+            {
+                return ApplyWriteCancellation();
+            }
+
+            State.Status = GitBugWorkspaceStatus.RefreshingAfterWrite;
+            if (!detail.Succeeded || detail.Value is null || detail.Value.Summary.Id != issueId)
+            {
+                State.LastWriteSucceeded = true;
+                State.LastRefreshSucceeded = false;
+                ApplyFailure(detail.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed, false);
+                return false;
+            }
+
+            if (list is not null && (!list.Succeeded || list.Value is null))
+            {
+                State.LastWriteSucceeded = true;
+                State.LastRefreshSucceeded = false;
+                ApplyFailure(list.FailureKind, true);
+                return false;
+            }
+
+            if (list?.Value is { } page)
+            {
+                State.Issues = page.Issues;
+                State.TotalCount = page.TotalCount;
+                State.NextCursor = page.NextCursor;
+                hasListContext = true;
+            }
+            State.SelectedIssueId = issueId;
+            State.SelectedIssue = detail.Value;
+            State.Status = GitBugWorkspaceStatus.DetailReady;
+            State.Message = "Local Git-Bug changes saved. No commit or push was performed.";
+            State.FailureKind = null;
+            State.LastWriteSucceeded = true;
+            State.LastRefreshSucceeded = true;
+            return true;
+        });
+    }
+
+    private bool ApplyWriteFailure(GitOperationFailureKind? kind)
+    {
+        State.LastWriteSucceeded = false;
+        State.LastRefreshSucceeded = null;
+        State.FailureKind = kind ?? GitOperationFailureKind.GitBugWriteUnknown;
+        State.Status = State.FailureKind switch
+        {
+            GitOperationFailureKind.GitBugWriteUnsupportedFormat => GitBugWorkspaceStatus.Unsupported,
+            GitOperationFailureKind.GitBugWriteUnavailable => GitBugWorkspaceStatus.Unavailable,
+            _ => GitBugWorkspaceStatus.Failed
+        };
+        State.Message = State.FailureKind switch
+        {
+            GitOperationFailureKind.GitBugWriteUnsupportedFormat => "Git-Bug editing is not supported for this data version.",
+            GitOperationFailureKind.GitBugWriteUnavailable => "Git-Bug editing is unavailable for this repository.",
+            GitOperationFailureKind.GitBugWriteConflict or GitOperationFailureKind.GitBugWritePreconditionFailed => "The issue changed; reload it and review the edit again.",
+            _ => "The local Git-Bug change could not be saved safely."
+        };
+        return false;
+    }
+
+    private bool ApplyWriteCancellation()
+    {
+        State.LastWriteSucceeded = false;
+        State.Status = GitBugWorkspaceStatus.Failed;
+        State.Message = "The local Git-Bug change was cancelled.";
+        State.FailureKind = GitOperationFailureKind.Unknown;
+        State.LastRefreshSucceeded = false;
+        return false;
+    }
+
+    private bool ApplyWriteException()
+    {
+        State.LastWriteSucceeded = false;
+        State.Status = GitBugWorkspaceStatus.Failed;
+        State.Message = "The local Git-Bug change could not be saved safely.";
+        State.FailureKind = GitOperationFailureKind.GitBugWriteUnknown;
+        State.LastRefreshSucceeded = false;
+        return false;
+    }
+
     public void ReturnToIssueList()
     {
         ObjectDisposedException.ThrowIf(disposed, this);
@@ -152,6 +387,9 @@ public sealed class GitBugWorkspaceManager : IDisposable
             State.SelectedIssue = null;
             State.Message = null;
             State.FailureKind = null;
+            State.WriteOperation = null;
+            State.LastWriteSucceeded = null;
+            State.LastRefreshSucceeded = null;
             State.Status = State.RepositoryAvailable && hasListContext
                 ? GitBugWorkspaceStatus.ListReady
                 : GitBugWorkspaceStatus.Idle;
@@ -336,6 +574,8 @@ public sealed class GitBugWorkspaceManager : IDisposable
             State.Status = status;
             State.Message = message;
             State.FailureKind = GitOperationFailureKind.Unknown;
+            State.LastWriteSucceeded = null;
+            State.LastRefreshSucceeded = null;
         }
 
         CancelSafely(supersededOperation);
@@ -375,6 +615,9 @@ public sealed class GitBugWorkspaceManager : IDisposable
         State.SelectedIssue = null;
         State.Message = null;
         State.FailureKind = null;
+        State.WriteOperation = null;
+        State.LastWriteSucceeded = null;
+        State.LastRefreshSucceeded = null;
     }
 
     private static bool IsValidQuery(GitBugIssueQuery? query) =>

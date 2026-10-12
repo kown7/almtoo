@@ -234,6 +234,46 @@ public sealed class GitBugWorkspaceManagerTests
     }
 
     [Fact]
+    public async Task Valid_issue_edit_calls_accessor_once_and_refreshes_detail_and_list()
+    {
+        var fake = new FakeGitBugAccessor
+        {
+            EditHandler = request => ValueTask.FromResult(Success(new GitBugIssueEditResult(request.IssueId, "revision", "review")))
+        };
+        using var manager = CreateManager(fake);
+        manager.SetRepository(Repository);
+        Assert.True(await manager.LoadIssuesAsync(new(SearchText: "reviewed")));
+        Assert.True(await manager.OpenIssueAsync(FirstId));
+
+        Assert.True(await manager.EditSelectedIssueAsync("Updated title", "Updated description"));
+
+        var request = Assert.Single(fake.EditRequests);
+        Assert.Equal(FirstId, request.IssueId);
+        Assert.Equal("Updated title", request.Title);
+        Assert.Equal("Updated description", request.Description);
+        Assert.Equal(GitBugWorkspaceStatus.DetailReady, manager.State.Status);
+        Assert.True(manager.State.LastWriteSucceeded);
+        Assert.True(manager.State.LastRefreshSucceeded);
+        Assert.Contains("No commit or push", manager.State.Message);
+    }
+
+    [Fact]
+    public async Task Invalid_edit_and_comment_inputs_do_not_call_accessor()
+    {
+        var fake = new FakeGitBugAccessor();
+        using var manager = CreateManager(fake);
+        manager.SetRepository(Repository);
+        Assert.True(await manager.LoadIssuesAsync(new()));
+        Assert.True(await manager.OpenIssueAsync(FirstId));
+
+        Assert.False(await manager.EditSelectedIssueAsync("bad\n title", "description"));
+        Assert.False(await manager.AddCommentToSelectedIssueAsync(string.Empty));
+        Assert.Empty(fake.EditRequests);
+        Assert.Empty(fake.CommentRequests);
+        Assert.Contains("valid", manager.State.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Accessor_exception_and_mismatched_detail_are_sanitized()
     {
         const string secret = "secret-object-content";
@@ -266,10 +306,16 @@ public sealed class GitBugWorkspaceManagerTests
     {
         public List<GitBugIssueQuery> ListQueries { get; } = [];
         public List<GitBugIssueId> DetailIds { get; } = [];
+        public List<GitBugIssueEditRequest> EditRequests { get; } = [];
+        public List<GitBugCommentCreateRequest> CommentRequests { get; } = [];
         public Func<GitBugIssueQuery, CancellationToken, ValueTask<GitOperationResult<GitBugIssuePage>>> ListHandler { get; set; } =
             (_, _) => ValueTask.FromResult(Success(new GitBugIssuePage([FirstIssue, SecondIssue], null, 2)));
         public Func<GitBugIssueId, CancellationToken, ValueTask<GitOperationResult<GitBugIssueDetail>>> DetailHandler { get; set; } =
             (_, _) => ValueTask.FromResult(Success(FirstDetail));
+        public Func<GitBugIssueEditRequest, ValueTask<GitOperationResult<GitBugIssueEditResult>>> EditHandler { get; set; } =
+            _ => ValueTask.FromResult(Failure<GitBugIssueEditResult>(GitOperationFailureKind.GitBugWriteUnavailable));
+        public Func<GitBugCommentCreateRequest, ValueTask<GitOperationResult<GitBugCommentCreateResult>>> CommentHandler { get; set; } =
+            _ => ValueTask.FromResult(Failure<GitBugCommentCreateResult>(GitOperationFailureKind.GitBugWriteUnavailable));
 
         public ValueTask<GitOperationResult<GitBugIssuePage>> ListIssuesAsync(
             GitBugIssueQuery query,
@@ -289,12 +335,18 @@ public sealed class GitBugWorkspaceManagerTests
 
         public ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
             GitBugIssueEditRequest request,
-            CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(Failure<GitBugIssueEditResult>(GitOperationFailureKind.GitBugWriteUnavailable));
+            CancellationToken cancellationToken = default)
+        {
+            EditRequests.Add(request);
+            return EditHandler(request);
+        }
 
         public ValueTask<GitOperationResult<GitBugCommentCreateResult>> CreateCommentAsync(
             GitBugCommentCreateRequest request,
-            CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(Failure<GitBugCommentCreateResult>(GitOperationFailureKind.GitBugWriteUnavailable));
+            CancellationToken cancellationToken = default)
+        {
+            CommentRequests.Add(request);
+            return CommentHandler(request);
+        }
     }
 }
