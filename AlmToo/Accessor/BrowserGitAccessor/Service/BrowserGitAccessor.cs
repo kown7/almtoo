@@ -253,23 +253,43 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             issueId.Value);
     }
 
-    public ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
+    public async ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
         GitBugIssueEditRequest request,
-        CancellationToken cancellationToken = default) =>
-        ValueTask.FromResult(SanitizedGitBugWriteFailure<GitBugIssueEditResult>(
-            GitBugWriteOperations.IssueEdit,
-            GitBugWriteContract.IsValidIssueEdit(request)
-                ? GitOperationFailureKind.GitBugWriteUnavailable
-                : GitOperationFailureKind.GitBugWriteInvalidRequest));
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = GitBugWriteOperations.IssueEdit;
+        if (!GitBugWriteContract.IsValidIssueEdit(request))
+        {
+            return SanitizedGitBugWriteFailure<GitBugIssueEditResult>(operation, GitOperationFailureKind.GitBugWriteInvalidRequest);
+        }
 
-    public ValueTask<GitOperationResult<GitBugCommentCreateResult>> CreateCommentAsync(
+        var dto = new GitBugIssueEditRequestDto(request);
+        return await InvokeGitBugWithValueAsync<GitBugWriteResultDto, GitBugIssueEditResult>(
+            operation,
+            "editGitBugIssue",
+            value => value.ToIssueEditResult(),
+            cancellationToken,
+            dto);
+    }
+
+    public async ValueTask<GitOperationResult<GitBugCommentCreateResult>> CreateCommentAsync(
         GitBugCommentCreateRequest request,
-        CancellationToken cancellationToken = default) =>
-        ValueTask.FromResult(SanitizedGitBugWriteFailure<GitBugCommentCreateResult>(
-            GitBugWriteOperations.CommentCreate,
-            GitBugWriteContract.IsValidComment(request)
-                ? GitOperationFailureKind.GitBugWriteUnavailable
-                : GitOperationFailureKind.GitBugWriteInvalidRequest));
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = GitBugWriteOperations.CommentCreate;
+        if (!GitBugWriteContract.IsValidComment(request))
+        {
+            return SanitizedGitBugWriteFailure<GitBugCommentCreateResult>(operation, GitOperationFailureKind.GitBugWriteInvalidRequest);
+        }
+
+        var dto = new GitBugCommentCreateRequestDto(request);
+        return await InvokeGitBugWithValueAsync<GitBugWriteResultDto, GitBugCommentCreateResult>(
+            operation,
+            "createGitBugComment",
+            value => value.ToCommentCreateResult(),
+            cancellationToken,
+            dto);
+    }
 
     public async ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default)
     {
@@ -616,6 +636,13 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
         "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
         "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+        "gitBugWriteInvalidRequest" => GitOperationFailureKind.GitBugWriteInvalidRequest,
+        "gitBugWritePreconditionFailed" => GitOperationFailureKind.GitBugWritePreconditionFailed,
+        "gitBugWriteConflict" => GitOperationFailureKind.GitBugWriteConflict,
+        "gitBugWriteUnsupportedFormat" => GitOperationFailureKind.GitBugWriteUnsupportedFormat,
+        "gitBugWriteUnavailable" => GitOperationFailureKind.GitBugWriteUnavailable,
+        "gitBugWriteSerializationFailed" => GitOperationFailureKind.GitBugWriteSerializationFailed,
+        "gitBugWriteUnknown" => GitOperationFailureKind.GitBugWriteUnknown,
         "unknown" => GitOperationFailureKind.Unknown,
         _ => null
     };
@@ -843,6 +870,57 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 Message = message,
                 Diagnostic = diagnostic
             };
+    }
+
+    private sealed record GitBugIssueEditRequestDto
+    {
+        public GitBugIssueEditRequestDto(GitBugIssueEditRequest request)
+        {
+            IssueId = request.IssueId.Value;
+            Title = request.Title;
+            Description = request.Description;
+            Preconditions = request.Preconditions;
+            Serialization = request.Serialization;
+        }
+
+        [JsonPropertyName("issueId")] public string IssueId { get; init; }
+        [JsonPropertyName("title")] public string Title { get; init; }
+        [JsonPropertyName("description")] public string Description { get; init; }
+        [JsonPropertyName("preconditions")] public GitBugWritePreconditions Preconditions { get; init; }
+        [JsonPropertyName("serialization")] public GitBugSerializationMetadata Serialization { get; init; }
+    }
+
+    private sealed record GitBugCommentCreateRequestDto
+    {
+        public GitBugCommentCreateRequestDto(GitBugCommentCreateRequest request)
+        {
+            IssueId = request.IssueId.Value;
+            Body = request.Body;
+            Preconditions = request.Preconditions;
+            Serialization = request.Serialization;
+        }
+
+        [JsonPropertyName("issueId")] public string IssueId { get; init; }
+        [JsonPropertyName("body")] public string Body { get; init; }
+        [JsonPropertyName("preconditions")] public GitBugWritePreconditions Preconditions { get; init; }
+        [JsonPropertyName("serialization")] public GitBugSerializationMetadata Serialization { get; init; }
+    }
+
+    private sealed record GitBugWriteResultDto
+    {
+        [JsonPropertyName("issueId")] public string? IssueId { get; init; }
+        [JsonPropertyName("revision")] public string? Revision { get; init; }
+        [JsonPropertyName("reviewId")] public string? ReviewId { get; init; }
+        [JsonPropertyName("commentId")] public string? CommentId { get; init; }
+
+        public GitBugIssueEditResult ToIssueEditResult() =>
+            new(new GitBugIssueId(RequireValue(IssueId)), RequireValue(Revision), RequireValue(ReviewId));
+
+        public GitBugCommentCreateResult ToCommentCreateResult() =>
+            new(new GitBugIssueId(RequireValue(IssueId)), RequireValue(CommentId), RequireValue(Revision), RequireValue(ReviewId));
+
+        private static string RequireValue(string? value) =>
+            !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException("Git-Bug write response was incomplete.");
     }
 
     private sealed record GitBugIssueQueryDto
