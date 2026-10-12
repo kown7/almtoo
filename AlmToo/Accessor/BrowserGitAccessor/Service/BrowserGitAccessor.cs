@@ -253,6 +253,24 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             issueId.Value);
     }
 
+    public ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
+        GitBugIssueEditRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(SanitizedGitBugWriteFailure<GitBugIssueEditResult>(
+            GitBugWriteOperations.IssueEdit,
+            GitBugWriteContract.IsValidIssueEdit(request)
+                ? GitOperationFailureKind.GitBugWriteUnavailable
+                : GitOperationFailureKind.GitBugWriteInvalidRequest));
+
+    public ValueTask<GitOperationResult<GitBugCommentCreateResult>> CreateCommentAsync(
+        GitBugCommentCreateRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(SanitizedGitBugWriteFailure<GitBugCommentCreateResult>(
+            GitBugWriteOperations.CommentCreate,
+            GitBugWriteContract.IsValidComment(request)
+                ? GitOperationFailureKind.GitBugWriteUnavailable
+                : GitOperationFailureKind.GitBugWriteInvalidRequest));
+
     public async ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default)
     {
         const string operation = "hasCredential";
@@ -502,8 +520,29 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
         "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
         "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+        "gitBugWriteInvalidRequest" => GitOperationFailureKind.GitBugWriteInvalidRequest,
+        "gitBugWritePreconditionFailed" => GitOperationFailureKind.GitBugWritePreconditionFailed,
+        "gitBugWriteConflict" => GitOperationFailureKind.GitBugWriteConflict,
+        "gitBugWriteUnsupportedFormat" => GitOperationFailureKind.GitBugWriteUnsupportedFormat,
+        "gitBugWriteUnavailable" => GitOperationFailureKind.GitBugWriteUnavailable,
+        "gitBugWriteSerializationFailed" => GitOperationFailureKind.GitBugWriteSerializationFailed,
+        "gitBugWriteUnknown" => GitOperationFailureKind.GitBugWriteUnknown,
         _ => GitOperationFailureKind.Unknown
     };
+
+    private static GitOperationResult<TValue> SanitizedGitBugWriteFailure<TValue>(
+        string operation,
+        GitOperationFailureKind failureKind)
+    {
+        var message = failureKind switch
+        {
+            GitOperationFailureKind.GitBugWriteInvalidRequest => "The Git-Bug write request is not valid.",
+            GitOperationFailureKind.GitBugWriteUnavailable => "Git-Bug writing is not available yet.",
+            _ => "The Git-Bug write could not be completed."
+        };
+
+        return new(operation, false, message, Value: default, Diagnostic: null, FailureKind: failureKind);
+    }
 
     private static GitOperationResult<TValue> SanitizedGitBugFailure<TValue>(
         string operation,

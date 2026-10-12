@@ -286,5 +286,15 @@ public sealed class GitBugWorkspaceManagerTests
             DetailIds.Add(issueId);
             return DetailHandler(issueId, cancellationToken);
         }
+
+        public ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
+            GitBugIssueEditRequest request,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Failure<GitBugIssueEditResult>(GitOperationFailureKind.GitBugWriteUnavailable));
+
+        public ValueTask<GitOperationResult<GitBugCommentCreateResult>> CreateCommentAsync(
+            GitBugCommentCreateRequest request,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Failure<GitBugCommentCreateResult>(GitOperationFailureKind.GitBugWriteUnavailable));
     }
 }

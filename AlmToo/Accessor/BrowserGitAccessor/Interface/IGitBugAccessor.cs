@@ -12,4 +12,12 @@ public interface IGitBugAccessor
     ValueTask<GitOperationResult<GitBugIssueDetail>> GetIssueAsync(
         GitBugIssueId issueId,
         CancellationToken cancellationToken = default);
+
+    ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
+        GitBugIssueEditRequest request,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<GitOperationResult<GitBugCommentCreateResult>> CreateCommentAsync(
+        GitBugCommentCreateRequest request,
+        CancellationToken cancellationToken = default);
 }

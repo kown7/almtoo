@@ -55,6 +55,66 @@ public sealed class BrowserGitContractsTests
     }
 
     [Fact]
+    public void GitBug_write_contracts_are_immutable_bounded_and_credential_free()
+    {
+        var issueId = new GitBugIssueId(new string('a', 64));
+        var preconditions = new GitBugWritePreconditions(
+            new GitBugRepositoryIdentity("https://github.com/example/project.git", "workspace"),
+            issueId,
+            "revision-1",
+            GitBugWriteOperations.IssueEdit);
+        var request = new GitBugIssueEditRequest(
+            issueId,
+            "Updated title",
+            "Updated description",
+            preconditions,
+            new GitBugSerializationMetadata(
+                GitBugWriteContract.SupportedStorageVersion,
+                GitBugWriteContract.Utf8Encoding,
+                Deterministic: true));
+
+        Assert.True(GitBugWriteContract.IsValidIssueEdit(request));
+        Assert.Equal("gitBug.issue.edit", GitBugWriteOperations.IssueEdit);
+        Assert.Equal("gitBug.comment.create", GitBugWriteOperations.CommentCreate);
+        Assert.Equal("gitBug.write.review", GitBugWriteOperations.WriteReview);
+        Assert.Equal("gitBug.write.commit", GitBugWriteOperations.WriteCommit);
+        Assert.All(new[]
+        {
+            typeof(GitBugIssueEditRequest), typeof(GitBugCommentCreateRequest),
+            typeof(GitBugWritePreconditions), typeof(GitBugWriteReview),
+            typeof(GitBugIssueEditResult), typeof(GitBugCommentCreateResult),
+            typeof(GitBugWriteReceipt)
+        }, type => Assert.DoesNotContain(type.GetProperties(), property =>
+            property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("javascript", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
+    public void GitBug_write_contract_rejects_ambiguous_or_unsupported_values()
+    {
+        var issueId = new GitBugIssueId(new string('a', 64));
+        var preconditions = new GitBugWritePreconditions(
+            new GitBugRepositoryIdentity("http://user:secret@example.test/repository.git", "workspace"),
+            issueId,
+            "revision\nwith-control",
+            GitBugWriteOperations.IssueEdit);
+        var request = new GitBugIssueEditRequest(
+            issueId,
+            new string('x', GitBugWriteContract.MaximumTitleLength + 1),
+            "description",
+            preconditions,
+            new GitBugSerializationMetadata("v0.10.0", "utf-16", Deterministic: false));
+
+        Assert.False(GitBugWriteContract.IsValidIssueEdit(request));
+        Assert.False(GitBugWriteContract.IsValidOperation("gitBug.issue.delete"));
+        Assert.True(GitBugWriteContract.IsValidFailure(GitOperationFailureKind.GitBugWriteConflict));
+        Assert.False(GitBugWriteContract.IsValidFailure(GitOperationFailureKind.Unknown));
+    }
+
+    [Fact]
     public void Synchronization_contracts_do_not_model_credentials_or_raw_diagnostics()
     {
         var contractTypes = new[]
