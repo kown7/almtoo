@@ -213,6 +213,95 @@
     margin: 0;
 }
 
+::deep .gitbug-local-boundary,
+::deep .gitbug-inline-message,
+::deep .gitbug-save-status {
+    border-radius: 0.65rem;
+    margin: 0;
+    padding: 0.75rem 1rem;
+}
+
+::deep .gitbug-local-boundary {
+    background: #eff6ff;
+    border-left: 0.25rem solid #2563eb;
+    color: #1e3a8a;
+}
+
+::deep .gitbug-inline-message[role="alert"] {
+    background: #fef2f2;
+    border-left: 0.25rem solid #b91c1c;
+    color: #991b1b;
+}
+
+::deep .gitbug-inline-message,
+::deep .gitbug-save-status {
+    background: #f0fdf4;
+    border-left: 0.25rem solid #16a34a;
+    color: #166534;
+}
+
+::deep .gitbug-edit-panel,
+::deep .gitbug-comment-form {
+    border-top: 1px solid #e2e8f0;
+    display: grid;
+    gap: 0.9rem;
+    padding-top: 1rem;
+}
+
+::deep .gitbug-section-heading {
+    display: grid;
+    gap: 0.35rem;
+}
+
+::deep .gitbug-section-heading p {
+    color: #64748b;
+    margin: 0;
+}
+
+::deep .gitbug-form {
+    display: grid;
+    gap: 0.85rem;
+}
+
+::deep .gitbug-form__field {
+    display: grid;
+    gap: 0.35rem;
+}
+
+::deep .gitbug-form__field label {
+    font-weight: 700;
+}
+
+::deep .gitbug-form__field input,
+::deep .gitbug-form__field textarea {
+    border: 1px solid #94a3b8;
+    border-radius: 0.5rem;
+    color: #0f172a;
+    font: inherit;
+    padding: 0.65rem 0.75rem;
+    width: 100%;
+}
+
+::deep .gitbug-form__field input:focus-visible,
+::deep .gitbug-form__field textarea:focus-visible {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.15);
+    outline: none;
+}
+
+::deep .gitbug-form__field input:disabled,
+::deep .gitbug-form__field textarea:disabled,
+::deep button:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+::deep .gitbug-form__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+}
+
 @media (max-width: 640px) {
     .gitbug-shell {
         max-width: 100%;

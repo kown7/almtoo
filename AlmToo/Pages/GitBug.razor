@@ -42,9 +42,15 @@
     {
         <GitBugIssueList State="State" OnIssueSelected="OpenIssueAsync" />
     }
-    else if (State.Status == GitBugWorkspaceStatus.DetailReady)
+    else if (State.SelectedIssue is not null && (State.Status == GitBugWorkspaceStatus.DetailReady
+        || State.Status == GitBugWorkspaceStatus.EditingIssue
+        || State.Status == GitBugWorkspaceStatus.AddingComment
+        || State.Status == GitBugWorkspaceStatus.RefreshingAfterWrite))
     {
-        <GitBugIssueDetail State="State" OnBackRequested="ReturnToIssueList" />
+        <GitBugIssueDetail State="State"
+                           OnBackRequested="ReturnToIssueList"
+                           OnIssueEdited="EditIssueAsync"
+                           OnCommentAdded="AddCommentAsync" />
     }
     else if (State.Status is GitBugWorkspaceStatus.Unavailable or GitBugWorkspaceStatus.Unsupported or GitBugWorkspaceStatus.Failed)
     {
@@ -103,6 +109,10 @@
 
     private async Task LoadIssuesAsync() => await GitBugWorkspace.LoadIssuesAsync();
     private async Task OpenIssueAsync(string issueId) => await GitBugWorkspace.OpenIssueAsync(issueId);
+    private async Task EditIssueAsync((string Title, string Description) draft) =>
+        await GitBugWorkspace.EditSelectedIssueAsync(draft.Title, draft.Description);
+    private async Task AddCommentAsync(string body) =>
+        await GitBugWorkspace.AddCommentToSelectedIssueAsync(body);
     private void ReturnToIssueList() => GitBugWorkspace.ReturnToIssueList();
 
     private async Task RetryAsync()

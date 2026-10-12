@@ -3,7 +3,7 @@
 @if (State.SelectedIssue is { } issue)
 {
     <article class="gitbug-detail" aria-labelledby="gitbug-detail-heading">
-        <button class="gitbug-back" type="button" @onclick="OnBackRequested">
+        <button class="gitbug-back" type="button" @onclick="OnBackRequested" disabled="@State.IsBusy">
             <span aria-hidden="true">←</span> Back to issues
         </button>
 
@@ -27,6 +27,40 @@
                 </div>
             }
         </header>
+
+        <p class="gitbug-local-boundary" role="note">
+            Changes are saved only to this browser-local Git-Bug workspace. No commit or push is performed.
+        </p>
+
+        @if (!string.IsNullOrWhiteSpace(State.Message) && State.LastWriteSucceeded is not true)
+        {
+            <div class="gitbug-inline-message" role="@(State.Status == GitBugWorkspaceStatus.Failed ? "alert" : "status")" aria-live="polite">
+                @State.Message
+            </div>
+        }
+
+        <section class="gitbug-edit-panel" aria-labelledby="gitbug-edit-heading">
+            <div class="gitbug-section-heading">
+                <h3 id="gitbug-edit-heading">Edit issue</h3>
+                <p>Update the title and description locally for review.</p>
+            </div>
+            <form class="gitbug-form" @onsubmit="SubmitEditAsync" @onsubmit:preventDefault="true">
+                <div class="gitbug-form__field">
+                    <label for="gitbug-edit-title">Title</label>
+                    <input id="gitbug-edit-title" name="title" type="text" maxlength="256" required
+                           @bind="editTitle" disabled="@State.IsBusy" />
+                </div>
+                <div class="gitbug-form__field">
+                    <label for="gitbug-edit-description">Description</label>
+                    <textarea id="gitbug-edit-description" name="description" maxlength="16384" rows="6"
+                              @bind="editDescription" disabled="@State.IsBusy"></textarea>
+                </div>
+                <div class="gitbug-form__actions">
+                    <button class="gitbug-action" type="submit" disabled="@State.IsBusy">@(State.Status == GitBugWorkspaceStatus.EditingIssue ? "Saving…" : "Save issue locally")</button>
+                    <button class="gitbug-secondary-action" type="button" @onclick="ResetDrafts" disabled="@State.IsBusy">Cancel</button>
+                </div>
+            </form>
+        </section>
 
         <section class="gitbug-detail__description" aria-labelledby="gitbug-description-heading">
             <h3 id="gitbug-description-heading">Description</h3>
@@ -59,10 +93,75 @@
                 </ol>
             }
         </section>
+
+        <section class="gitbug-comment-form" aria-labelledby="gitbug-comment-form-heading">
+            <h3 id="gitbug-comment-form-heading">Add a comment</h3>
+            <form class="gitbug-form" @onsubmit="SubmitCommentAsync" @onsubmit:preventDefault="true">
+                <div class="gitbug-form__field">
+                    <label for="gitbug-comment-body">Comment</label>
+                    <textarea id="gitbug-comment-body" name="comment" maxlength="16384" rows="4" required
+                              @bind="commentBody" disabled="@State.IsBusy"></textarea>
+                </div>
+                <div class="gitbug-form__actions">
+                    <button class="gitbug-action" type="submit" disabled="@State.IsBusy">@(State.Status == GitBugWorkspaceStatus.AddingComment ? "Saving…" : "Add comment locally")</button>
+                    <button class="gitbug-secondary-action" type="button" @onclick="ClearComment" disabled="@State.IsBusy">Clear</button>
+                </div>
+            </form>
+        </section>
+
+        @if (State.LastWriteSucceeded is true)
+        {
+            <p class="gitbug-save-status" role="status" aria-live="polite">@State.Message</p>
+        }
     </article>
 }
 
 @code {
+    private string editTitle = string.Empty;
+    private string editDescription = string.Empty;
+    private string commentBody = string.Empty;
+    private string? draftIssueId;
+
     [Parameter, EditorRequired] public GitBugWorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback OnBackRequested { get; set; }
+    [Parameter] public EventCallback<(string Title, string Description)> OnIssueEdited { get; set; }
+    [Parameter] public EventCallback<string> OnCommentAdded { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (State.SelectedIssue is { } issue && draftIssueId != issue.Summary.Id.Value)
+        {
+            draftIssueId = issue.Summary.Id.Value;
+            editTitle = issue.Summary.Title;
+            editDescription = issue.Description;
+            commentBody = string.Empty;
+        }
+    }
+
+    private async Task SubmitEditAsync()
+    {
+        if (!State.IsBusy)
+        {
+            await OnIssueEdited.InvokeAsync((editTitle, editDescription));
+        }
+    }
+
+    private async Task SubmitCommentAsync()
+    {
+        if (!State.IsBusy)
+        {
+            await OnCommentAdded.InvokeAsync(commentBody);
+        }
+    }
+
+    private void ResetDrafts()
+    {
+        if (State.SelectedIssue is { } issue)
+        {
+            editTitle = issue.Summary.Title;
+            editDescription = issue.Description;
+        }
+    }
+
+    private void ClearComment() => commentBody = string.Empty;
 }
