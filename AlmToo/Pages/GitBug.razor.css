@@ -38,6 +38,60 @@
     text-transform: uppercase;
 }
 
+::deep .gitbug-push-panel {
+    display: grid;
+    gap: 1rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    background: #f8fafc;
+}
+
+::deep .gitbug-push-panel p {
+    margin: 0;
+}
+
+::deep .gitbug-push-review {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0;
+}
+
+::deep .gitbug-push-review div {
+    display: grid;
+    grid-template-columns: minmax(7rem, 0.3fr) 1fr;
+    gap: 0.75rem;
+    align-items: baseline;
+}
+
+::deep .gitbug-push-review dt {
+    color: #475569;
+    font-weight: 700;
+}
+
+::deep .gitbug-push-review dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+::deep .gitbug-push-recovery {
+    display: grid;
+    gap: 0.5rem;
+    border-left: 0.25rem solid #b45309;
+    padding: 0.75rem 1rem;
+    background: #fffbeb;
+}
+
+::deep .gitbug-credential-form small {
+    color: #475569;
+}
+
+::deep .gitbug-push-panel button:focus-visible,
+::deep .gitbug-push-panel input:focus-visible {
+    outline: 3px solid #2563eb;
+    outline-offset: 2px;
+}
+
 .gitbug-state-panel,
 ::deep .gitbug-list,
 ::deep .gitbug-detail {
@@ -241,11 +295,53 @@
 }
 
 ::deep .gitbug-edit-panel,
+::deep .gitbug-commit-panel,
 ::deep .gitbug-comment-form {
     border-top: 1px solid #e2e8f0;
     display: grid;
     gap: 0.9rem;
     padding-top: 1rem;
+}
+
+::deep .gitbug-commit-review,
+::deep .gitbug-commit-confirmation {
+    background: #f8fafc;
+    border: 1px solid #dbe3ef;
+    border-radius: 0.65rem;
+    display: grid;
+    gap: 0.65rem;
+    padding: 0.9rem 1rem;
+}
+
+::deep .gitbug-commit-review h4,
+::deep .gitbug-commit-confirmation h4 {
+    margin: 0;
+}
+
+::deep .gitbug-changed-files {
+    display: grid;
+    gap: 0.45rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+::deep .gitbug-changed-files li {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    justify-content: space-between;
+}
+
+::deep .gitbug-changed-files code {
+    overflow-wrap: anywhere;
+}
+
+::deep .gitbug-change-kind {
+    color: #475569;
+    font-size: 0.85rem;
+    font-weight: 700;
 }
 
 ::deep .gitbug-section-heading {
