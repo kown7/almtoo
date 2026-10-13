@@ -409,6 +409,93 @@ test('getStatus returns a structured failure when git status cannot be read', as
   assert.match(result.diagnostic, /quota exceeded/);
 });
 
+test('getStatus exposes a bounded changed-file preview and commit returns safe local metadata without push', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  let statusCalls = 0;
+  let commitCalls = 0;
+  let pushCalls = 0;
+  installFakeGitRuntime({
+    async statusMatrix() {
+      statusCalls += 1;
+      return [
+        ['src/README.md', 1, 2, 2],
+        ['new-note.txt', 0, 2, 2]
+      ];
+    },
+    async add({ filepath }) {
+      assert.match(filepath, /^(src\/README\.md|new-note\.txt)$/);
+    },
+    async commit({ message, author }) {
+      commitCalls += 1;
+      assert.equal(message, 'Review local changes');
+      assert.deepEqual(author, { name: 'AlmToo User', email: 'user@example.test' });
+      return '0123456789abcdef0123456789abcdef01234567';
+    },
+    async push() {
+      pushCalls += 1;
+      throw new Error('push must not be called by local commit');
+    }
+  });
+
+  const engine = await importFreshModule();
+  assert.equal((await engine.cloneOrOpen({
+    repositoryUrl: 'https://example.test/repository.git',
+    workspaceName: 'demo'
+  })).succeeded, true);
+
+  const review = await engine.getStatus();
+  assert.equal(review.succeeded, true);
+  assert.deepEqual(review.value, [
+    { path: '/src/README.md', changeKind: 'Modified' },
+    { path: '/new-note.txt', changeKind: 'Untracked' }
+  ]);
+
+  const result = await engine.commit({
+    message: 'Review local changes',
+    authorName: 'AlmToo User',
+    authorEmail: 'user@example.test'
+  });
+  assert.equal(result.succeeded, true);
+  assert.deepEqual(result.value, {
+    commitId: '0123456789abcdef0123456789abcdef01234567',
+    message: 'Review local changes',
+    changedFileCount: 2
+  });
+  assert.equal(statusCalls, 2, 'commit refreshes the changed-file review before mutation');
+  assert.equal(commitCalls, 1);
+  assert.equal(pushCalls, 0);
+});
+
+test('commit maps browser Git mutation failures to bounded failure metadata', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  installFakeGitRuntime({
+    async statusMatrix() {
+      return [['notes.md', 1, 2, 2]];
+    },
+    async add() {
+      throw new Error('credential-bearing browser diagnostic must stay below the boundary');
+    }
+  });
+
+  const engine = await importFreshModule();
+  assert.equal((await engine.cloneOrOpen({
+    repositoryUrl: 'https://example.test/repository.git',
+    workspaceName: 'demo'
+  })).succeeded, true);
+
+  const result = await engine.commit({
+    message: 'Local change',
+    authorName: 'AlmToo User',
+    authorEmail: 'user@example.test'
+  });
+  assert.equal(result.succeeded, false);
+  assert.equal(result.operation, 'commit');
+  assert.match(result.message, /commit could not be created/i);
+  assert.equal(result.value, null);
+});
+
 test('commit validates author input and no-change repositories as structured failures', async () => {
   resetBrowserGlobals();
   installLoadingDocument();

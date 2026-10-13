@@ -2,6 +2,15 @@
 
 Use this checklist for every architecture-affecting plan, implementation, refactor, and review. Copy the result into the relevant plan, summary, pull request, or review artifact.
 
+## S03 Git-Bug local commit proof
+
+**Result:** PASS
+
+- **Client:** `GitBug.razor` and `GitBugIssueDetail.razor` render passive `GitBugWorkspaceState` and delegate review/commit intent callbacks; they do not access browser Git APIs, credentials, or raw diagnostics.
+- **Manager:** `GitBugWorkspaceManager` owns review loading, metadata validation, explicit confirmation, cancellation-safe transitions, status refresh, and bounded recoverable failures.
+- **Accessor:** `BrowserGitAccessor` and `browserGitEngine.js` validate bounded commit metadata, expose changed-file review and safe commit metadata, keep browser diagnostics below the managed boundary, and provide no push or credential call from the commit path.
+- **Proof:** focused Node tests cover changed-file preview, successful local commit, status refresh, malformed/empty metadata, categorized commit failure, and no-push behavior; .NET contract tests cover bounded credential-free DTO shape. The aggregate `npm test` suite is the final verification surface.
+
 ## 1. Layer assignments
 
 | Component | Layer | Cohesive responsibility | Allowed dependencies | Forbidden dependencies |
@@ -188,6 +197,16 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] `IGitBugAccessor` remains justified because it protects the browser Git/Git-Bug platform boundary and supplies the necessary substitution seam for deterministic Manager tests; no new interface, wrapper, Engine, or pass-through service was introduced.
 - [x] The local Git-Bug history commit required to advance an issue ref is distinct from an ordinary worktree commit: proof asserts `commitCreated: false`, zero push/add/remove calls, and writes confined to the approved bug ref; no push or credential path is reachable from these operations.
 - [x] Engine, fixture, Accessor, Manager, and architecture tests cover Unicode writes, malformed/unsupported/conflict failures, bounded redaction, bridge short-circuiting, stale completion protection, deterministic fixture hashes, and unchanged repository state.
+- [x] No architectural exception is required.
+
+**Result:** PASS
+
+## M009 S03 T04 Git-Bug preview-to-local-commit proof review
+
+- [x] Focused fixture-backed tests prove the Resource returns bounded changed-file previews, validates commit metadata before mutation, reports safe local commit metadata, refreshes status inputs, and maps commit failures without leaking raw browser diagnostics.
+- [x] Tests assert that the local commit path does not call `push` or require credentials; the Client remains dependent only on passive Manager state and explicit confirmation intent.
+- [x] `BrowserGitContracts.cs` and `IBrowserGitAccessor` remain the typed **Accessor** boundary, while `browserGitEngine.js` remains the browser-platform **Resource**. No Client-to-Resource dependency or pass-through interface is introduced.
+- [x] `gitBugClientArchitectureTests.mjs`, `browserGitArchitectureGateTests.mjs`, and `gitBugBrowserResourceTests.mjs` continue to enforce Client and Resource boundaries, fixture-only proof, and forbidden push/credential behavior.
 - [x] No architectural exception is required.
 
 **Result:** PASS

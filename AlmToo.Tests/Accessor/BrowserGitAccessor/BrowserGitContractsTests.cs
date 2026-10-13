@@ -136,4 +136,28 @@ public sealed class BrowserGitContractsTests
                 name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
         }
     }
+
+    [Fact]
+    public void Local_commit_contract_bounds_metadata_and_never_models_credentials_or_push()
+    {
+        var request = new CommitRequest("Review local changes", "Example Author", "author@example.test");
+        var info = new CommitInfo(new string('a', 40), request.Message, ChangedFileCount: 2);
+
+        Assert.True(BrowserGitCommitContract.IsValidCommitRequest(request));
+        Assert.Equal(40, info.CommitId.Length);
+        Assert.Equal(2, info.ChangedFileCount);
+        Assert.False(BrowserGitCommitContract.IsValidCommitRequest(new CommitRequest(string.Empty, request.AuthorName, request.AuthorEmail)));
+        Assert.False(BrowserGitCommitContract.IsValidCommitRequest(new CommitRequest(request.Message, request.AuthorName, "not-an-email")));
+        Assert.True(new CommitInfo(new string('a', BrowserGitCommitContract.MaximumCommitIdLength + 1), request.Message, 1).CommitId.Length > BrowserGitCommitContract.MaximumCommitIdLength);
+
+        foreach (var type in new[] { typeof(CommitRequest), typeof(CommitInfo), typeof(ChangedFile) })
+        {
+            Assert.DoesNotContain(type.GetProperties(), property =>
+                property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("push", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
+        }
+    }
 }
