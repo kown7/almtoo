@@ -573,6 +573,285 @@ public sealed class GitBugWorkspaceManager : IDisposable
         return false;
     }
 
+    /// <summary>Loads the current remote target and credential presence without mutating the repository.</summary>
+    public Task<bool> InspectPushAsync(CancellationToken cancellationToken = default) =>
+        LoadPushReviewAsync(cancellationToken);
+
+    public async Task<bool> LoadPushReviewAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (!State.RepositoryAvailable || browserGitAccessor is null)
+        {
+            return Reject("Open a repository before reviewing a push.", browserGitAccessor is null
+                ? GitBugWorkspaceStatus.Unavailable : GitBugWorkspaceStatus.Idle);
+        }
+
+        var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.LoadingPushReview, () =>
+        {
+            State.PushReview = null;
+            State.PushConfirmed = false;
+            State.PushFailureKind = null;
+            State.WriteOperation = GitBugWriteOperations.WriteReview;
+        });
+
+        try
+        {
+            var credential = await browserGitAccessor.HasCredentialAsync(operation.Token);
+            var review = await browserGitAccessor.InspectPushAsync(operation.Token);
+            return Complete(operation, () => operation.Token.IsCancellationRequested
+                ? ApplyPushCancellation()
+                : ApplyPushReviewResult(credential, review));
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return Complete(operation, ApplyPushCancellation);
+        }
+        catch (Exception)
+        {
+            return Complete(operation, ApplyPushException);
+        }
+        finally
+        {
+            EndOperation(operation);
+        }
+    }
+
+    /// <summary>Accepts a credential only as an input to tab-scoped storage; the secret never enters state.</summary>
+    public Task<bool> StoreCredentialAsync(string? credential, CancellationToken cancellationToken = default) =>
+        StorePushCredentialAsync(credential, cancellationToken);
+
+    public async Task<bool> StorePushCredentialAsync(string? credential, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (browserGitAccessor is null)
+        {
+            return Reject("Push credentials are unavailable in this workspace.", GitBugWorkspaceStatus.Unavailable);
+        }
+
+        var credentialForAttempt = credential?.Trim() ?? string.Empty;
+        if (credentialForAttempt.Length == 0)
+        {
+            State.HasCredential = false;
+            State.CredentialReplacementRequired = true;
+            State.Message = "Enter a credential before retrying the push.";
+            State.PushFailureKind = GitOperationFailureKind.CredentialRejected;
+            NotifyChanged();
+            return false;
+        }
+
+        try
+        {
+            var result = await browserGitAccessor.StoreCredentialAsync(credentialForAttempt, cancellationToken);
+            State.HasCredential = result.Succeeded && result.Value is true;
+            State.CredentialReplacementRequired = !State.HasCredential;
+            State.PushFailureKind = State.HasCredential ? null : GitOperationFailureKind.CredentialRejected;
+            State.Message = State.HasCredential
+                ? "Credential saved for this tab. Review the push again before confirming."
+                : "The credential could not be saved. Enter a replacement credential to continue.";
+            if (State.HasCredential)
+            {
+                State.PushConfirmed = false;
+            }
+            NotifyChanged();
+            return State.HasCredential;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            State.HasCredential = false;
+            State.CredentialReplacementRequired = true;
+            State.Message = "Credential replacement was cancelled.";
+            State.PushFailureKind = GitOperationFailureKind.Unknown;
+            NotifyChanged();
+            return false;
+        }
+        catch (Exception)
+        {
+            State.HasCredential = false;
+            State.CredentialReplacementRequired = true;
+            State.Message = "The credential could not be saved safely.";
+            State.PushFailureKind = GitOperationFailureKind.Unknown;
+            NotifyChanged();
+            return false;
+        }
+        finally
+        {
+            credentialForAttempt = string.Empty;
+        }
+    }
+
+    public void ConfirmPushReview(bool confirmed)
+    {
+        State.PushConfirmed = confirmed && State.PushReview is not null && !State.IsBusy;
+        State.Message = State.PushConfirmed
+            ? "Push confirmed. Submit again to perform the reviewed push."
+            : "Push confirmation was cleared.";
+        NotifyChanged();
+    }
+
+    public Task<bool> RetryPushAsync(CancellationToken cancellationToken = default) =>
+        State.PushReview is { } review && State.PushConfirmed
+            ? PushReviewedCommitAsync(review, cancellationToken)
+            : Task.FromResult(Reject("Review and explicitly confirm the current push before retrying."));
+
+    public Task<bool> ReplacePushCredentialAsync(string? credential, CancellationToken cancellationToken = default) =>
+        StorePushCredentialAsync(credential, cancellationToken);
+
+    public async Task<bool> PushReviewedCommitAsync(PushReview reviewedPush, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (browserGitAccessor is null)
+        {
+            return Reject("Local push is unavailable.", GitBugWorkspaceStatus.Unavailable);
+        }
+
+        if (reviewedPush is null || State.PushReview is null || !State.PushConfirmed || !State.HasCredential)
+        {
+            return Reject("Review and confirm the exact push destination and provide a credential before pushing.");
+        }
+        if (reviewedPush != State.PushReview)
+        {
+            InvalidatePushReview();
+            return Reject("The submitted push review does not match the current review. Review the push again.");
+        }
+
+        var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.Pushing, () =>
+        {
+            State.WriteOperation = "git.push";
+            State.LastWriteSucceeded = null;
+            State.LastRefreshSucceeded = null;
+        });
+
+        try
+        {
+            var latest = await browserGitAccessor.InspectPushAsync(operation.Token);
+            if (!latest.Succeeded || latest.Value is null)
+            {
+                return Complete(operation, () => ApplyPushFailure(latest.FailureKind));
+            }
+            if (latest.Value != reviewedPush)
+            {
+                return Complete(operation, () =>
+                {
+                    InvalidatePushReview();
+                    State.Message = "The push coordinates changed after review. Review the current destination before pushing.";
+                    State.PushFailureKind = GitOperationFailureKind.RemoteAhead;
+                    return false;
+                });
+            }
+
+            var result = await browserGitAccessor.PushAsync(
+                new PushRequest(reviewedPush.RepositoryUrl, reviewedPush.Branch, reviewedPush.OutgoingCommitId, reviewedPush.DestinationRef),
+                operation.Token);
+            if (!result.Succeeded || result.Value is null)
+            {
+                return Complete(operation, () => ApplyPushFailure(result.FailureKind));
+            }
+
+            var status = await browserGitAccessor.GetStatusAsync(operation.Token);
+            return Complete(operation, () => operation.Token.IsCancellationRequested
+                ? ApplyPushCancellation()
+                : ApplyPushSuccess(result.Value, status));
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return Complete(operation, ApplyPushCancellation);
+        }
+        catch (Exception)
+        {
+            return Complete(operation, ApplyPushException);
+        }
+        finally
+        {
+            EndOperation(operation);
+        }
+    }
+
+    private bool ApplyPushReviewResult(GitOperationResult<bool> credential, GitOperationResult<PushReview> review)
+    {
+        State.HasCredential = credential.Succeeded && credential.Value is true;
+        State.CredentialReplacementRequired = !State.HasCredential;
+        if (!review.Succeeded || review.Value is null)
+        {
+            return ApplyPushFailure(review.FailureKind);
+        }
+        State.PushReview = review.Value;
+        State.PushConfirmed = false;
+        State.Status = GitBugWorkspaceStatus.PushReviewReady;
+        State.Message = State.HasCredential
+            ? "Review the destination and explicitly confirm the push."
+            : "No credential is available for this tab. Enter one before confirming the push.";
+        State.PushFailureKind = null;
+        return true;
+    }
+
+    private bool ApplyPushSuccess(PushResult result, GitOperationResult<IReadOnlyList<ChangedFile>> status)
+    {
+        if (!status.Succeeded || status.Value is null || !BrowserGitCommitContract.IsValidChangedFiles(status.Value))
+        {
+            return ApplyPushFailure(status.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed);
+        }
+        State.ChangedFiles = status.Value;
+        State.PushReview = null;
+        State.PushConfirmed = false;
+        State.Status = GitBugWorkspaceStatus.PushSucceeded;
+        State.Message = $"Pushed commit {result.PushedCommitId} and refreshed local status.";
+        State.PushFailureKind = null;
+        State.LastWriteSucceeded = true;
+        State.LastRefreshSucceeded = true;
+        return true;
+    }
+
+    private bool ApplyPushFailure(GitOperationFailureKind? kind)
+    {
+        State.PushFailureKind = NormalizePushFailureKind(kind);
+        State.PushConfirmed = false;
+        State.LastWriteSucceeded = false;
+        State.LastRefreshSucceeded = null;
+        if (State.PushFailureKind == GitOperationFailureKind.CredentialRejected)
+        {
+            State.HasCredential = false;
+            State.CredentialReplacementRequired = true;
+        }
+        State.Status = GitBugWorkspaceStatus.Failed;
+        State.Message = State.PushFailureKind switch
+        {
+            GitOperationFailureKind.CredentialRejected => "The remote rejected the credential. Replace it, review the push again, and retry.",
+            GitOperationFailureKind.RemoteAhead => "The remote branch is ahead. Reconcile it, then review and retry the push.",
+            GitOperationFailureKind.NetworkUnavailable => "The remote could not be reached. Resolve connectivity, then retry the reviewed push.",
+            GitOperationFailureKind.UnsupportedRef => "The checked-out ref is unsupported. Select a local branch and review again.",
+            _ => "The push could not be completed safely. Review the workspace before retrying."
+        };
+        return false;
+    }
+
+    private bool ApplyPushCancellation()
+    {
+        State.PushConfirmed = false;
+        State.Status = GitBugWorkspaceStatus.Failed;
+        State.Message = "The push was cancelled; no success was recorded.";
+        State.PushFailureKind = GitOperationFailureKind.Unknown;
+        State.LastWriteSucceeded = false;
+        State.LastRefreshSucceeded = false;
+        return false;
+    }
+
+    private bool ApplyPushException() => ApplyPushFailure(GitOperationFailureKind.Unknown);
+
+    private void InvalidatePushReview()
+    {
+        State.PushReview = null;
+        State.PushConfirmed = false;
+    }
+
+    private static GitOperationFailureKind NormalizePushFailureKind(GitOperationFailureKind? kind) => kind switch
+    {
+        GitOperationFailureKind.CredentialRejected => GitOperationFailureKind.CredentialRejected,
+        GitOperationFailureKind.RemoteAhead => GitOperationFailureKind.RemoteAhead,
+        GitOperationFailureKind.NetworkUnavailable => GitOperationFailureKind.NetworkUnavailable,
+        GitOperationFailureKind.UnsupportedRef => GitOperationFailureKind.UnsupportedRef,
+        _ => GitOperationFailureKind.Unknown
+    };
+
     public void ReturnToIssueList()
     {
         ObjectDisposedException.ThrowIf(disposed, this);
@@ -818,6 +1097,11 @@ public sealed class GitBugWorkspaceManager : IDisposable
         State.WriteOperation = null;
         State.LastWriteSucceeded = null;
         State.LastRefreshSucceeded = null;
+        State.PushReview = null;
+        State.PushConfirmed = false;
+        State.HasCredential = false;
+        State.CredentialReplacementRequired = false;
+        State.PushFailureKind = null;
     }
 
     private static bool IsValidQuery(GitBugIssueQuery? query) =>
