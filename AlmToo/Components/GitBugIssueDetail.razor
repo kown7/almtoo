@@ -29,7 +29,7 @@
         </header>
 
         <p class="gitbug-local-boundary" role="note">
-            Changes are saved only to this browser-local Git-Bug workspace. No commit or push is performed.
+            Changes are saved only to this browser-local Git-Bug workspace. No remote push is performed.
         </p>
 
         @if (!string.IsNullOrWhiteSpace(State.Message) && State.LastWriteSucceeded is not true)
@@ -60,6 +60,81 @@
                     <button class="gitbug-secondary-action" type="button" @onclick="ResetDrafts" disabled="@State.IsBusy">Cancel</button>
                 </div>
             </form>
+        </section>
+
+        <section class="gitbug-commit-panel" aria-labelledby="gitbug-commit-heading">
+            <div class="gitbug-section-heading">
+                <h3 id="gitbug-commit-heading">Review local commit</h3>
+                <p>Inspect changed files before preparing a browser-local commit. Review does not mutate the repository.</p>
+            </div>
+            @if (!State.CommitReviewLoaded)
+            {
+                <button class="gitbug-action" type="button" @onclick="RequestCommitReviewAsync" disabled="@State.IsBusy">
+                    @(State.Status == GitBugWorkspaceStatus.LoadingCommitReview ? "Loading changed files…" : "Review changed files")
+                </button>
+            }
+            else
+            {
+                <div class="gitbug-commit-review" aria-live="polite">
+                    <h4>Changed files (@State.ChangedFiles.Count)</h4>
+                    @if (State.ChangedFiles.Count == 0)
+                    {
+                        <p class="gitbug-empty">There are no changed files to commit.</p>
+                    }
+                    else
+                    {
+                        <ul class="gitbug-changed-files" aria-label="Changed files">
+                            @foreach (var file in State.ChangedFiles)
+                            {
+                                <li><code>@file.Path</code><span class="gitbug-change-kind">@file.ChangeKind</span></li>
+                            }
+                        </ul>
+                    }
+                </div>
+
+                <form class="gitbug-form gitbug-commit-form" @onsubmit="PrepareCommitAsync" @onsubmit:preventDefault="true">
+                    <div class="gitbug-form__field">
+                        <label for="gitbug-commit-message">Commit message</label>
+                        <input id="gitbug-commit-message" name="commit-message" type="text" maxlength="4096" required
+                               @bind="commitMessage" disabled="@State.IsBusy" />
+                    </div>
+                    <div class="gitbug-form__field">
+                        <label for="gitbug-commit-author">Author name</label>
+                        <input id="gitbug-commit-author" name="commit-author" type="text" maxlength="512" required
+                               @bind="commitAuthor" disabled="@State.IsBusy" />
+                    </div>
+                    <div class="gitbug-form__field">
+                        <label for="gitbug-commit-email">Author email</label>
+                        <input id="gitbug-commit-email" name="commit-email" type="email" maxlength="512" required
+                               @bind="commitEmail" disabled="@State.IsBusy" />
+                    </div>
+                    <div class="gitbug-form__actions">
+                        <button class="gitbug-secondary-action" type="submit" disabled="@State.IsBusy || !State.HasChangedFiles">
+                            Prepare commit details
+                        </button>
+                    </div>
+                </form>
+
+                @if (State.ProposedCommit is not null
+                    && State.Status == GitBugWorkspaceStatus.CommitReviewReady
+                    && State.CanConfirmCommit)
+                {
+                    <div class="gitbug-commit-confirmation" role="group" aria-labelledby="gitbug-confirm-heading">
+                        <h4 id="gitbug-confirm-heading">Confirm local commit</h4>
+                        <p id="gitbug-confirm-description">Creating this commit changes only this browser-local repository. This action will not push to a remote.</p>
+                        <button class="gitbug-action" type="button" aria-describedby="gitbug-confirm-description" @onclick="ConfirmCommitAsync" disabled="@State.IsBusy">
+                            Confirm and create local commit
+                        </button>
+                    </div>
+                }
+
+                @if (State.Status == GitBugWorkspaceStatus.CommitSucceeded && State.LastCommit is { } commit)
+                {
+                    <p class="gitbug-save-status" role="status" aria-live="polite">
+                        Local commit created: <code>@commit.CommitId</code> (@commit.ChangedFileCount changed files). No push was performed.
+                    </p>
+                }
+            }
         </section>
 
         <section class="gitbug-detail__description" aria-labelledby="gitbug-description-heading">
@@ -120,12 +195,18 @@
     private string editTitle = string.Empty;
     private string editDescription = string.Empty;
     private string commentBody = string.Empty;
+    private string commitMessage = string.Empty;
+    private string commitAuthor = string.Empty;
+    private string commitEmail = string.Empty;
     private string? draftIssueId;
 
     [Parameter, EditorRequired] public GitBugWorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback OnBackRequested { get; set; }
     [Parameter] public EventCallback<(string Title, string Description)> OnIssueEdited { get; set; }
     [Parameter] public EventCallback<string> OnCommentAdded { get; set; }
+    [Parameter] public EventCallback OnReviewCommitRequested { get; set; }
+    [Parameter] public EventCallback OnCommitConfirmed { get; set; }
+    [Parameter] public EventCallback<(string Message, string AuthorName, string AuthorEmail)> OnCommitDetailsChanged { get; set; }
 
     protected override void OnParametersSet()
     {
@@ -136,7 +217,26 @@
             editDescription = issue.Description;
             commentBody = string.Empty;
         }
+
+        if (State.ProposedCommit is { } proposed)
+        {
+            commitMessage = proposed.Message;
+            commitAuthor = proposed.AuthorName;
+            commitEmail = proposed.AuthorEmail;
+        }
     }
+
+    private async Task RequestCommitReviewAsync() => await OnReviewCommitRequested.InvokeAsync();
+
+    private async Task PrepareCommitAsync()
+    {
+        if (!State.IsBusy)
+        {
+            await OnCommitDetailsChanged.InvokeAsync((commitMessage, commitAuthor, commitEmail));
+        }
+    }
+
+    private async Task ConfirmCommitAsync() => await OnCommitConfirmed.InvokeAsync();
 
     private async Task SubmitEditAsync()
     {
