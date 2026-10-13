@@ -211,6 +211,16 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 
 **Result:** PASS
 
+## M009 S04 T04 credential-safe push composition review
+
+- [x] `GitBug.razor` and `GitBugIssueDetail.razor` remain **Client** components: they render passive Manager push-review, credential-presence, busy, success, and recoverable-failure state, and submit only explicit review, credential-intent, confirm, retry, and replacement callbacks. They do not reference `IBrowserGitAccessor`, browser Git JavaScript, raw diagnostics, or credential values.
+- [x] `GitBugWorkspaceManager` remains the **Manager** for review-first gating, explicit confirmation, cancellation fencing, credential replacement, retry/review invalidation, failure mapping, and post-push status refresh. The credential is input-only and never retained in `GitBugWorkspaceState`, logs, or diagnostics; no implicit retry or forced push is permitted.
+- [x] `BrowserGitContracts.cs`, `IBrowserGitAccessor`, and `BrowserGitAccessor` remain the typed **Accessor** boundary. `browserGitEngine.js` and `pushCredentialSession.js` remain the browser/platform **Resource** surface beneath it, with one non-forced transport attempt, reviewed-coordinate revalidation, and fixed redacted failure categories for authentication, authorization, network, non-fast-forward, unsupported-ref, malformed, and stale inputs.
+- [x] Composed proof covers review-to-push success, credential rejection and replacement, authorization/network/remote-ahead recovery, stale review, cancellation, status refresh, redaction, and absence of unintended commit/push retries. Architecture gates additionally require the push Resource exports and preserve Client → Manager → Accessor → Resource direction.
+- [x] Focused Node and .NET tests and the aggregate `npm --prefix AlmToo test` suite pass. Remaining live-browser credential transport proof is intentionally deferred to S05; no architectural exception is required.
+
+**Result:** PASS
+
 ## M009 S03 T01 Git-Bug commit contract review
 
 - [x] `BrowserGitContracts.cs` and `BrowserGitAccessor` remain the typed **Accessor contract** boundary, carrying bounded changed-file and commit metadata and translating malformed bridge output to stable failure categories without exposing browser diagnostics.
