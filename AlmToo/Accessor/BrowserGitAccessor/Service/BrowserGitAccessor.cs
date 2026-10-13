@@ -13,6 +13,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     private const string ModulePath = "./js/browserGitEngine.js";
     private const string CredentialModulePath = "./js/pushCredentialSession.js";
     private const int MaxEditableTextBytes = 1024 * 1024;
+    private const int MaxChangedFilePathLength = 1024;
     private const int MaxGitBugQueryLength = 256;
     private const int MaxGitBugPageSize = 100;
     private const int MaxGitBugTitleLength = 4096;
@@ -130,24 +131,31 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     public async ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(
         CancellationToken cancellationToken = default)
     {
-        return await InvokeWithValueAsync<List<ChangedFileDto>, IReadOnlyList<ChangedFile>>(
+        var result = await InvokeWithValueAsync<List<ChangedFileDto>, IReadOnlyList<ChangedFile>>(
             "getStatus",
             "getStatus",
             files => files.Select(file => file.ToChangedFile()).ToArray(),
             cancellationToken);
+        if (!result.Succeeded || result.Value is null)
+        {
+            return result;
+        }
+
+        if (!BrowserGitCommitContract.IsValidChangedFiles(result.Value))
+        {
+            return new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "getStatus", false, "Repository status could not be read safely.",
+                Value: default, FailureKind: GitOperationFailureKind.GitBugDataMalformed);
+        }
+
+        return result;
     }
 
     public async ValueTask<GitOperationResult<CommitInfo>> CommitAsync(
         CommitRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (request is null
-            || string.IsNullOrWhiteSpace(request.Message)
-            || string.IsNullOrWhiteSpace(request.AuthorName)
-            || string.IsNullOrWhiteSpace(request.AuthorEmail)
-            || request.Message.IndexOfAny(['\0', '\r']) >= 0
-            || request.AuthorName.IndexOfAny(['\0', '\r', '\n']) >= 0
-            || request.AuthorEmail.IndexOfAny(['\0', '\r', '\n']) >= 0)
+        if (!BrowserGitCommitContract.IsValidCommitRequest(request))
         {
             return new GitOperationResult<CommitInfo>("commit", false, "A browser-local commit could not be created.", Value: default, Diagnostic: "A non-empty message and valid author metadata are required.");
         }
@@ -1163,8 +1171,16 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         [JsonPropertyName("message")]
         public string Message { get; init; } = string.Empty;
 
+        [JsonPropertyName("changedFileCount")]
+        public int? ChangedFileCount { get; init; }
+
         public CommitInfo ToCommitInfo() =>
-            new(CommitId, Message);
+            new(
+                CommitId.Length <= BrowserGitCommitContract.MaximumCommitIdLength ? CommitId : string.Empty,
+                Message,
+                ChangedFileCount is >= 0 and <= BrowserGitCommitContract.MaximumChangedFiles
+                    ? ChangedFileCount.Value
+                    : 0);
     }
 
     private sealed record PushReviewDto

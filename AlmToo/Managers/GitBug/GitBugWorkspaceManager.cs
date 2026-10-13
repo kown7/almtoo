@@ -8,6 +8,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
     private const int MaximumQueryLength = 256;
     private const int MaximumPageSize = 100;
     private readonly IGitBugAccessor accessor;
+    private readonly IBrowserGitAccessor? browserGitAccessor;
     private readonly object operationSync = new();
     private CancellationTokenSource? activeOperation;
     private RepositoryIdentity? repositoryIdentity;
@@ -17,9 +18,10 @@ public sealed class GitBugWorkspaceManager : IDisposable
     private GitBugIssueQuery lastQuery = new(PageSize: 50);
     private bool disposed;
 
-    public GitBugWorkspaceManager(IGitBugAccessor accessor)
+    public GitBugWorkspaceManager(IGitBugAccessor accessor, IBrowserGitAccessor? browserGitAccessor = null)
     {
         this.accessor = accessor;
+        this.browserGitAccessor = browserGitAccessor;
     }
 
     public GitBugWorkspaceState State { get; } = new();
@@ -237,6 +239,201 @@ public sealed class GitBugWorkspaceManager : IDisposable
             EndOperation(operation);
         }
     }
+
+    /// <summary>Loads a bounded, credential-free review of the browser-local working tree.</summary>
+    public async Task<bool> LoadCommitReviewAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (!State.RepositoryAvailable)
+        {
+            return Reject("Open a repository before reviewing a local commit.");
+        }
+
+        if (browserGitAccessor is null)
+        {
+            return Reject("Local Git commit review is unavailable.", GitBugWorkspaceStatus.Unavailable);
+        }
+
+        var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.LoadingCommitReview, () =>
+        {
+            State.WriteOperation = GitBugWriteOperations.WriteReview;
+            State.LastWriteSucceeded = null;
+            State.LastRefreshSucceeded = null;
+            State.LastCommit = null;
+            State.ProposedCommit = null;
+        });
+
+        try
+        {
+            var result = await browserGitAccessor.GetStatusAsync(operation.Token);
+            return Complete(operation, () => operation.Token.IsCancellationRequested
+                ? ApplyWriteCancellation()
+                : ApplyCommitReviewResult(result));
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return Complete(operation, ApplyWriteCancellation);
+        }
+        catch (Exception)
+        {
+            return Complete(operation, ApplyCommitException);
+        }
+        finally
+        {
+            EndOperation(operation);
+        }
+    }
+
+    /// <summary>Updates proposed commit metadata without performing any repository mutation.</summary>
+    public bool SetProposedCommit(string? message, string? authorName, string? authorEmail)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        var request = new CommitRequest(message ?? string.Empty, authorName ?? string.Empty, authorEmail ?? string.Empty);
+        if (State.IsBusy || !State.CommitReviewLoaded || !BrowserGitCommitContract.IsValidCommitRequest(request))
+        {
+            State.Message = "Enter a valid commit message, author name, and author email.";
+            State.FailureKind = GitOperationFailureKind.GitBugWriteInvalidRequest;
+            NotifyChanged();
+            return false;
+        }
+
+        State.ProposedCommit = request;
+        State.Status = GitBugWorkspaceStatus.CommitReviewReady;
+        State.Message = "Commit details are ready for explicit confirmation.";
+        State.FailureKind = null;
+        NotifyChanged();
+        return true;
+    }
+
+    /// <summary>Creates one browser-local commit only after review and metadata confirmation.</summary>
+    public async Task<bool> ConfirmLocalCommitAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (browserGitAccessor is null)
+        {
+            return Reject("Local Git commit is unavailable.", GitBugWorkspaceStatus.Unavailable);
+        }
+
+        var request = State.ProposedCommit;
+        if (State.IsBusy || !State.CommitReviewLoaded || request is null || !State.HasChangedFiles
+            || !BrowserGitCommitContract.IsValidCommitRequest(request))
+        {
+            return Reject("Review changed files and enter valid commit details before confirming.");
+        }
+
+        var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.Committing, () =>
+        {
+            State.WriteOperation = GitBugWriteOperations.WriteCommit;
+            State.LastWriteSucceeded = null;
+            State.LastRefreshSucceeded = null;
+        });
+
+        try
+        {
+            var result = await browserGitAccessor.CommitAsync(request, operation.Token);
+            if (operation.Token.IsCancellationRequested)
+            {
+                return Complete(operation, ApplyWriteCancellation);
+            }
+
+            if (!result.Succeeded || result.Value is null)
+            {
+                return Complete(operation, () => ApplyCommitFailure(result.FailureKind ?? GitOperationFailureKind.GitBugWriteUnknown));
+            }
+
+            var status = await browserGitAccessor.GetStatusAsync(operation.Token);
+            return Complete(operation, () => operation.Token.IsCancellationRequested
+                ? ApplyWriteCancellation()
+                : ApplyCommitResult(result.Value, status));
+        }
+        catch (OperationCanceledException) when (operation.Token.IsCancellationRequested)
+        {
+            return Complete(operation, ApplyWriteCancellation);
+        }
+        catch (Exception)
+        {
+            return Complete(operation, ApplyCommitException);
+        }
+        finally
+        {
+            EndOperation(operation);
+        }
+    }
+
+    private bool ApplyCommitReviewResult(GitOperationResult<IReadOnlyList<ChangedFile>> result)
+    {
+        if (!result.Succeeded || result.Value is null || !BrowserGitCommitContract.IsValidChangedFiles(result.Value))
+        {
+            return ApplyCommitFailure(result.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed);
+        }
+
+        State.ChangedFiles = result.Value;
+        State.Status = GitBugWorkspaceStatus.CommitReviewReady;
+        State.Message = result.Value.Count == 0
+            ? "No changed files are available for a local commit."
+            : "Review the changed files and commit details before confirming.";
+        State.FailureKind = null;
+        return true;
+    }
+
+    private bool ApplyCommitResult(CommitInfo commit, GitOperationResult<IReadOnlyList<ChangedFile>> status)
+    {
+        if (!IsValidCommitInfo(commit) || !status.Succeeded || status.Value is null
+            || !BrowserGitCommitContract.IsValidChangedFiles(status.Value))
+        {
+            State.LastWriteSucceeded = true;
+            State.LastRefreshSucceeded = false;
+            return ApplyCommitFailure(status.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed, preserveWrite: true);
+        }
+
+        State.ChangedFiles = status.Value;
+        State.LastCommit = commit with { ChangedFileCount = Math.Min(commit.ChangedFileCount, BrowserGitCommitContract.MaximumChangedFiles) };
+        State.Status = GitBugWorkspaceStatus.CommitSucceeded;
+        State.Message = "Local commit created. No push was performed.";
+        State.FailureKind = null;
+        State.LastWriteSucceeded = true;
+        State.LastRefreshSucceeded = true;
+        return true;
+    }
+
+    private bool ApplyCommitFailure(GitOperationFailureKind kind, bool preserveWrite = false)
+    {
+        State.FailureKind = kind;
+        State.Status = kind switch
+        {
+            GitOperationFailureKind.GitBugWriteUnsupportedFormat => GitBugWorkspaceStatus.Unsupported,
+            GitOperationFailureKind.GitBugWriteUnavailable => GitBugWorkspaceStatus.Unavailable,
+            _ => GitBugWorkspaceStatus.Failed
+        };
+        State.Message = kind switch
+        {
+            GitOperationFailureKind.GitBugWriteInvalidRequest => "The commit details are invalid.",
+            GitOperationFailureKind.GitBugWriteConflict or GitOperationFailureKind.GitBugWritePreconditionFailed => "The working tree changed; review the files again.",
+            GitOperationFailureKind.GitBugWriteUnsupportedFormat => "Local commits are not supported for this repository format.",
+            GitOperationFailureKind.GitBugWriteUnavailable => "Local commit creation is unavailable for this repository.",
+            _ => "The local commit could not be created safely."
+        };
+        if (!preserveWrite)
+        {
+            State.LastWriteSucceeded = false;
+            State.LastRefreshSucceeded = null;
+        }
+        return false;
+    }
+
+    private bool ApplyCommitException()
+    {
+        State.LastWriteSucceeded = false;
+        State.LastRefreshSucceeded = null;
+        return ApplyCommitFailure(GitOperationFailureKind.GitBugWriteUnknown);
+    }
+
+    private static bool IsValidCommitInfo(CommitInfo commit) =>
+        !string.IsNullOrWhiteSpace(commit.CommitId)
+        && commit.CommitId.Length <= BrowserGitCommitContract.MaximumCommitIdLength
+        && commit.CommitId.All(Uri.IsHexDigit)
+        && commit.ChangedFileCount >= 0
+        && commit.ChangedFileCount <= BrowserGitCommitContract.MaximumChangedFiles;
 
     private bool TryGetWriteContext(string operation, string? first, string? second, bool allowEmptyBody,
         out GitBugIssueId issueId, out GitBugRepositoryIdentity repository, out string? message)
@@ -613,6 +810,9 @@ public sealed class GitBugWorkspaceManager : IDisposable
         hasListContext = false;
         State.SelectedIssueId = null;
         State.SelectedIssue = null;
+        State.ChangedFiles = Array.Empty<ChangedFile>();
+        State.ProposedCommit = null;
+        State.LastCommit = null;
         State.Message = null;
         State.FailureKind = null;
         State.WriteOperation = null;

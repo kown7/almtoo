@@ -183,10 +183,21 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 ## M009 S02 T04 Git-Bug local mutation proof review
 
 - [x] `browserGitEngine.js` is assigned to the **Accessor** integration boundary with Resource-level Git object/ref mechanics below it; `editGitBugIssue` and `createGitBugComment` perform bounded v0.11.0 writes only through the active browser-local repository and approved `refs/bugs/*` ref.
+
 - [x] `GitBugWorkspaceManager` remains the **Manager** for input validation, sequencing, cancellation/generation protection, refresh, and safe user-facing state. `GitBug.razor` and `GitBugIssueDetail.razor` remain **Client** components that submit intent only and never construct Accessor contracts or call JavaScript.
 - [x] `IGitBugAccessor` remains justified because it protects the browser Git/Git-Bug platform boundary and supplies the necessary substitution seam for deterministic Manager tests; no new interface, wrapper, Engine, or pass-through service was introduced.
 - [x] The local Git-Bug history commit required to advance an issue ref is distinct from an ordinary worktree commit: proof asserts `commitCreated: false`, zero push/add/remove calls, and writes confined to the approved bug ref; no push or credential path is reachable from these operations.
 - [x] Engine, fixture, Accessor, Manager, and architecture tests cover Unicode writes, malformed/unsupported/conflict failures, bounded redaction, bridge short-circuiting, stale completion protection, deterministic fixture hashes, and unchanged repository state.
+- [x] No architectural exception is required.
+
+**Result:** PASS
+
+## M009 S03 T01 Git-Bug commit contract review
+
+- [x] `BrowserGitContracts.cs` and `BrowserGitAccessor` remain the typed **Accessor contract** boundary, carrying bounded changed-file and commit metadata and translating malformed bridge output to stable failure categories without exposing browser diagnostics.
+- [x] `browserGitEngine.js` remains the browser Git **Resource** beneath that boundary for status inspection and one local commit. Commit validation occurs before mutation, and the operation has no push or credential dependency.
+- [x] The existing `IBrowserGitAccessor` is retained because it protects the browser Git platform boundary and provides the established substitution seam for Manager workflow tests; no new interface or pass-through service is introduced.
+- [x] Changed-file count, commit message, author metadata, and commit ID are bounded at the Resource/Accessor boundary. Typed results retain only safe commit metadata and do not carry raw JavaScript errors or secrets.
 - [x] No architectural exception is required.
 
 **Result:** PASS

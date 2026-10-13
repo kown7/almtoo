@@ -23,7 +23,10 @@ const gitBugLimits = Object.freeze({
   detailBytes: 4 * 1024 * 1024,
   labels: 100,
   comments: 1000,
-  blobBytes: 2 * 1024 * 1024
+  blobBytes: 2 * 1024 * 1024,
+  changedFiles: 1000,
+  commitMessage: 4096,
+  commitEmail: 512
 });
 const gitBugSupportedMarker = 'version-4';
 const gitBugIssueIdPattern = /^[0-9a-f]{64}$/i;
@@ -281,6 +284,9 @@ export async function getStatus() {
         changeKind: mapChangeKind(head, workdir, stage)
       }))
       .filter((entry) => entry.changeKind !== null);
+    if (changedFiles.length > gitBugLimits.changedFiles) {
+      return failureWithKind(operation, 'Repository status is too large to review safely.', 'gitBugDataMalformed');
+    }
 
     return success(operation, 'Repository status was read.', changedFiles);
   } catch (error) {
@@ -293,15 +299,21 @@ export async function commit(request) {
 
   try {
     const { fs, dir } = await getActiveWorkspace(operation);
-    const message = requireText(request?.message, 'message');
-    const authorName = requireText(request?.authorName, 'authorName');
-    const authorEmail = requireText(request?.authorEmail, 'authorEmail');
+    const message = requireBoundedCommitText(request?.message, 'message', gitBugLimits.commitMessage);
+    const authorName = requireBoundedCommitText(request?.authorName, 'authorName', gitBugLimits.author);
+    const authorEmail = requireBoundedCommitText(request?.authorEmail, 'authorEmail', gitBugLimits.commitEmail);
+    if (message === null || authorName === null || authorEmail === null || !authorEmail.includes('@')) {
+      return failureWithKind(operation, 'The commit metadata is not valid.', 'gitBugWriteInvalidRequest');
+    }
     const git = getGit();
     const matrix = await git.statusMatrix({ fs, dir });
     const changedFiles = matrix.filter(([, head, workdir, stage]) => mapChangeKind(head, workdir, stage) !== null);
 
     if (changedFiles.length === 0) {
-      throw new Error('There are no browser-local changes to commit.');
+      return failureWithKind(operation, 'A browser-local commit could not be created because there are no changes.', 'gitBugWriteInvalidRequest', 'There are no browser-local changes to commit.');
+    }
+    if (changedFiles.length > gitBugLimits.changedFiles) {
+      return failureWithKind(operation, 'The local change set is too large to review safely.', 'gitBugWriteInvalidRequest');
     }
 
     for (const [filepath, head, workdir] of changedFiles) {
@@ -324,7 +336,8 @@ export async function commit(request) {
 
     return success(operation, 'Created a browser-local commit.', {
       commitId: oid,
-      message
+      message,
+      changedFileCount: changedFiles.length
     });
   } catch (error) {
     return failure(operation, 'A browser-local commit could not be created.', error);
@@ -537,13 +550,13 @@ function toIncomingCommit(commit) {
   };
 }
 
-function failureWithKind(operation, message, failureKind) {
+function failureWithKind(operation, message, failureKind, diagnostic = null) {
   return {
     operation,
     succeeded: false,
     message,
     value: null,
-    diagnostic: null,
+    diagnostic,
     failureKind
   };
 }
@@ -1272,6 +1285,14 @@ function requireText(value, name) {
   }
 
   return text.trim();
+}
+
+function requireBoundedCommitText(value, name, maximumLength) {
+  const text = requireText(value, name);
+  if (text.length > maximumLength || /[\0\r\n]/u.test(text)) {
+    return null;
+  }
+  return text;
 }
 
 function sanitizeWorkspaceName(workspaceName) {

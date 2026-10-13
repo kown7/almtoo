@@ -231,8 +231,40 @@ public record TextFileContent(
 public record ChangedFile(string Path, GitChangeKind ChangeKind);
 public enum GitChangeKind { Added, Modified, Deleted, Renamed, Untracked, Unknown }
 
+/// <summary>Bounded, credential-free metadata used by the Git-Bug review phase.</summary>
+public static class BrowserGitCommitContract
+{
+    public const int MaximumChangedFiles = 1000;
+    public const int MaximumCommitMessageLength = 4096;
+    public const int MaximumAuthorLength = 512;
+    public const int MaximumEmailLength = 512;
+    public const int MaximumCommitIdLength = 40;
+
+    public static bool IsValidCommitRequest(CommitRequest? request) =>
+        request is not null
+        && IsBoundedText(request.Message, MaximumCommitMessageLength)
+        && IsBoundedText(request.AuthorName, MaximumAuthorLength)
+        && IsBoundedText(request.AuthorEmail, MaximumEmailLength)
+        && request.AuthorEmail.Contains('@', StringComparison.Ordinal)
+        && request.AuthorEmail.IndexOfAny(['\r', '\n']) < 0;
+
+    public static bool IsValidChangedFiles(IReadOnlyList<ChangedFile>? files) =>
+        files is not null
+        && files.Count <= MaximumChangedFiles
+        && files.All(file => file is not null
+            && file.Path.StartsWith("/", StringComparison.Ordinal)
+            && file.Path.Length <= 1024
+            && file.Path.IndexOfAny(['\\', '\0', '\r', '\n']) < 0);
+
+    private static bool IsBoundedText(string? value, int maximum) =>
+        value is not null
+        && value.Trim().Length > 0
+        && value.Length <= maximum
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+}
+
 public record CommitRequest(string Message, string AuthorName, string AuthorEmail);
-public record CommitInfo(string CommitId, string Message);
+public record CommitInfo(string CommitId, string Message, int ChangedFileCount = 0);
 
 public record PushReview(
     string RepositoryUrl,
