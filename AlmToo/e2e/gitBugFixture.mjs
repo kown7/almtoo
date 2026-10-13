@@ -84,7 +84,7 @@ async function fixtureEntries(variant) {
   }
 }
 
-export async function seedGitBugFixture(page, variant = 'supported') {
+export async function seedGitBugFixture(page, variant = 'supported', options = {}) {
   const entries = await fixtureEntries(variant);
   await page.evaluate(async ({ entries, vendorScripts, workspacePath }) => {
     const loadVendor = source => new Promise((resolve, reject) => {
@@ -128,7 +128,7 @@ export async function seedGitBugFixture(page, variant = 'supported') {
     };
   }, { entries, vendorScripts, workspacePath });
 
-  return { repositoryUrl, workspacePath };
+  return { repositoryUrl: options.repositoryUrl ?? repositoryUrl, workspacePath };
 }
 
 export async function snapshotGitBugRepository(page, repositoryWorkspacePath = workspacePath) {
