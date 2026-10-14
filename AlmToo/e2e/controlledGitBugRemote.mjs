@@ -10,7 +10,7 @@ import git from 'isomorphic-git';
 
 const fixtureRepository = fileURLToPath(new URL('../tests/fixtures/gitBug/v0.11.0/repository', import.meta.url));
 const safeFailureModes = new Set(['auth', 'network', 'non-fast-forward']);
-const projectName = 'gitbug-fixture.git';
+const projectName = 'git-bug-fixture.git';
 
 function headerValue(headers, name) {
   return headers[name.toLowerCase()] ?? headers[name] ?? '';

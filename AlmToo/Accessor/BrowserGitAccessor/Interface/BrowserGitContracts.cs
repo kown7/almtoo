@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 public record GitOperationResult(
@@ -137,7 +139,7 @@ public static class GitBugWriteContract
         preconditions is not null
         && preconditions.Repository is not null
         && Uri.TryCreate(preconditions.Repository.RepositoryUrl, UriKind.Absolute, out var repository)
-        && repository.Scheme == Uri.UriSchemeHttps
+        && IsAllowedRepositoryUri(repository)
         && string.IsNullOrWhiteSpace(repository.UserInfo) 
         && !string.IsNullOrWhiteSpace(preconditions.Repository.WorkspaceName)
         && preconditions.IssueId.Value is { Length: 64 } issueId && issueId.All(Uri.IsHexDigit)
@@ -161,6 +163,12 @@ public static class GitBugWriteContract
         && IsValidSerialization(request.Serialization)
         && IsBounded(request.Body, MaximumBodyLength, allowEmpty: false)
         && request.Preconditions.ReviewedOperation == GitBugWriteOperations.CommentCreate;
+
+    private static bool IsAllowedRepositoryUri(Uri repository) =>
+        repository.Scheme == Uri.UriSchemeHttps
+        || (repository.Scheme == Uri.UriSchemeHttp
+            && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                || IPAddress.TryParse(repository.Host, out var address) && IPAddress.IsLoopback(address)));
 
     private static bool IsBounded(string? value, int maximum, bool allowEmpty = false) =>
         value is not null
@@ -197,6 +205,7 @@ public sealed record GitBugIssueSummary(
 
 public sealed record GitBugIssueDetail(
     GitBugIssueSummary Summary,
+    string Revision,
     string? Description,
     IReadOnlyList<GitBugComment> Comments);
 

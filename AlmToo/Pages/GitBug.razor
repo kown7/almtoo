@@ -75,7 +75,8 @@
         <section class="gitbug-state-panel gitbug-state-panel--notice"
                  role="@(State.Status == GitBugWorkspaceStatus.Failed ? "alert" : "status")"
                  aria-live="@(State.Status == GitBugWorkspaceStatus.Failed ? "assertive" : "polite")"
-                 data-gitbug-state="@State.Status.ToString().ToLowerInvariant()">
+                 data-gitbug-state="@State.Status.ToString().ToLowerInvariant()"
+                 data-gitbug-failure-kind="@(State.FailureKind?.ToString() ?? string.Empty)">
             <h2>@StatusHeading</h2>
             <p>@State.Message</p>
             <div class="gitbug-state-panel__actions">

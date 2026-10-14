@@ -194,7 +194,9 @@ test('Resource exports decode fixture-proven list and detail DTOs without networ
     const detailed = await runtime.engine.getGitBugIssue(expected.id);
     assert.equal(detailed.operation, 'gitBug.getIssue');
     assert.equal(detailed.succeeded, true);
-    assert.deepEqual(detailed.value, {
+    const { revision, ...detailWithoutRevision } = detailed.value;
+    assert.match(revision, /^[0-9a-f]{40}$/);
+    assert.deepEqual(detailWithoutRevision, {
       summary,
       description: expected.comments[0].message,
       comments: expected.comments.map(comment => ({
@@ -272,7 +274,9 @@ test('Resource exports preserve an empty creation description without synthesizi
     authorDisplayName: 'Fixture Author'
   }]);
   assert.equal(detailed.succeeded, true);
-  assert.deepEqual(detailed.value, {
+  const { revision, ...detailWithoutRevision } = detailed.value;
+  assert.match(revision, /^[0-9a-f]{40}$/);
+  assert.deepEqual(detailWithoutRevision, {
     summary: listed.value.issues[0],
     description: '',
     comments: []

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json.Serialization;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
@@ -40,8 +41,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     {
         if (request is null
             || !Uri.TryCreate(request.RepositoryUrl, UriKind.Absolute, out var repository)
-            || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            || !string.IsNullOrEmpty(repository.UserInfo)
+            || !IsAllowedRepositoryOrigin(repository)
             || string.IsNullOrWhiteSpace(request.WorkspaceName)
             || request.WorkspaceName.Length > 80
             || request.WorkspaceName.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-')))
@@ -1014,6 +1014,9 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         [JsonPropertyName("summary")]
         public GitBugIssueSummaryDto? Summary { get; init; }
 
+        [JsonPropertyName("revision")]
+        public string? Revision { get; init; }
+
         [JsonPropertyName("description")]
         public string? Description { get; init; }
 
@@ -1023,6 +1026,9 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         public GitBugIssueDetail ToGitBugIssueDetail()
         {
             if (Summary is null
+                || string.IsNullOrWhiteSpace(Revision)
+                || Revision.Length != 40
+                || !Revision.All(Uri.IsHexDigit)
                 || Comments is null
                 || Comments.Count > MaxGitBugComments
                 || !IsBoundedGitBugText(Description, MaxGitBugBodyLength, allowNull: true, allowEmpty: true))
@@ -1042,7 +1048,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
 
             // Git-Bug v4 permits an empty creation message. The typed Accessor
             // contract exposes that optional text as safe, non-null state.
-            return new(Summary.ToGitBugIssueSummary(), Description ?? string.Empty, comments);
+            return new(Summary.ToGitBugIssueSummary(), Revision, Description ?? string.Empty, comments);
         }
     }
 
@@ -1314,17 +1320,36 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         }
     }
 
+    private static bool IsLoopbackHost(string host) =>
+        IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
+
+    private static bool IsAllowedRepositoryOrigin(Uri repository) =>
+        string.IsNullOrEmpty(repository.UserInfo)
+        && string.IsNullOrEmpty(repository.Query)
+        && string.IsNullOrEmpty(repository.Fragment)
+        && (string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(repository.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                    || IsLoopbackHost(repository.DnsSafeHost)));
+
     private static void ValidatePushCoordinates(
         string repositoryUrl,
         string branch,
         string destinationRef)
     {
         if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var repository)
-            || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)
-            || !string.IsNullOrEmpty(repository.UserInfo))
+            || !string.IsNullOrEmpty(repository.UserInfo)
+            || !string.IsNullOrEmpty(repository.Query)
+            || !string.IsNullOrEmpty(repository.Fragment)
+            || (!string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !(string.Equals(repository.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                        || IsLoopbackHost(repository.DnsSafeHost))))
+            || (string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException("The push repository is not a credential-free GitHub HTTPS URL.");
+            throw new InvalidOperationException("The push repository is not a credential-free GitHub HTTPS URL or local controlled test remote.");
         }
 
         if (string.IsNullOrWhiteSpace(branch)

@@ -72,7 +72,7 @@ test('controlled remote exposes smart HTTP and redacts credentials from failures
     assert.equal(failedPush.status, 401);
     assert.doesNotMatch(message, /acceptance-secret/);
     assert.doesNotMatch(remote.url, /acceptance-secret/);
-    assert.equal((await remote.snapshot()).repository, 'gitbug-fixture.git');
+    assert.equal((await remote.snapshot()).repository, 'git-bug-fixture.git');
   } finally {
     await remote.close();
     await remote.close();

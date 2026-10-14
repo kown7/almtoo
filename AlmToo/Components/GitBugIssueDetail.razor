@@ -109,7 +109,7 @@
                                @bind="commitEmail" disabled="@State.IsBusy" />
                     </div>
                     <div class="gitbug-form__actions">
-                        <button class="gitbug-secondary-action" type="submit" disabled="@State.IsBusy || !State.HasChangedFiles">
+                        <button class="gitbug-secondary-action" type="submit" disabled="@State.IsBusy">
                             Prepare commit details
                         </button>
                     </div>
@@ -169,7 +169,7 @@
                             <label for="gitbug-push-credential">Tab-scoped credential</label>
                             <input id="gitbug-push-credential" name="push-credential" type="password"
                                    autocomplete="new-password" spellcheck="false" required
-                                   @bind="credential" disabled="@State.IsBusy" />
+                                   @bind="credential" @bind:event="oninput" disabled="@State.IsBusy" />
                             <small id="gitbug-push-credential-help">Used only for this tab's push attempt. The field is cleared after submission.</small>
                         </div>
                         <div class="gitbug-form__actions">

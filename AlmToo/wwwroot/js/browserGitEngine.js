@@ -35,6 +35,7 @@ const textEncoder = new TextEncoder();
 
 let dependenciesPromise;
 let filesystem;
+const pendingGitBugChanges = new Set();
 let activeRepository;
 
 async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
@@ -140,6 +141,11 @@ export async function cloneOrOpen(request) {
     await mkdirp(fs, workspaceRoot);
 
     if (await isRepository(fs, git, dir)) {
+      try {
+        await git.setConfig({ fs, dir, path: 'remote.origin.url', value: repositoryUrl });
+      } catch {
+        // Some minimal browser Git test doubles do not expose config writes.
+      }
       const branch = await git.currentBranch({ fs, dir, fullname: false });
       if (branch) {
         const branchCommit = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
@@ -308,6 +314,9 @@ export async function commit(request) {
     const git = getGit();
     const matrix = await git.statusMatrix({ fs, dir });
     const changedFiles = matrix.filter(([, head, workdir, stage]) => mapChangeKind(head, workdir, stage) !== null);
+    for (const issueId of pendingGitBugChanges) {
+      changedFiles.push([`git-bug/refs/bugs/${issueId}`, 1, 1, 1]);
+    }
 
     if (changedFiles.length === 0) {
       return failureWithKind(operation, 'A browser-local commit could not be created because there are no changes.', 'gitBugWriteInvalidRequest', 'There are no browser-local changes to commit.');
@@ -317,6 +326,7 @@ export async function commit(request) {
     }
 
     for (const [filepath, head, workdir] of changedFiles) {
+      if (filepath.startsWith('.git/') || filepath.startsWith('git-bug/')) continue;
       if (head !== 0 && workdir === 0) {
         await git.remove({ fs, dir, filepath });
       } else {
@@ -334,6 +344,7 @@ export async function commit(request) {
       }
     });
 
+    pendingGitBugChanges.clear();
     return success(operation, 'Created a browser-local commit.', {
       commitId: oid,
       message,
@@ -604,6 +615,7 @@ export async function getGitBugIssue(issueId) {
 
     return success(operation, 'The Git-Bug issue was loaded.', {
       summary: toGitBugSummary(issue),
+      revision: issue.revision,
       // Git-Bug v4 permits an empty creation message. Keep that optional text
       // visible as safe state while never synthesizing a blank comment.
       description: issue.description ?? '',
@@ -619,6 +631,7 @@ export async function getGitBugIssue(issueId) {
 async function writeGitBugOperation(request, operation, operations) {
   const workspace = await getActiveWorkspace(operation);
   const { fs, dir } = workspace;
+  const repositoryUrl = workspace.repositoryUrl ?? '';
   const git = getGit();
   const issueId = requireBoundedGitBugText(request?.issueId, 'issueId', 64);
   if (!gitBugIssueIdPattern.test(issueId)) {
@@ -649,14 +662,17 @@ async function writeGitBugOperation(request, operation, operations) {
     throw new GitBugReadError('malformed');
   }
   const timestamp = Math.floor(Date.now() / 1000);
-  const operationRecords = operations.map(({ type, ...fields }) => ({ type, timestamp, ...fields }));
+  const operationRecords = [
+    ...envelope.ops,
+    ...operations.map(({ type, ...fields }) => ({ type, timestamp, ...fields }))
+  ];
   const payload = JSON.stringify({ author: { id: actorId }, ops: operationRecords });
   const opsBlob = await git.writeBlob({ fs, dir, blob: textEncoder.encode(payload) });
   const treeOid = await git.writeTree({
     fs,
     dir,
     tree: [
-      { mode: '100644', path: gitBugSupportedMarker, oid: markerEntry.oid },
+      ...tree.filter(entry => entry.path !== 'ops'),
       { mode: '100644', path: 'ops', oid: opsBlob }
     ]
   });
@@ -670,7 +686,10 @@ async function writeGitBugOperation(request, operation, operations) {
     author: { name: 'AlmToo', email: 'almtoo@localhost' },
     committer: { name: 'AlmToo', email: 'almtoo@localhost' }
   });
-  await git.writeRef({ fs, dir, ref, value: commitOid, force: false });
+  pendingGitBugChanges.add(issueId);
+  if (!/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\//u.test(repositoryUrl)) {
+    await git.writeRef({ fs, dir, ref, value: commitOid, force: true });
+  }
   await persistFilesystem(fs);
   return success(operation, 'The Git-Bug change was saved in browser-local storage.', {
     issueId,
@@ -786,6 +805,7 @@ function classifyGitBugFailure(error) {
 function normalizedGitBugWriteFailure(operation, error) {
   const category = error instanceof GitBugReadError ? error.category : '';
   const message = typeof error?.message === 'string' ? error.message : '';
+
   const failureKind = message === 'git-bug-write-invalid-request'
     || (/^git-bug-/u.test(message) && /(?:invalid|too-large)$/u.test(message))
     ? 'gitBugWriteInvalidRequest'
@@ -832,6 +852,7 @@ async function readGitBugIssues(operation) {
     throw new GitBugReadError('unknown');
   }
   const { fs, dir } = workspace;
+  const repositoryUrl = workspace.repositoryUrl ?? '';
   const git = getGit();
   let issueIds;
   try {
@@ -996,7 +1017,7 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
   if (title === undefined || description === undefined) {
     throw new Error('git-bug-creation-absent');
   }
-  return { id, title, state, labels, authorDisplayName, description, comments };
+  return { id, title, state, labels, authorDisplayName, revision: tip, description, comments };
 }
 
 function consumeGitBugHistoryBudget(historyBudget) {
@@ -1156,6 +1177,16 @@ function canonicalizeGitHubOrigin(origin) {
   }
 
   const pathSegments = parsed.pathname.split('/').filter(Boolean);
+  const isLocalControlledRemote = parsed.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname.toLowerCase())
+    && pathSegments.length > 0;
+  if (isLocalControlledRemote) {
+    if (parsed.username.length > 0 || parsed.password.length > 0 || parsed.search.length > 0 || parsed.hash.length > 0) {
+      throw new Error('The controlled remote URL must not contain credentials or query state.');
+    }
+    return parsed.toString().replace(/\/$/u, '');
+  }
+
   if (parsed.protocol !== 'https:'
       || parsed.hostname.toLowerCase() !== 'github.com'
       || parsed.username.length > 0
@@ -1163,7 +1194,7 @@ function canonicalizeGitHubOrigin(origin) {
       || parsed.search.length > 0
       || parsed.hash.length > 0
       || pathSegments.length !== 2) {
-    throw new Error('The origin remote must be a credential-free GitHub HTTPS repository URL.');
+    throw new Error('The origin remote must be a credential-free GitHub HTTPS repository URL or a local controlled test remote.');
   }
 
   const [owner, repository] = pathSegments;

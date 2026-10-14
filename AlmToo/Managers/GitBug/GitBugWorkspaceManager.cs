@@ -167,7 +167,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
             State.LastRefreshSucceeded = null;
         });
         var request = new GitBugIssueEditRequest(issueId, title!, description!,
-            new(repository, issueId, string.Empty, GitBugWriteOperations.IssueEdit),
+            new(repository, issueId, State.SelectedIssue!.Revision, GitBugWriteOperations.IssueEdit),
             new(GitBugWriteContract.SupportedStorageVersion, GitBugWriteContract.Utf8Encoding, true));
 
         try
@@ -213,7 +213,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
             State.LastRefreshSucceeded = null;
         });
         var request = new GitBugCommentCreateRequest(issueId, body!,
-            new(repository, issueId, string.Empty, GitBugWriteOperations.CommentCreate),
+            new(repository, issueId, State.SelectedIssue!.Revision, GitBugWriteOperations.CommentCreate),
             new(GitBugWriteContract.SupportedStorageVersion, GitBugWriteContract.Utf8Encoding, true));
 
         try
@@ -315,7 +315,8 @@ public sealed class GitBugWorkspaceManager : IDisposable
         }
 
         var request = State.ProposedCommit;
-        if (State.IsBusy || !State.CommitReviewLoaded || request is null || !State.HasChangedFiles
+        if (State.IsBusy || !State.CommitReviewLoaded || request is null
+            || (!State.HasChangedFiles && State.SelectedIssue is null)
             || !BrowserGitCommitContract.IsValidCommitRequest(request))
         {
             return Reject("Review changed files and enter valid commit details before confirming.");
@@ -367,9 +368,12 @@ public sealed class GitBugWorkspaceManager : IDisposable
             return ApplyCommitFailure(result.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed);
         }
 
-        State.ChangedFiles = result.Value;
+        if (result.Value.Count > 0 || State.ChangedFiles.Count == 0)
+        {
+            State.ChangedFiles = result.Value;
+        }
         State.Status = GitBugWorkspaceStatus.CommitReviewReady;
-        State.Message = result.Value.Count == 0
+        State.Message = State.ChangedFiles.Count == 0
             ? "No changed files are available for a local commit."
             : "Review the changed files and commit details before confirming.";
         State.FailureKind = null;
@@ -523,6 +527,10 @@ public sealed class GitBugWorkspaceManager : IDisposable
             }
             State.SelectedIssueId = issueId;
             State.SelectedIssue = detail.Value;
+            State.ChangedFiles = new[]
+            {
+                new ChangedFile($"/git-bug/refs/bugs/{issueId.Value}", GitChangeKind.Modified)
+            };
             State.Status = GitBugWorkspaceStatus.DetailReady;
             State.Message = "Local Git-Bug changes saved. No commit or push was performed.";
             State.FailureKind = null;
@@ -747,6 +755,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
                 return Complete(operation, () => ApplyPushFailure(result.FailureKind));
             }
 
+            await browserGitAccessor.ForgetCredentialAsync(operation.Token);
             var status = await browserGitAccessor.GetStatusAsync(operation.Token);
             return Complete(operation, () => operation.Token.IsCancellationRequested
                 ? ApplyPushCancellation()
