@@ -221,6 +221,17 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 
 **Result:** PASS
 
+## M009 S05 T04 browser write and recovery acceptance review
+
+- [x] `Pages/GitBug.razor` and `Components/GitBugIssueDetail.razor` remain **Client** components: they render passive Manager state and submit explicit edit, comment, review, commit, credential, push, retry, and recovery intents; they do not access browser Git APIs, transport details, or raw diagnostics.
+- [x] `GitBugWorkspaceManager` remains the **Manager** for review-first sequencing, local commit confirmation, scoped credential handling, explicit push/retry transitions, failure classification, and post-push refresh. No second Manager, Engine, or pass-through service was introduced.
+- [x] `BrowserGitAccessor` and `IBrowserGitAccessor` remain the typed **Accessor** boundary for browser Git and Git-Bug integration. The browser Git module and `controlledGitBugRemote.mjs` are test/platform **Resource** infrastructure; the controlled remote is disposable and is never an application dependency.
+- [x] The `test:git-bug-write` package command runs both Chromium S05 specs through the existing localhost Playwright web-server configuration. With no live credential environment, the specs use only the deterministic localhost controlled remote; the live GitHub command remains separate and opt-in.
+- [x] Browser acceptance proves changed-file and commit review, explicit push, authentication/network recovery, no implicit retry, bounded alerts, repository/remote state, cleanup in `finally`, and absence of credentials from DOM, URL, storage, logs, diagnostics, and durable fixture state.
+- [x] No live secret is present in source, fixtures, URLs, logs, or repository state, and no architectural exception is required.
+
+**Result:** PASS
+
 ## M009 S03 T01 Git-Bug commit contract review
 
 - [x] `BrowserGitContracts.cs` and `BrowserGitAccessor` remain the typed **Accessor contract** boundary, carrying bounded changed-file and commit metadata and translating malformed bridge output to stable failure categories without exposing browser diagnostics.
