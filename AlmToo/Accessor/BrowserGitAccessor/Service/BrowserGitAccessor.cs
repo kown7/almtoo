@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json.Serialization;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
@@ -13,6 +14,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     private const string ModulePath = "./js/browserGitEngine.js";
     private const string CredentialModulePath = "./js/pushCredentialSession.js";
     private const int MaxEditableTextBytes = 1024 * 1024;
+    private const int MaxChangedFilePathLength = 1024;
     private const int MaxGitBugQueryLength = 256;
     private const int MaxGitBugPageSize = 100;
     private const int MaxGitBugTitleLength = 4096;
@@ -39,8 +41,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     {
         if (request is null
             || !Uri.TryCreate(request.RepositoryUrl, UriKind.Absolute, out var repository)
-            || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            || !string.IsNullOrEmpty(repository.UserInfo)
+            || !IsAllowedRepositoryOrigin(repository)
             || string.IsNullOrWhiteSpace(request.WorkspaceName)
             || request.WorkspaceName.Length > 80
             || request.WorkspaceName.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-')))
@@ -130,24 +131,31 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     public async ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(
         CancellationToken cancellationToken = default)
     {
-        return await InvokeWithValueAsync<List<ChangedFileDto>, IReadOnlyList<ChangedFile>>(
+        var result = await InvokeWithValueAsync<List<ChangedFileDto>, IReadOnlyList<ChangedFile>>(
             "getStatus",
             "getStatus",
             files => files.Select(file => file.ToChangedFile()).ToArray(),
             cancellationToken);
+        if (!result.Succeeded || result.Value is null)
+        {
+            return result;
+        }
+
+        if (!BrowserGitCommitContract.IsValidChangedFiles(result.Value))
+        {
+            return new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "getStatus", false, "Repository status could not be read safely.",
+                Value: default, FailureKind: GitOperationFailureKind.GitBugDataMalformed);
+        }
+
+        return result;
     }
 
     public async ValueTask<GitOperationResult<CommitInfo>> CommitAsync(
         CommitRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (request is null
-            || string.IsNullOrWhiteSpace(request.Message)
-            || string.IsNullOrWhiteSpace(request.AuthorName)
-            || string.IsNullOrWhiteSpace(request.AuthorEmail)
-            || request.Message.IndexOfAny(['\0', '\r']) >= 0
-            || request.AuthorName.IndexOfAny(['\0', '\r', '\n']) >= 0
-            || request.AuthorEmail.IndexOfAny(['\0', '\r', '\n']) >= 0)
+        if (!BrowserGitCommitContract.IsValidCommitRequest(request))
         {
             return new GitOperationResult<CommitInfo>("commit", false, "A browser-local commit could not be created.", Value: default, Diagnostic: "A non-empty message and valid author metadata are required.");
         }
@@ -251,6 +259,44 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             value => value.ToGitBugIssueDetail(),
             cancellationToken,
             issueId.Value);
+    }
+
+    public async ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
+        GitBugIssueEditRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = GitBugWriteOperations.IssueEdit;
+        if (!GitBugWriteContract.IsValidIssueEdit(request))
+        {
+            return SanitizedGitBugWriteFailure<GitBugIssueEditResult>(operation, GitOperationFailureKind.GitBugWriteInvalidRequest);
+        }
+
+        var dto = new GitBugIssueEditRequestDto(request);
+        return await InvokeGitBugWithValueAsync<GitBugWriteResultDto, GitBugIssueEditResult>(
+            operation,
+            "editGitBugIssue",
+            value => value.ToIssueEditResult(),
+            cancellationToken,
+            dto);
+    }
+
+    public async ValueTask<GitOperationResult<GitBugCommentCreateResult>> CreateCommentAsync(
+        GitBugCommentCreateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = GitBugWriteOperations.CommentCreate;
+        if (!GitBugWriteContract.IsValidComment(request))
+        {
+            return SanitizedGitBugWriteFailure<GitBugCommentCreateResult>(operation, GitOperationFailureKind.GitBugWriteInvalidRequest);
+        }
+
+        var dto = new GitBugCommentCreateRequestDto(request);
+        return await InvokeGitBugWithValueAsync<GitBugWriteResultDto, GitBugCommentCreateResult>(
+            operation,
+            "createGitBugComment",
+            value => value.ToCommentCreateResult(),
+            cancellationToken,
+            dto);
     }
 
     public async ValueTask<GitOperationResult<bool>> HasCredentialAsync(CancellationToken cancellationToken = default)
@@ -502,8 +548,29 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
         "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
         "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+        "gitBugWriteInvalidRequest" => GitOperationFailureKind.GitBugWriteInvalidRequest,
+        "gitBugWritePreconditionFailed" => GitOperationFailureKind.GitBugWritePreconditionFailed,
+        "gitBugWriteConflict" => GitOperationFailureKind.GitBugWriteConflict,
+        "gitBugWriteUnsupportedFormat" => GitOperationFailureKind.GitBugWriteUnsupportedFormat,
+        "gitBugWriteUnavailable" => GitOperationFailureKind.GitBugWriteUnavailable,
+        "gitBugWriteSerializationFailed" => GitOperationFailureKind.GitBugWriteSerializationFailed,
+        "gitBugWriteUnknown" => GitOperationFailureKind.GitBugWriteUnknown,
         _ => GitOperationFailureKind.Unknown
     };
+
+    private static GitOperationResult<TValue> SanitizedGitBugWriteFailure<TValue>(
+        string operation,
+        GitOperationFailureKind failureKind)
+    {
+        var message = failureKind switch
+        {
+            GitOperationFailureKind.GitBugWriteInvalidRequest => "The Git-Bug write request is not valid.",
+            GitOperationFailureKind.GitBugWriteUnavailable => "Git-Bug writing is not available yet.",
+            _ => "The Git-Bug write could not be completed."
+        };
+
+        return new(operation, false, message, Value: default, Diagnostic: null, FailureKind: failureKind);
+    }
 
     private static GitOperationResult<TValue> SanitizedGitBugFailure<TValue>(
         string operation,
@@ -577,6 +644,13 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
         "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
         "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+        "gitBugWriteInvalidRequest" => GitOperationFailureKind.GitBugWriteInvalidRequest,
+        "gitBugWritePreconditionFailed" => GitOperationFailureKind.GitBugWritePreconditionFailed,
+        "gitBugWriteConflict" => GitOperationFailureKind.GitBugWriteConflict,
+        "gitBugWriteUnsupportedFormat" => GitOperationFailureKind.GitBugWriteUnsupportedFormat,
+        "gitBugWriteUnavailable" => GitOperationFailureKind.GitBugWriteUnavailable,
+        "gitBugWriteSerializationFailed" => GitOperationFailureKind.GitBugWriteSerializationFailed,
+        "gitBugWriteUnknown" => GitOperationFailureKind.GitBugWriteUnknown,
         "unknown" => GitOperationFailureKind.Unknown,
         _ => null
     };
@@ -806,6 +880,57 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             };
     }
 
+    private sealed record GitBugIssueEditRequestDto
+    {
+        public GitBugIssueEditRequestDto(GitBugIssueEditRequest request)
+        {
+            IssueId = request.IssueId.Value;
+            Title = request.Title;
+            Description = request.Description;
+            Preconditions = request.Preconditions;
+            Serialization = request.Serialization;
+        }
+
+        [JsonPropertyName("issueId")] public string IssueId { get; init; }
+        [JsonPropertyName("title")] public string Title { get; init; }
+        [JsonPropertyName("description")] public string Description { get; init; }
+        [JsonPropertyName("preconditions")] public GitBugWritePreconditions Preconditions { get; init; }
+        [JsonPropertyName("serialization")] public GitBugSerializationMetadata Serialization { get; init; }
+    }
+
+    private sealed record GitBugCommentCreateRequestDto
+    {
+        public GitBugCommentCreateRequestDto(GitBugCommentCreateRequest request)
+        {
+            IssueId = request.IssueId.Value;
+            Body = request.Body;
+            Preconditions = request.Preconditions;
+            Serialization = request.Serialization;
+        }
+
+        [JsonPropertyName("issueId")] public string IssueId { get; init; }
+        [JsonPropertyName("body")] public string Body { get; init; }
+        [JsonPropertyName("preconditions")] public GitBugWritePreconditions Preconditions { get; init; }
+        [JsonPropertyName("serialization")] public GitBugSerializationMetadata Serialization { get; init; }
+    }
+
+    private sealed record GitBugWriteResultDto
+    {
+        [JsonPropertyName("issueId")] public string? IssueId { get; init; }
+        [JsonPropertyName("revision")] public string? Revision { get; init; }
+        [JsonPropertyName("reviewId")] public string? ReviewId { get; init; }
+        [JsonPropertyName("commentId")] public string? CommentId { get; init; }
+
+        public GitBugIssueEditResult ToIssueEditResult() =>
+            new(new GitBugIssueId(RequireValue(IssueId)), RequireValue(Revision), RequireValue(ReviewId));
+
+        public GitBugCommentCreateResult ToCommentCreateResult() =>
+            new(new GitBugIssueId(RequireValue(IssueId)), RequireValue(CommentId), RequireValue(Revision), RequireValue(ReviewId));
+
+        private static string RequireValue(string? value) =>
+            !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException("Git-Bug write response was incomplete.");
+    }
+
     private sealed record GitBugIssueQueryDto
     {
         [JsonPropertyName("state")]
@@ -889,6 +1014,9 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         [JsonPropertyName("summary")]
         public GitBugIssueSummaryDto? Summary { get; init; }
 
+        [JsonPropertyName("revision")]
+        public string? Revision { get; init; }
+
         [JsonPropertyName("description")]
         public string? Description { get; init; }
 
@@ -898,6 +1026,9 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         public GitBugIssueDetail ToGitBugIssueDetail()
         {
             if (Summary is null
+                || string.IsNullOrWhiteSpace(Revision)
+                || Revision.Length != 40
+                || !Revision.All(Uri.IsHexDigit)
                 || Comments is null
                 || Comments.Count > MaxGitBugComments
                 || !IsBoundedGitBugText(Description, MaxGitBugBodyLength, allowNull: true, allowEmpty: true))
@@ -917,7 +1048,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
 
             // Git-Bug v4 permits an empty creation message. The typed Accessor
             // contract exposes that optional text as safe, non-null state.
-            return new(Summary.ToGitBugIssueSummary(), Description ?? string.Empty, comments);
+            return new(Summary.ToGitBugIssueSummary(), Revision, Description ?? string.Empty, comments);
         }
     }
 
@@ -1046,8 +1177,16 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         [JsonPropertyName("message")]
         public string Message { get; init; } = string.Empty;
 
+        [JsonPropertyName("changedFileCount")]
+        public int? ChangedFileCount { get; init; }
+
         public CommitInfo ToCommitInfo() =>
-            new(CommitId, Message);
+            new(
+                CommitId.Length <= BrowserGitCommitContract.MaximumCommitIdLength ? CommitId : string.Empty,
+                Message,
+                ChangedFileCount is >= 0 and <= BrowserGitCommitContract.MaximumChangedFiles
+                    ? ChangedFileCount.Value
+                    : 0);
     }
 
     private sealed record PushReviewDto
@@ -1181,17 +1320,36 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         }
     }
 
+    private static bool IsLoopbackHost(string host) =>
+        IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
+
+    private static bool IsAllowedRepositoryOrigin(Uri repository) =>
+        string.IsNullOrEmpty(repository.UserInfo)
+        && string.IsNullOrEmpty(repository.Query)
+        && string.IsNullOrEmpty(repository.Fragment)
+        && (string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(repository.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                    || IsLoopbackHost(repository.DnsSafeHost)));
+
     private static void ValidatePushCoordinates(
         string repositoryUrl,
         string branch,
         string destinationRef)
     {
         if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var repository)
-            || !string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)
-            || !string.IsNullOrEmpty(repository.UserInfo))
+            || !string.IsNullOrEmpty(repository.UserInfo)
+            || !string.IsNullOrEmpty(repository.Query)
+            || !string.IsNullOrEmpty(repository.Fragment)
+            || (!string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !(string.Equals(repository.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                        || IsLoopbackHost(repository.DnsSafeHost))))
+            || (string.Equals(repository.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(repository.Host, "github.com", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException("The push repository is not a credential-free GitHub HTTPS URL.");
+            throw new InvalidOperationException("The push repository is not a credential-free GitHub HTTPS URL or local controlled test remote.");
         }
 
         if (string.IsNullOrWhiteSpace(branch)

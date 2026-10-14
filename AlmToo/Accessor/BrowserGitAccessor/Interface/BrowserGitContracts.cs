@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 public record GitOperationResult(
@@ -24,7 +26,155 @@ public enum GitOperationFailureKind
     GitBugDataUnavailable,
     GitBugFormatUnsupported,
     GitBugDataMalformed,
+    GitBugWriteInvalidRequest,
+    GitBugWritePreconditionFailed,
+    GitBugWriteConflict,
+    GitBugWriteUnsupportedFormat,
+    GitBugWriteUnavailable,
+    GitBugWriteSerializationFailed,
+    GitBugWriteUnknown,
     Unknown
+}
+
+/// <summary>Stable operation names for the Git-Bug write boundary.</summary>
+public static class GitBugWriteOperations
+{
+    public const string IssueEdit = "gitBug.issue.edit";
+    public const string CommentCreate = "gitBug.comment.create";
+    public const string WriteReview = "gitBug.write.review";
+    public const string WriteCommit = "gitBug.write.commit";
+}
+
+public enum GitBugWriteStage
+{
+    Review,
+    Prepare,
+    Commit
+}
+
+/// <summary>Credential-free identity for the active repository/workspace.</summary>
+public sealed record GitBugRepositoryIdentity(string RepositoryUrl, string WorkspaceName);
+
+/// <summary>Immutable review preconditions; a changed revision requires a new review.</summary>
+public sealed record GitBugWritePreconditions(
+    GitBugRepositoryIdentity Repository,
+    GitBugIssueId IssueId,
+    string ExpectedRevision,
+    string ReviewedOperation);
+
+/// <summary>Canonical serialization facts selected by the Accessor/Resource boundary.</summary>
+public sealed record GitBugSerializationMetadata(
+    string StorageVersion,
+    string Encoding,
+    bool Deterministic);
+
+public sealed record GitBugIssueEditRequest(
+    GitBugIssueId IssueId,
+    string Title,
+    string Description,
+    GitBugWritePreconditions Preconditions,
+    GitBugSerializationMetadata Serialization);
+
+public sealed record GitBugCommentCreateRequest(
+    GitBugIssueId IssueId,
+    string Body,
+    GitBugWritePreconditions Preconditions,
+    GitBugSerializationMetadata Serialization);
+
+public sealed record GitBugWriteReview(
+    string ReviewId,
+    GitBugWritePreconditions Preconditions,
+    GitBugSerializationMetadata Serialization);
+
+public sealed record GitBugIssueEditResult(
+    GitBugIssueId IssueId,
+    string Revision,
+    string ReviewId);
+
+public sealed record GitBugCommentCreateResult(
+    GitBugIssueId IssueId,
+    string CommentId,
+    string Revision,
+    string ReviewId);
+
+public sealed record GitBugWriteReceipt(
+    string Operation,
+    string ReviewId,
+    string Revision,
+    int BoundedItemCount,
+    bool Committed);
+
+/// <summary>Pure contract checks shared by Accessor implementations and contract tests.</summary>
+public static class GitBugWriteContract
+{
+    public const string SupportedStorageVersion = "v0.11.0";
+    public const string Utf8Encoding = "utf-8";
+    public const int MaximumTitleLength = 4096;
+    public const int MaximumBodyLength = 1024 * 1024;
+    public const int MaximumRevisionLength = 128;
+    public const int MaximumReviewIdLength = 128;
+
+    public static bool IsValidOperation(string? operation) => operation is
+        GitBugWriteOperations.IssueEdit or
+        GitBugWriteOperations.CommentCreate or
+        GitBugWriteOperations.WriteReview or
+        GitBugWriteOperations.WriteCommit;
+
+    public static bool IsValidFailure(GitOperationFailureKind kind) => kind is
+        GitOperationFailureKind.GitBugWriteInvalidRequest or
+        GitOperationFailureKind.GitBugWritePreconditionFailed or
+        GitOperationFailureKind.GitBugWriteConflict or
+        GitOperationFailureKind.GitBugWriteUnsupportedFormat or
+        GitOperationFailureKind.GitBugWriteUnavailable or
+        GitOperationFailureKind.GitBugWriteSerializationFailed or
+        GitOperationFailureKind.GitBugWriteUnknown;
+
+    public static bool IsValidSerialization(GitBugSerializationMetadata? metadata) =>
+        metadata is not null
+        && metadata.StorageVersion == SupportedStorageVersion
+        && metadata.Encoding == Utf8Encoding
+        && metadata.Deterministic;
+
+    public static bool IsValidPreconditions(GitBugWritePreconditions? preconditions) =>
+        preconditions is not null
+        && preconditions.Repository is not null
+        && Uri.TryCreate(preconditions.Repository.RepositoryUrl, UriKind.Absolute, out var repository)
+        && IsAllowedRepositoryUri(repository)
+        && string.IsNullOrWhiteSpace(repository.UserInfo) 
+        && !string.IsNullOrWhiteSpace(preconditions.Repository.WorkspaceName)
+        && preconditions.IssueId.Value is { Length: 64 } issueId && issueId.All(Uri.IsHexDigit)
+        && IsBounded(preconditions.ExpectedRevision, MaximumRevisionLength)
+        && IsValidOperation(preconditions.ReviewedOperation);
+
+    public static bool IsValidIssueEdit(GitBugIssueEditRequest? request) =>
+        request is not null
+        && IsValidPreconditions(request.Preconditions)
+        && request.Preconditions.IssueId == request.IssueId
+        && IsValidSerialization(request.Serialization)
+        && IsBounded(request.IssueId.Value, 64)
+        && IsBounded(request.Title, MaximumTitleLength)
+        && IsBounded(request.Description, MaximumBodyLength, allowEmpty: true)
+        && request.Preconditions.ReviewedOperation == GitBugWriteOperations.IssueEdit;
+
+    public static bool IsValidComment(GitBugCommentCreateRequest? request) =>
+        request is not null
+        && IsValidPreconditions(request.Preconditions)
+        && request.Preconditions.IssueId == request.IssueId
+        && IsValidSerialization(request.Serialization)
+        && IsBounded(request.Body, MaximumBodyLength, allowEmpty: false)
+        && request.Preconditions.ReviewedOperation == GitBugWriteOperations.CommentCreate;
+
+    private static bool IsAllowedRepositoryUri(Uri repository) =>
+        repository.Scheme == Uri.UriSchemeHttps
+        || (repository.Scheme == Uri.UriSchemeHttp
+            && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                || IPAddress.TryParse(repository.Host, out var address) && IPAddress.IsLoopback(address)));
+
+    private static bool IsBounded(string? value, int maximum, bool allowEmpty = false) =>
+        value is not null
+        && (allowEmpty || value.Length > 0)
+        && value.Length <= maximum
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
 }
 
 public readonly record struct GitBugIssueId(string Value);
@@ -55,6 +205,7 @@ public sealed record GitBugIssueSummary(
 
 public sealed record GitBugIssueDetail(
     GitBugIssueSummary Summary,
+    string Revision,
     string? Description,
     IReadOnlyList<GitBugComment> Comments);
 
@@ -89,8 +240,40 @@ public record TextFileContent(
 public record ChangedFile(string Path, GitChangeKind ChangeKind);
 public enum GitChangeKind { Added, Modified, Deleted, Renamed, Untracked, Unknown }
 
+/// <summary>Bounded, credential-free metadata used by the Git-Bug review phase.</summary>
+public static class BrowserGitCommitContract
+{
+    public const int MaximumChangedFiles = 1000;
+    public const int MaximumCommitMessageLength = 4096;
+    public const int MaximumAuthorLength = 512;
+    public const int MaximumEmailLength = 512;
+    public const int MaximumCommitIdLength = 40;
+
+    public static bool IsValidCommitRequest(CommitRequest? request) =>
+        request is not null
+        && IsBoundedText(request.Message, MaximumCommitMessageLength)
+        && IsBoundedText(request.AuthorName, MaximumAuthorLength)
+        && IsBoundedText(request.AuthorEmail, MaximumEmailLength)
+        && request.AuthorEmail.Contains('@', StringComparison.Ordinal)
+        && request.AuthorEmail.IndexOfAny(['\r', '\n']) < 0;
+
+    public static bool IsValidChangedFiles(IReadOnlyList<ChangedFile>? files) =>
+        files is not null
+        && files.Count <= MaximumChangedFiles
+        && files.All(file => file is not null
+            && file.Path.StartsWith("/", StringComparison.Ordinal)
+            && file.Path.Length <= 1024
+            && file.Path.IndexOfAny(['\\', '\0', '\r', '\n']) < 0);
+
+    private static bool IsBoundedText(string? value, int maximum) =>
+        value is not null
+        && value.Trim().Length > 0
+        && value.Length <= maximum
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+}
+
 public record CommitRequest(string Message, string AuthorName, string AuthorEmail);
-public record CommitInfo(string CommitId, string Message);
+public record CommitInfo(string CommitId, string Message, int ChangedFileCount = 0);
 
 public record PushReview(
     string RepositoryUrl,

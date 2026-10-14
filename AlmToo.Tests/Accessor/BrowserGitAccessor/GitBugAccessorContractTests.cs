@@ -216,6 +216,64 @@ public sealed class GitBugAccessorContractTests
     }
 
     [Fact]
+    public async Task Write_contracts_validate_before_bridge_and_map_supported_requests_safely()
+    {
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["editGitBugIssue"] = FakeModule.ThrowResponse,
+            ["createGitBugComment"] = FakeModule.ThrowResponse
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+        var issueId = new GitBugIssueId(IssueId);
+        var preconditions = new GitBugWritePreconditions(
+            new GitBugRepositoryIdentity("https://github.com/example/project.git", "workspace"),
+            issueId,
+            "revision-1",
+            GitBugWriteOperations.IssueEdit);
+        var edit = new GitBugIssueEditRequest(
+            issueId,
+            "Updated title",
+            "Updated description",
+            preconditions,
+            new GitBugSerializationMetadata("v0.11.0", "utf-8", true));
+        var invalid = edit with { Title = new string('x', GitBugWriteContract.MaximumTitleLength + 1) };
+        var validResult = await accessor.EditIssueAsync(edit);
+        var invalidResult = await accessor.EditIssueAsync(invalid);
+        var commentResult = await accessor.CreateCommentAsync(new GitBugCommentCreateRequest(
+            issueId,
+            "A fixture comment",
+            preconditions with { ReviewedOperation = GitBugWriteOperations.CommentCreate },
+            edit.Serialization));
+
+        Assert.False(validResult.Succeeded);
+        Assert.Equal(GitOperationFailureKind.Unknown, validResult.FailureKind);
+        Assert.Equal(GitBugWriteOperations.IssueEdit, validResult.Operation);
+        Assert.False(invalidResult.Succeeded);
+        Assert.Equal(GitOperationFailureKind.GitBugWriteInvalidRequest, invalidResult.FailureKind);
+        Assert.False(commentResult.Succeeded);
+        Assert.Equal(GitOperationFailureKind.Unknown, commentResult.FailureKind);
+        Assert.Null(validResult.Diagnostic);
+        Assert.Null(invalidResult.Diagnostic);
+        Assert.Null(commentResult.Diagnostic);
+        Assert.Equal(new[] { "initialize", "editGitBugIssue", "createGitBugComment" }, module.Invocations);
+    }
+
+    [Theory]
+    [InlineData("gitBugWriteInvalidRequest", GitOperationFailureKind.GitBugWriteInvalidRequest)]
+    [InlineData("gitBugWritePreconditionFailed", GitOperationFailureKind.GitBugWritePreconditionFailed)]
+    [InlineData("gitBugWriteConflict", GitOperationFailureKind.GitBugWriteConflict)]
+    [InlineData("gitBugWriteUnsupportedFormat", GitOperationFailureKind.GitBugWriteUnsupportedFormat)]
+    [InlineData("gitBugWriteUnavailable", GitOperationFailureKind.GitBugWriteUnavailable)]
+    [InlineData("gitBugWriteSerializationFailed", GitOperationFailureKind.GitBugWriteSerializationFailed)]
+    [InlineData("gitBugWriteUnknown", GitOperationFailureKind.GitBugWriteUnknown)]
+    public void Write_failure_names_are_explicitly_mapped(string name, GitOperationFailureKind expected)
+    {
+        var method = typeof(BrowserGitAccessorService).GetMethod("ParseGitBugFailureKind", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        Assert.Equal(expected, method!.Invoke(null, [name]));
+    }
+
+    [Fact]
     public async Task Invalid_and_oversized_requests_never_cross_the_bridge()
     {
         var module = new FakeModule(new Dictionary<string, string>());

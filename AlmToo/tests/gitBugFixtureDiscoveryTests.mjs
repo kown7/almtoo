@@ -179,7 +179,7 @@ test('browser-local Git stack discovers v0.11.0 metadata and fixture-proven read
   assert.equal(result.category, 'supported');
   assert.equal(result.supportedFormatVersion, 4);
   assert.equal(result.issues.length, 3);
-  for (const [scenario, humanId] of Object.entries(expectedIds)) {
+  for (const [scenario, humanId] of Object.entries(expectedIds).filter(([, value]) => typeof value === 'string')) {
     const expected = JSON.parse(await readFile(path.join(sourceFixture, 'expected', 'details', `${humanId}.json`), 'utf8'));
     const actual = result.issues.find(issue => issue.id === expected.id);
     assert.ok(actual, `${scenario} must be discovered`);

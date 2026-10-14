@@ -82,7 +82,9 @@ test('external issue content is rendered as text with no raw HTML or integration
   assert.doesNotMatch(all, /MarkupString|@\(\(MarkupString\)|innerHTML|AddMarkupContent|HtmlString/);
   assert.doesNotMatch(all, /AlmToo\.Accessor|IGitBugAccessor|BrowserGitAccessor|browserGitEngine|IJSRuntime|IJSObjectReference|JSImport/);
   assert.doesNotMatch(all, /new\s+GitBugIssue(?:Id|Query|State|Page|Summary|Detail)|GitBugComment\s+[A-Za-z_]/);
-  assert.doesNotMatch(all, /type="(?:password|url)"|fetch\s*\(|HttpClient|\.Diagnostic\b|credential|token/i);
+  assert.match(all, /type="password"[\s\S]*autocomplete="new-password"/);
+  assert.match(all, /credential is kept only for this browser tab/);
+  assert.doesNotMatch(all, /@credential|@State\.[A-Za-z]*Credential|fetch\s*\(|HttpClient|\.Diagnostic\b|sessionStorage|localStorage/i);
 });
 
 test('loading and failure states use accessible live semantics and safe recovery', async () => {

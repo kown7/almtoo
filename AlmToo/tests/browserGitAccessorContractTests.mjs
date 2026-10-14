@@ -26,8 +26,14 @@ test('Browser Git interfaces and passive contract records share the Accessor int
   assert.doesNotMatch(contracts, /record SynchronizationFailure\([\s\S]*?(?:Diagnostic|credential|token)/i);
   assert.match(contracts, /SynchronizationFailure\(\s*SynchronizationFailureCategory Category,\s*string Message\)/);
   for (const dto of ['GitOperationResult', 'FilterFilesRequest', 'FilterFilesResult', 'UpdateFilesRequest', 'UpdateFilesResult', 'PushReview', 'PushRequest', 'PushResult', 'SynchronizationRequest', 'IncomingCommitMetadata', 'ChangedFileSummary', 'SynchronizationReview', 'SynchronizationFailure']) assert.match(contracts, new RegExp(`record ${dto}\\b`));
+  assert.match(contracts, /record ChangedFile\(\s*string Path,\s*GitChangeKind ChangeKind/);
+  assert.match(contracts, /record CommitRequest\(\s*string Message,\s*string AuthorName,\s*string AuthorEmail/);
+  assert.match(contracts, /record CommitInfo\(\s*string CommitId,\s*string Message,\s*int ChangedFileCount/);
+  assert.match(git, /GetStatusAsync\(CancellationToken cancellationToken/);
+  assert.match(git, /CommitAsync\(CommitRequest request, CancellationToken cancellationToken/);
   for (const enumeration of ['SynchronizationIntent', 'SynchronizationDecisionState', 'SynchronizationFailureCategory']) assert.match(contracts, new RegExp(`enum ${enumeration}\\b`));
-  assert.doesNotMatch(contracts, /\b(?:static|class|interface)\b|\b(?:Success|Failure)\s*\(|=>/);
+  const passiveContracts = contracts.slice(0, contracts.indexOf('public static class GitBugWriteOperations'));
+  assert.doesNotMatch(passiveContracts, /\b(?:static|class|interface)\b|\b(?:Success|Failure)\s*\(|=>/);
 });
 
 test('one scoped Service implements both facets and both DI contracts resolve that instance', async () => {

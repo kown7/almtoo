@@ -178,7 +178,8 @@ test('Resource exports decode fixture-proven list and detail DTOs without networ
   assert.equal(listed.value.nextCursor, null);
   assert.equal(listed.value.issues.length, 3);
 
-  for (const [scenario, humanId] of Object.entries(expectedIds)) {
+  for (const [scenario, humanId] of Object.entries(expectedIds)
+    .filter(([name]) => ['unicodeOpen', 'minimalOpen', 'closed'].includes(name))) {
     const expected = JSON.parse(await readFile(path.join(sourceFixture, 'expected', 'details', `${humanId}.json`), 'utf8'));
     const summary = listed.value.issues.find(issue => issue.id === expected.id);
     assert.ok(summary, `${scenario} must be returned by the Resource export.`);
@@ -193,7 +194,9 @@ test('Resource exports decode fixture-proven list and detail DTOs without networ
     const detailed = await runtime.engine.getGitBugIssue(expected.id);
     assert.equal(detailed.operation, 'gitBug.getIssue');
     assert.equal(detailed.succeeded, true);
-    assert.deepEqual(detailed.value, {
+    const { revision, ...detailWithoutRevision } = detailed.value;
+    assert.match(revision, /^[0-9a-f]{40}$/);
+    assert.deepEqual(detailWithoutRevision, {
       summary,
       description: expected.comments[0].message,
       comments: expected.comments.map(comment => ({
@@ -271,7 +274,9 @@ test('Resource exports preserve an empty creation description without synthesizi
     authorDisplayName: 'Fixture Author'
   }]);
   assert.equal(detailed.succeeded, true);
-  assert.deepEqual(detailed.value, {
+  const { revision, ...detailWithoutRevision } = detailed.value;
+  assert.match(revision, /^[0-9a-f]{40}$/);
+  assert.deepEqual(detailWithoutRevision, {
     summary: listed.value.issues[0],
     description: '',
     comments: []

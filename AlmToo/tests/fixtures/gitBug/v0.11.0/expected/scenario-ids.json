@@ -1,5 +1,13 @@
 {
   "unicodeOpen": "a85873c",
   "minimalOpen": "e51017b",
-  "closed": "830f9fc"
+  "closed": "830f9fc",
+  "writeScenarioIds": [
+    "write-issue-edit-unicode",
+    "write-comment-create-unicode",
+    "failure-malformed-request",
+    "failure-unsupported-format",
+    "failure-unavailable-storage",
+    "failure-revision-conflict"
+  ]
 }

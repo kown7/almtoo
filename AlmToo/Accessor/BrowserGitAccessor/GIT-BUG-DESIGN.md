@@ -315,3 +315,71 @@ None. A future GraphQL-backed implementation must revisit this review because it
 - [ ] License/interoperability review approves the independently implemented decoder approach.
 - [x] The iDesign review above remains passing after concrete file names and tests are selected.
 - [ ] The milestone plan maps each delivery-sequence item to a slice with a verifiable exit criterion.
+
+## S01 write contract: typed model, storage, and failure boundary
+
+This section is the shared write contract for Git-Bug issue and comment mutations. `DESIGN.md` repeats the same contract name, operation names, failure kinds, and proof boundary so the Git-Bug facet cannot acquire a second serialization or failure vocabulary. This section defines the contract and design constraints only; **production mutation is not implemented by S01**.
+
+### Write operation vocabulary
+
+The only approved operation names for the initial write surface are:
+
+| Operation | Intent | Result boundary |
+| --- | --- | --- |
+| `gitBug.issue.edit` | Replace the editable title and description of one existing issue | Credential-free typed issue result or typed failure |
+| `gitBug.comment.create` | Append one comment to one existing issue | Credential-free typed comment result or typed failure |
+| `gitBug.write.review` | Validate repository identity, issue identity, and the expected version before mutation | Immutable review/precondition record |
+| `gitBug.write.commit` | Persist the approved Git-Bug object changes as one repository mutation unit | Credential-free mutation receipt |
+
+A later push remains a separate Browser Git operation. Git-Bug write operations must not silently push, alter unrelated refs, or reuse the reviewed-push confirmation from the repository workflow.
+
+The future Accessor contract uses immutable records equivalent to `GitBugIssueEditRequest`, `GitBugCommentCreateRequest`, `GitBugWritePreconditions`, `GitBugWriteReview`, `GitBugIssueEditResult`, `GitBugCommentCreateResult`, and `GitBugWriteReceipt`. Requests carry bounded public issue data and a repository/workspace identity; results carry stable identifiers, version/review identifiers, and aggregate paths only. No request or result carries credentials, raw Git objects, raw refs, stack traces, or JavaScript values.
+
+### Canonical storage and serialization invariants
+
+The pinned `v0.11.0` fixture is the only approved storage evidence for S01. Future mutation code must write the same repository-native structures already proven by the fixture decoder:
+
+- issue histories remain under the canonical `refs/bugs/*` namespace and identity data under `refs/identities/*`; no worktree file is used as a shadow issue database;
+- issue commits retain the version marker and `ops` JSON shape, with operation ordering representing the resulting issue state; comments remain ordered operations rather than an independently serialized list;
+- serialization is deterministic: fixed field names and order, UTF-8 JSON, no locale/timezone-dependent formatting, no incidental whitespace, and canonical null/optional-field handling matching the fixture contract;
+- identifiers, refs, operation kinds, title/description/comment lengths, label counts, and aggregate object counts are bounded before serialization; malformed, ambiguous, unsupported, or duplicate records are rejected;
+- a write is prepared and validated completely before any ref/object mutation begins; the mutation unit is all-or-nothing from the Accessor contract perspective, with no success receipt for a partial write;
+- writes are confined to the active repository and approved Git-Bug refs. Existing worktree, index, remote configuration, credentials, and unrelated refs remain unchanged;
+- preconditions include the active repository identity, issue identity, expected current version/revision, and the reviewed operation. A changed revision maps to conflict and requires a fresh review rather than an automatic retry.
+
+These invariants describe the intended Accessor/Resource serialization boundary. They do not authorize implementation to infer unobserved Git-Bug operation kinds or storage versions.
+
+### Failure taxonomy and bounded diagnostics
+
+Write failures use the following stable categories, shared with `DESIGN.md`:
+
+| Failure kind | Meaning and required behavior |
+| --- | --- |
+| `GitBugWriteInvalidRequest` | Bounds, required fields, unsupported operation, duplicate/ambiguous input, or invalid identifier; reject before mutation |
+| `GitBugWritePreconditionFailed` | No active repository, wrong repository identity, missing issue, or stale reviewed version; preserve data and require a new review |
+| `GitBugWriteConflict` | The issue/ref changed during review or commit preparation; do not merge or replay automatically |
+| `GitBugWriteUnsupportedFormat` | The pinned storage/version contract cannot safely represent the requested mutation; fail closed |
+| `GitBugWriteUnavailable` | Browser filesystem, Git object store, or required Accessor capability is unavailable; no partial success |
+| `GitBugWriteSerializationFailed` | Canonical encoding or bounded validation failed; no repository mutation is reported |
+| `GitBugWriteUnknown` | Credential-free fallback for an otherwise safe, unclassified failure |
+
+The implementation must expose one enum value and one mapping per category; in particular, `GitBugWriteConflict` is not duplicated or aliased. Every failure has a fixed operation name, safe user message, stable category, and an optional bounded diagnostic containing only category, stage, and aggregate counts. Diagnostics must redact issue text, author names, repository paths, refs, object IDs, URLs, credentials, raw JS exceptions, and complete response bodies. Timeouts and connection loss are mapped to `GitBugWriteUnavailable` or `GitBugWriteUnknown`; they never trigger an implicit replay.
+
+### Observability and proof boundary
+
+Allowed observability fields are `operation`, `outcome`, `failureKind`, `stage`, `boundedItemCount`, and `reviewed`/`committed` booleans. The Manager may expose busy/result/error state and a safe failure category; it must not expose serialization bytes, refs, object IDs, or diagnostics. Accessor tests should retain only fixed-category failure evidence and aggregate counts.
+
+S01 proves the design boundary, canonical names, bounded/redacted failure rules, and fixture identifiers without invoking browser storage or mutating a repository. S02 may add immutable C# request/result contracts and focused validation tests. S03 may fixture-prove deterministic serialization and safe failure scenarios. A later implementation slice must separately prove actual mutation, repository immutability on failure, conflict handling, and browser acceptance; this document must not be read as claiming those writes already exist.
+
+### S01 iDesign review checklist
+
+- [x] **Layer assignments:** Git-Bug pages remain Client; the concrete workspace orchestrator remains Manager; `IGitBugAccessor` and the existing `BrowserGitAccessor` remain Accessor; browser Git-Bug serialization and repository object/ref handling remain Accessor-owned integration plus Resource/test evidence.
+- [x] **Dependency direction:** runtime calls remain `Client -> Manager -> Accessor -> browser/platform`; passive contract values cross the boundary laterally. No Client or Manager may call JavaScript, Git-Bug serialization, or raw Git storage directly.
+- [x] **Interface justification:** `IGitBugAccessor` protects the external Git-Bug format/browser platform boundary and fixture seam, with credible future local/server implementations. No new pass-through interface is introduced for writes.
+- [x] **Cohesion and decomposition:** write review and workflow order belong to the Manager; deterministic serialization and Git object/ref integration belong below the Accessor boundary; no interface-per-record or speculative Engine is introduced.
+- [x] **Verification placement:** contract validation belongs in focused .NET tests, deterministic fixture serialization/failure proof belongs in Node Resource tests, and end-to-end mutation belongs in a later browser slice. S01 itself has no mutation proof.
+- [x] **Exceptions:** none. Raw JavaScript and Git-Bug serialization do not enter Manager or Client, and no architectural exception is required.
+
+## Shared write-contract reference
+
+The canonical write contract is named **Git-Bug S01 Write Contract**. `AlmToo/Accessor/BrowserGitAccessor/DESIGN.md` must retain matching operation names, failure kinds, storage invariants, redaction rules, layer constraints, and S01 proof boundary. Any future change to this vocabulary requires updating both documents and repeating the iDesign review.

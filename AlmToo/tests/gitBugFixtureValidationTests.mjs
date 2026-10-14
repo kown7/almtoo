@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, test } from 'node:test';
 
 import { validateFixture } from './fixtures/gitBug/validate-fixture.mjs';
+import { startControlledGitBugRemote } from '../e2e/controlledGitBugRemote.mjs';
 
 const sourceFixture = fileURLToPath(new URL('./fixtures/gitBug/v0.11.0', import.meta.url));
 const fixtureParent = fileURLToPath(new URL('./fixtures/gitBug/', import.meta.url));
@@ -57,6 +58,43 @@ test('fixture validation fails safely when the manifest is malformed', async () 
   await writeFile(path.join(fixture, 'fixture-manifest.json'), '{ malformed');
 
   await rejectsWithCategory(() => validateFixture(fixture), 'malformed-fixture-data');
+});
+
+test('controlled remote exposes smart HTTP and redacts credentials from failures', async () => {
+  const remote = await startControlledGitBugRemote({ username: 'acceptance-user', password: 'acceptance-secret', failureMode: 'auth' });
+  try {
+    const advertisement = await fetch(`${remote.url}/info/refs?service=git-upload-pack`);
+    assert.equal(advertisement.status, 200);
+    assert.match(advertisement.headers.get('content-type'), /git-upload-pack/);
+
+    const failedPush = await fetch(`${remote.url}/git-receive-pack`, { method: 'POST', body: 'test' });
+    const message = await failedPush.text();
+    assert.equal(failedPush.status, 401);
+    assert.doesNotMatch(message, /acceptance-secret/);
+    assert.doesNotMatch(remote.url, /acceptance-secret/);
+    assert.equal((await remote.snapshot()).repository, 'git-bug-fixture.git');
+  } finally {
+    await remote.close();
+    await remote.close();
+  }
+});
+
+test('controlled remote supports explicit failure transitions and cleanup', async () => {
+  const remote = await startControlledGitBugRemote();
+  try {
+    remote.setFailureMode('non-fast-forward');
+    const authorization = `Basic ${Buffer.from(`${remote.credentials.username}:${remote.credentials.password}`).toString('base64')}`;
+    const response = await fetch(`${remote.url}/git-receive-pack`, {
+      method: 'POST',
+      headers: { authorization },
+      body: 'test'
+    });
+    assert.equal(response.status, 403);
+    remote.clearFailureMode();
+    assert.equal((await remote.snapshot()).requestCount, 1);
+  } finally {
+    await remote.close();
+  }
 });
 
 test('fixture validation fails safely when expected issue data is changed', async () => {

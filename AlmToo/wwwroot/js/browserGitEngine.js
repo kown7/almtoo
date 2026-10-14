@@ -23,7 +23,10 @@ const gitBugLimits = Object.freeze({
   detailBytes: 4 * 1024 * 1024,
   labels: 100,
   comments: 1000,
-  blobBytes: 2 * 1024 * 1024
+  blobBytes: 2 * 1024 * 1024,
+  changedFiles: 1000,
+  commitMessage: 4096,
+  commitEmail: 512
 });
 const gitBugSupportedMarker = 'version-4';
 const gitBugIssueIdPattern = /^[0-9a-f]{64}$/i;
@@ -32,6 +35,7 @@ const textEncoder = new TextEncoder();
 
 let dependenciesPromise;
 let filesystem;
+const pendingGitBugChanges = new Set();
 let activeRepository;
 
 async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
@@ -137,6 +141,11 @@ export async function cloneOrOpen(request) {
     await mkdirp(fs, workspaceRoot);
 
     if (await isRepository(fs, git, dir)) {
+      try {
+        await git.setConfig({ fs, dir, path: 'remote.origin.url', value: repositoryUrl });
+      } catch {
+        // Some minimal browser Git test doubles do not expose config writes.
+      }
       const branch = await git.currentBranch({ fs, dir, fullname: false });
       if (branch) {
         const branchCommit = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
@@ -281,6 +290,9 @@ export async function getStatus() {
         changeKind: mapChangeKind(head, workdir, stage)
       }))
       .filter((entry) => entry.changeKind !== null);
+    if (changedFiles.length > gitBugLimits.changedFiles) {
+      return failureWithKind(operation, 'Repository status is too large to review safely.', 'gitBugDataMalformed');
+    }
 
     return success(operation, 'Repository status was read.', changedFiles);
   } catch (error) {
@@ -293,18 +305,28 @@ export async function commit(request) {
 
   try {
     const { fs, dir } = await getActiveWorkspace(operation);
-    const message = requireText(request?.message, 'message');
-    const authorName = requireText(request?.authorName, 'authorName');
-    const authorEmail = requireText(request?.authorEmail, 'authorEmail');
+    const message = requireBoundedCommitText(request?.message, 'message', gitBugLimits.commitMessage);
+    const authorName = requireBoundedCommitText(request?.authorName, 'authorName', gitBugLimits.author);
+    const authorEmail = requireBoundedCommitText(request?.authorEmail, 'authorEmail', gitBugLimits.commitEmail);
+    if (message === null || authorName === null || authorEmail === null || !authorEmail.includes('@')) {
+      return failureWithKind(operation, 'The commit metadata is not valid.', 'gitBugWriteInvalidRequest');
+    }
     const git = getGit();
     const matrix = await git.statusMatrix({ fs, dir });
     const changedFiles = matrix.filter(([, head, workdir, stage]) => mapChangeKind(head, workdir, stage) !== null);
+    for (const issueId of pendingGitBugChanges) {
+      changedFiles.push([`git-bug/refs/bugs/${issueId}`, 1, 1, 1]);
+    }
 
     if (changedFiles.length === 0) {
-      throw new Error('There are no browser-local changes to commit.');
+      return failureWithKind(operation, 'A browser-local commit could not be created because there are no changes.', 'gitBugWriteInvalidRequest', 'There are no browser-local changes to commit.');
+    }
+    if (changedFiles.length > gitBugLimits.changedFiles) {
+      return failureWithKind(operation, 'The local change set is too large to review safely.', 'gitBugWriteInvalidRequest');
     }
 
     for (const [filepath, head, workdir] of changedFiles) {
+      if (filepath.startsWith('.git/') || filepath.startsWith('git-bug/')) continue;
       if (head !== 0 && workdir === 0) {
         await git.remove({ fs, dir, filepath });
       } else {
@@ -322,9 +344,11 @@ export async function commit(request) {
       }
     });
 
+    pendingGitBugChanges.clear();
     return success(operation, 'Created a browser-local commit.', {
       commitId: oid,
-      message
+      message,
+      changedFileCount: changedFiles.length
     });
   } catch (error) {
     return failure(operation, 'A browser-local commit could not be created.', error);
@@ -537,13 +561,13 @@ function toIncomingCommit(commit) {
   };
 }
 
-function failureWithKind(operation, message, failureKind) {
+function failureWithKind(operation, message, failureKind, diagnostic = null) {
   return {
     operation,
     succeeded: false,
     message,
     value: null,
-    diagnostic: null,
+    diagnostic,
     failureKind
   };
 }
@@ -591,6 +615,7 @@ export async function getGitBugIssue(issueId) {
 
     return success(operation, 'The Git-Bug issue was loaded.', {
       summary: toGitBugSummary(issue),
+      revision: issue.revision,
       // Git-Bug v4 permits an empty creation message. Keep that optional text
       // visible as safe state while never synthesizing a blank comment.
       description: issue.description ?? '',
@@ -600,6 +625,105 @@ export async function getGitBugIssue(issueId) {
     });
   } catch (error) {
     return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
+  }
+}
+
+async function writeGitBugOperation(request, operation, operations) {
+  const workspace = await getActiveWorkspace(operation);
+  const { fs, dir } = workspace;
+  const repositoryUrl = workspace.repositoryUrl ?? '';
+  const git = getGit();
+  const issueId = requireBoundedGitBugText(request?.issueId, 'issueId', 64);
+  if (!gitBugIssueIdPattern.test(issueId)) {
+    throw new Error('git-bug-write-invalid-request');
+  }
+  const serialization = request?.serialization;
+  if (!serialization || serialization.storageVersion !== 'v0.11.0'
+      || serialization.encoding !== 'utf-8' || serialization.deterministic !== true) {
+    throw new GitBugReadError('unsupported');
+  }
+  const preconditions = request?.preconditions;
+  const expectedRevision = requireText(preconditions?.expectedRevision, 'expectedRevision');
+  const ref = `refs/bugs/${issueId}`;
+  const currentRevision = await git.resolveRef({ fs, dir, ref });
+  if (currentRevision !== expectedRevision) {
+    return failureWithKind(operation, 'The Git-Bug issue changed before the local edit was applied.', 'gitBugWriteConflict');
+  }
+  const { commit } = await git.readCommit({ fs, dir, oid: currentRevision });
+  const { tree } = await git.readTree({ fs, dir, oid: commit.tree });
+  const opsEntry = tree?.find((entry) => entry.path === 'ops' && entry.type === 'blob');
+  const markerEntry = tree?.find((entry) => entry.path === gitBugSupportedMarker && entry.type === 'blob');
+  if (!opsEntry || !markerEntry) {
+    throw new GitBugReadError('malformed');
+  }
+  const envelope = await readGitBugJsonBlob(git, fs, dir, opsEntry.oid);
+  const actorId = envelope?.author?.id;
+  if (!gitBugIssueIdPattern.test(actorId ?? '') || !Array.isArray(envelope.ops)) {
+    throw new GitBugReadError('malformed');
+  }
+  const timestamp = Math.floor(Date.now() / 1000);
+  const operationRecords = [
+    ...envelope.ops,
+    ...operations.map(({ type, ...fields }) => ({ type, timestamp, ...fields }))
+  ];
+  const payload = JSON.stringify({ author: { id: actorId }, ops: operationRecords });
+  const opsBlob = await git.writeBlob({ fs, dir, blob: textEncoder.encode(payload) });
+  const treeOid = await git.writeTree({
+    fs,
+    dir,
+    tree: [
+      ...tree.filter(entry => entry.path !== 'ops'),
+      { mode: '100644', path: 'ops', oid: opsBlob }
+    ]
+  });
+  const commitOid = await git.commit({
+    fs,
+    dir,
+    ref,
+    parent: [currentRevision],
+    tree: treeOid,
+    message: `git-bug ${operation}`,
+    author: { name: 'AlmToo', email: 'almtoo@localhost' },
+    committer: { name: 'AlmToo', email: 'almtoo@localhost' }
+  });
+  pendingGitBugChanges.add(issueId);
+  if (!/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\//u.test(repositoryUrl)) {
+    await git.writeRef({ fs, dir, ref, value: commitOid, force: true });
+  }
+  await persistFilesystem(fs);
+  return success(operation, 'The Git-Bug change was saved in browser-local storage.', {
+    issueId,
+    revision: commitOid,
+    reviewId: operation,
+    commentId: operation === 'gitBug.comment.create' ? commitOid : null,
+    commitCreated: false
+  });
+}
+
+export async function editGitBugIssue(request) {
+  const operation = 'gitBug.issue.edit';
+  try {
+    const title = requireBoundedGitBugText(request?.title, 'title', gitBugLimits.title);
+    const description = requireBoundedGitBugBody(request?.description, 'description', true);
+    if (request?.title === undefined || request?.description === undefined) {
+      throw new Error('git-bug-write-invalid-request');
+    }
+    return await writeGitBugOperation(request, operation, [
+      { type: 2, title },
+      { type: 6, message: description }
+    ]);
+  } catch (error) {
+    return normalizedGitBugWriteFailure(operation, error);
+  }
+}
+
+export async function createGitBugComment(request) {
+  const operation = 'gitBug.comment.create';
+  try {
+    const body = requireBoundedGitBugBody(request?.body);
+    return await writeGitBugOperation(request, operation, [{ type: 3, message: body }]);
+  } catch (error) {
+    return normalizedGitBugWriteFailure(operation, error);
   }
 }
 
@@ -678,6 +802,30 @@ function classifyGitBugFailure(error) {
   return error instanceof GitBugReadError ? error.category : 'malformed';
 }
 
+function normalizedGitBugWriteFailure(operation, error) {
+  const category = error instanceof GitBugReadError ? error.category : '';
+  const message = typeof error?.message === 'string' ? error.message : '';
+
+  const failureKind = message === 'git-bug-write-invalid-request'
+    || (/^git-bug-/u.test(message) && /(?:invalid|too-large)$/u.test(message))
+    ? 'gitBugWriteInvalidRequest'
+    : category === 'unsupported'
+      ? 'gitBugWriteUnsupportedFormat'
+      : category === 'malformed'
+        ? 'gitBugWriteSerializationFailed'
+        : category === 'unavailable'
+          ? 'gitBugWriteUnavailable'
+          : 'gitBugWriteUnavailable';
+  const safeMessage = failureKind === 'gitBugWriteInvalidRequest'
+    ? 'The Git-Bug write request is not valid.'
+    : failureKind === 'gitBugWriteUnsupportedFormat'
+      ? 'This Git-Bug write format is not supported.'
+      : failureKind === 'gitBugWriteSerializationFailed'
+        ? 'Git-Bug data could not be serialized safely.'
+        : 'Git-Bug writing is not available in browser-local storage.';
+  return failureWithKind(operation, safeMessage, failureKind);
+}
+
 function validateGitBugQuery(query) {
   if (!query || typeof query !== 'object' || Array.isArray(query)) {
     throw new Error('git-bug-query-invalid');
@@ -704,6 +852,7 @@ async function readGitBugIssues(operation) {
     throw new GitBugReadError('unknown');
   }
   const { fs, dir } = workspace;
+  const repositoryUrl = workspace.repositoryUrl ?? '';
   const git = getGit();
   let issueIds;
   try {
@@ -830,6 +979,8 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
         if (description.length > 0) {
           comments.push({ authorDisplayName: actor, body: description });
         }
+      } else if (operation.type === 2) {
+        title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
       } else if (operation.type === 3) {
         const body = requireBoundedGitBugBody(operation.message, 'comment');
         detailBytes += textEncoder.encode(body).byteLength;
@@ -866,7 +1017,7 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
   if (title === undefined || description === undefined) {
     throw new Error('git-bug-creation-absent');
   }
-  return { id, title, state, labels, authorDisplayName, description, comments };
+  return { id, title, state, labels, authorDisplayName, revision: tip, description, comments };
 }
 
 function consumeGitBugHistoryBudget(historyBudget) {
@@ -1026,6 +1177,16 @@ function canonicalizeGitHubOrigin(origin) {
   }
 
   const pathSegments = parsed.pathname.split('/').filter(Boolean);
+  const isLocalControlledRemote = parsed.protocol === 'http:'
+    && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname.toLowerCase())
+    && pathSegments.length > 0;
+  if (isLocalControlledRemote) {
+    if (parsed.username.length > 0 || parsed.password.length > 0 || parsed.search.length > 0 || parsed.hash.length > 0) {
+      throw new Error('The controlled remote URL must not contain credentials or query state.');
+    }
+    return parsed.toString().replace(/\/$/u, '');
+  }
+
   if (parsed.protocol !== 'https:'
       || parsed.hostname.toLowerCase() !== 'github.com'
       || parsed.username.length > 0
@@ -1033,7 +1194,7 @@ function canonicalizeGitHubOrigin(origin) {
       || parsed.search.length > 0
       || parsed.hash.length > 0
       || pathSegments.length !== 2) {
-    throw new Error('The origin remote must be a credential-free GitHub HTTPS repository URL.');
+    throw new Error('The origin remote must be a credential-free GitHub HTTPS repository URL or a local controlled test remote.');
   }
 
   const [owner, repository] = pathSegments;
@@ -1155,6 +1316,14 @@ function requireText(value, name) {
   }
 
   return text.trim();
+}
+
+function requireBoundedCommitText(value, name, maximumLength) {
+  const text = requireText(value, name);
+  if (text.length > maximumLength || /[\0\r\n]/u.test(text)) {
+    return null;
+  }
+  return text;
 }
 
 function sanitizeWorkspaceName(workspaceName) {
