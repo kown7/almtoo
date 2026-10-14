@@ -10,7 +10,7 @@
     "test:browser-git-engine": "node --test tests/browserGitEngineTests.mjs",
     "test:git-bug-fixture": "node tests/fixtures/gitBug/validate-fixture.mjs && node --test tests/gitBugFixtureValidationTests.mjs tests/gitBugFixtureDiscoveryTests.mjs",
     "test:git-bug-resource": "node --test tests/gitBugBrowserResourceTests.mjs",
-    "test:git-bug-client": "node --test tests/gitBugClientArchitectureTests.mjs tests/browserGitArchitectureGateTests.mjs",
+    "test:git-bug-client": "node tests/fixtures/gitBug/validate-fixture.mjs && node --test tests/gitBugFixtureValidationTests.mjs tests/gitBugFixtureDiscoveryTests.mjs tests/gitBugBrowserResourceTests.mjs tests/gitBugClientArchitectureTests.mjs tests/browserGitArchitectureGateTests.mjs tests/browserGitDesignContractTests.mjs",
     "test:architecture": "node --test tests/browserGitArchitectureGateTests.mjs",
     "test:workflow": "node --test tests/githubPagesWorkflowContractTests.mjs",
     "test:browser": "playwright test e2e/repositoryWorkflow.spec.mjs e2e/credentialSafety.spec.mjs",
