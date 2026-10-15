@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented Accessor, Resource, Manager, and Client boundary.** The fixture-proven, read-only `IGitBugAccessor` facet, browser decoder, concrete `GitBugWorkspaceManager`, and accessible list/detail Client are implemented and contract-locked; browser fixture acceptance remains deferred to the next task.
+**Implemented and browser-verified Accessor, Resource, Manager, and Client boundary.** The fixture-proven, read-only `IGitBugAccessor` facet, browser decoder, concrete `GitBugWorkspaceManager`, and accessible list/detail Client are implemented and contract-locked. Chromium verification covers the supplied public repository, the supported fixture, and safe unavailable/unsupported states.
 
 | Field | Decision |
 | --- | --- |
@@ -267,7 +267,7 @@ Forbidden telemetry fields are issue body, title, comments, user names, IDs, ref
 | Resource contract | Node tests exercise browser bridge exports using fixture repositories, including unsupported/malformed fixtures. | `AlmToo/tests/` |
 | Manager | Workflow tests prove list/detail/return behavior, safe failure mapping, cancellation, stale-result rejection, input bounds, and repository-change reset. | `AlmToo.Tests/Managers/GitBug/GitBugWorkspaceManagerTests.cs` |
 | Architecture | Source-path contract tests scan all Client paths and enforce Client → Manager → `IGitBugAccessor` → Browser Resource direction with no Client JS interop. | `AlmToo/tests/browserGitArchitectureGateTests.mjs` |
-| Browser integration (deferred) | A later Client slice must open a fixture-backed browser-local repository, list issues, open one detail, and verify no writes or credential requests. | `AlmToo/e2e/` |
+| Browser integration | Chromium opens the supplied public repository and a fixture-backed browser-local repository, lists issues, opens one issue detail, returns to the list, and verifies no writes, credential requests, browser errors, or failed network responses. | `AlmToo/e2e/gitBugIssueBrowser.spec.mjs` |
 | Negative paths | Missing Git-Bug data, unsupported version, malformed objects, cancellation, invalid identifier, oversized query, and bridge exception all produce safe outcomes. | Unit, Node, and Playwright tests |
 
 The first coding slice cannot complete merely because list UI renders. It requires a fixture-backed proof that a read never changes repository state and that unsupported/malformed external data does not leak into Client state.
@@ -277,7 +277,7 @@ The first coding slice cannot complete merely because list UI renders. It requir
 1. **Discovery and contract — delivered:** pinned Git-Bug `v0.11.0`, sealed fixtures, and proved local decoding feasibility without writes.
 2. **Accessor facet — delivered:** implemented and mapping-tested list/detail browser decoding and the managed facet with categorized safe failures.
 3. **Manager workflow — delivered:** implemented concrete state orchestration, safe failures, cancellation, selection, stale-result rejection, and repository-change reset with focused workflow tests.
-4. **Client vertical slice — delivered:** added accessible list/detail UI, safe loading/unavailable/unsupported/failed states, text-only external content rendering, and retained list context. Fixture-backed browser acceptance remains the following task.
+4. **Client vertical slice — delivered:** added accessible list/detail UI, safe loading/unavailable/unsupported/failed states, text-only external content rendering, and retained list context. Chromium acceptance now proves the supported fixture, supplied public repository, unavailable metadata, and unsupported-format paths.
 
 If step 1 finds the local representation unsuitable for isomorphic-git, stop before steps 2–4 and replan the facet as a GraphQL-backed `IGitBugAccessor`. That replacement remains at the same Accessor boundary; no Client or Manager needs to learn the transport.
 
@@ -301,11 +301,17 @@ Pass. `BrowserGitAccessor` remains the single browser-local Git platform service
 
 ### 5. Verification placement
 
-Pass for the implemented scope. Decoder semantics and repository immutability are verified at the Resource boundary, managed mapping and cancellation sanitization in Accessor tests, Manager workflow and stale-result handling in focused workflow tests, and Client dependency/state/accessibility/text-safety behavior in source-path tests. The fixture-backed browser user loop remains explicitly deferred.
+Pass for the implemented scope. Decoder semantics and repository immutability are verified at the Resource boundary, managed mapping and cancellation sanitization in Accessor tests, Manager workflow and stale-result handling in focused workflow tests, Client dependency/state/accessibility/text-safety behavior in source-path tests, and the complete fixture/supplied-repository user loop in Chromium.
 
 ### 6. Exceptions
 
 None. A future GraphQL-backed implementation must revisit this review because it adds a remote integration/resource and authentication/operational concerns.
+
+### 7. S02 browser verification evidence
+
+The focused Chromium run `npm --prefix AlmToo exec playwright test e2e/gitBugIssueBrowser.spec.mjs --project=chromium` passed all four scenarios. The supplied `https://github.com/kown7/gitbugtest.git` flow fetched Git-Bug refs during repository clone, rendered three issues, opened and returned from issue detail, preserved the repository snapshot, and reported no console errors, page errors, failed requests, or HTTP errors. The supported fixture exercised the Unicode issue, description, labels, ordered comments, retained list, and byte-for-byte read-only snapshot; unavailable metadata and unsupported fixture-version scenarios rendered fixed safe states without credentials or mutation.
+
+The broader checks also passed: `npm --prefix AlmToo run test:git-bug-client` (33/33), `npm --prefix AlmToo test` (106/106), `dotnet build AlmToo/AlmToo.csproj --no-restore` (0 errors; two existing nullable warnings), and `dotnet test AlmToo/AlmToo.csproj --no-restore` (exit 0). These results verify the corrected Resource ref-fetch behavior without weakening ordinary Git-Bug, architecture, managed, or Node regression coverage.
 
 ## Approval checklist
 
