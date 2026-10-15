@@ -18,7 +18,7 @@ public sealed class GitBugWorkspaceManagerTests
     private static readonly GitBugIssueSummary SecondIssue = new(
         SecondId, "Second issue", GitBugIssueState.Closed, null, null);
     private static readonly GitBugIssueDetail FirstDetail = new(
-        FirstIssue, "A safe description", [new("Grace", "A safe comment")]);
+        FirstIssue, "revision-1", "A safe description", [new("Grace", "A safe comment")]);
 
     [Fact]
     public async Task List_detail_and_return_preserve_coherent_list_context()

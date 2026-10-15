@@ -52,3 +52,21 @@ npm --prefix AlmToo run test:browser:live
 ## Inspection and drift protection
 
 The follow-on repository guard at `AlmToo/tests/m004SynchronizationTraceabilityTests.mjs` verifies that this map retains every promise category, required command, evidence reference, and valid repository path. It is a static documentation-integrity check: it does not load credentials, invoke remote network calls, read browser storage, or expose credential material.
+
+## Git-Bug ref-fetch regression evidence
+
+The M010/S02 Git-Bug regression confirms that explicit Git-Bug ref fetching does not regress ordinary repository browsing or safe failure handling. The corrected Resource path is documented in `AlmToo/Accessor/BrowserGitAccessor/GIT-BUG-DESIGN.md`: it reads only supported local Git-Bug refs and objects, maps missing, malformed, and unsupported data to fixed safe outcomes, and performs no credentials, network requests, or repository mutations during issue browsing.
+
+The isolated Chromium regression `npm --prefix AlmToo exec playwright test e2e/gitBugIssueBrowser.spec.mjs --project=chromium` passed 4/4 scenarios. It rendered three issues from `https://github.com/kown7/gitbugtest.git`, opened and returned from issue detail, preserved the repository snapshot, and observed no console errors, page errors, failed requests, or HTTP errors. It also passed the supported fixture and unavailable/unsupported fixture paths without credentials or mutation.
+
+The supporting regression evidence passed as follows:
+
+| Check | Result | Evidence |
+|---|---:|---|
+| Git-Bug fixture/resource/client/architecture suites | 33/33 | `npm --prefix AlmToo run test:git-bug-client` |
+| Full AlmToo Node suite | 106/106 | `npm --prefix AlmToo test` |
+| Blazor project build | 0 errors; 2 existing nullable warnings | `dotnet build AlmToo/AlmToo.csproj --no-restore` |
+| Blazor project test | Exit 0 | `dotnet test AlmToo/AlmToo.csproj --no-restore` |
+| Supplied and safe-state Chromium flow | 4/4 | `AlmToo/e2e/gitBugIssueBrowser.spec.mjs` |
+
+The supplied repository check remains intentionally opt-in/isolated from the ordinary Node test command because it depends on external repository availability. The evidence is browser-visible and therefore distinguishes successful issue listing from the prior generic load-failure state without hiding external failures.

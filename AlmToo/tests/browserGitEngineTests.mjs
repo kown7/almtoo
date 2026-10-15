@@ -365,6 +365,46 @@ test('cloneOrOpen reopens an existing browser-local repository with optional Git
   assert.equal(remoteDiscoveryCalls, 2);
 });
 
+test('cloneOrOpen ignores malformed Git-Bug advertisements without leaking remote diagnostics', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  const fetchOptions = [];
+  const issueId = 'f'.repeat(64);
+  installFakeGitRuntime({
+    async clone() {},
+    async listServerRefs({ prefix }) {
+      if (prefix === 'refs/bugs/') {
+        return [
+          null,
+          { ref: 'refs/heads/main', oid: 'branch-tip' },
+          { ref: 'refs/bugs/not-an-issue', oid: 'bad-tip' },
+          { ref: `refs/bugs/${issueId}`, oid: 'issue-tip' }
+        ];
+      }
+
+      return {
+        malformed: true,
+        raw: 'https://user:secret@example.test/private'
+      };
+    },
+    async fetch(options) {
+      fetchOptions.push(options);
+      return { fetchHead: options.ref.includes(issueId) ? 'issue-tip' : 'unexpected' };
+    },
+    async writeRef() {}
+  });
+
+  const engine = await importFreshModule();
+  const result = await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'malformed-advertisements'
+  });
+
+  assert.equal(result.succeeded, true);
+  assert.deepEqual(fetchOptions.map(({ ref }) => ref), [`refs/bugs/${issueId}`]);
+  assert.doesNotMatch(JSON.stringify(result), /user:secret|private/);
+});
+
 test('repository paths reject parent directory traversal as structured operation failures', async () => {
   resetBrowserGlobals();
   installLoadingDocument();
