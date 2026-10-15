@@ -78,6 +78,31 @@ async function openFixture(page, repositoryUrl) {
   await expect(page.getByRole('heading', { name: 'Git-Bug issues', level: 1 })).toBeVisible();
 }
 
+test('edits an existing Git-Bug issue with an empty description', async ({ page }) => {
+  test.setTimeout(120_000);
+  const diagnostics = collectDiagnostics(page);
+  const remote = await startControlledGitBugRemote({ username: credential, password: 'x-oauth-basic' });
+
+  try {
+    await routeControlledCorsProxy(page, remote.url, remote.url);
+    await openFixture(page, remote.url);
+
+    await page.getByRole('button', { name: 'Open issue: Minimal issue without optional metadata' }).click();
+    await expect(page.getByRole('heading', { name: 'Minimal issue without optional metadata', level: 2 })).toBeVisible();
+    await page.getByRole('textbox', { name: 'Description' }).fill('');
+    await page.getByLabel('Title').fill('Minimal issue edited safely');
+    await page.getByRole('button', { name: 'Save issue locally' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Minimal issue edited safely', level: 2 })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('textbox', { name: 'Description' })).toHaveValue('', { timeout: 30_000 });
+    expect(diagnostics.pageErrors).toEqual([]);
+    expect(diagnostics.requestFailures).toEqual([]);
+    expect(diagnostics.httpErrors.filter(status => status !== 401)).toEqual([]);
+  } finally {
+    await remote.close();
+  }
+});
+
 test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   const diagnostics = collectDiagnostics(page);

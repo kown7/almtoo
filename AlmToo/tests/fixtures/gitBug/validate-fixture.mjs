@@ -129,6 +129,12 @@ async function checkScenarioContract(root, manifest) {
     assert.ok(Object.hasOwn(manifest.repositoryState.refs, ref));
   }
 
+  const advertisedRefs = Object.keys(manifest.repositoryState.refs);
+  assert.equal(advertisedRefs.filter(ref => ref.startsWith('refs/bugs/')).length, 3);
+  assert.equal(advertisedRefs.filter(ref => ref.startsWith('refs/identities/')).length, 1);
+  assert.ok(advertisedRefs.every(ref => !ref.startsWith('refs/bugs/') || /^[0-9a-f]{64}$/i.test(ref.slice('refs/bugs/'.length))));
+  assert.ok(advertisedRefs.every(ref => !ref.startsWith('refs/identities/') || /^[0-9a-f]{64}$/i.test(ref.slice('refs/identities/'.length))));
+
   const writeScenarios = JSON.parse(await readFile(path.join(expectedDirectory, 'write-scenarios.json'), 'utf8'));
   assert.deepEqual(writeScenarios, manifest.writeScenarios);
   assert.deepEqual(scenarioIds.writeScenarioIds, Object.values(writeScenarios).map(scenario => scenario.scenarioId));

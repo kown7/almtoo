@@ -75,6 +75,7 @@ public sealed class GitBugAccessorContractTests
                     labels = new[] { "defect", "priority:high" },
                     authorDisplayName = "Fixture Author"
                 },
+                revision = "1111111111111111111111111111111111111111",
                 description = "Opening the résumé view shows naïve text.",
                 comments = new[]
                 {

@@ -106,3 +106,13 @@ test('fixture validation fails safely when expected issue data is changed', asyn
 
   await rejectsWithCategory(() => validateFixture(fixture), 'fixture-contract-mismatch');
 });
+
+test('fixture validation requires both Git-Bug ref namespaces in the pinned repository state', async () => {
+  const fixture = await copyFixture();
+  const manifestPath = path.join(fixture, 'fixture-manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  delete manifest.repositoryState.refs['refs/identities/00a93c528f611648ef2a986574aa26e0dbbcee47e1d4c440bf33fc8f03b387a3'];
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  await rejectsWithCategory(() => validateFixture(fixture), 'fixture-contract-mismatch');
+});
