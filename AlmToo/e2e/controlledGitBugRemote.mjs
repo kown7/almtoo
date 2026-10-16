@@ -147,6 +147,12 @@ export async function startControlledGitBugRemote(options = {}) {
     repository,
     credentials: Object.freeze({ username, password }),
     get requestCount() { return requestCount; },
+    async waitUntilReady() {
+      if (closed || !server.listening) throw new Error('Controlled Git-Bug remote is not listening.');
+      const refs = await git.listRefs({ fs, gitdir: repository, filepath: 'refs' });
+      if (refs.length === 0) throw new Error('Controlled Git-Bug remote repository has no seeded refs.');
+      return { url, refs: refs.sort() };
+    },
     setFailureMode(mode) { failureMode = parseFailure(mode); },
     clearFailureMode() { failureMode = null; },
     async snapshot() {

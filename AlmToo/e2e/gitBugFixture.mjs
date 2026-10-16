@@ -123,12 +123,20 @@ export async function seedGitBugFixture(page, variant = 'supported', options = {
     if (typeof fixtureFs.promises.flush === 'function') await fixtureFs.promises.flush();
 
     globalThis.__almTooGitBugFixtureFs = fixtureFs;
+    globalThis.__almTooGitBugFixtureReady = Object.freeze({ workspacePath, entryCount: entries.length });
     globalThis.LightningFS = class GitBugFixtureFilesystem {
       constructor() { return fixtureFs; }
     };
   }, { entries, vendorScripts, workspacePath });
 
-  return { repositoryUrl: options.repositoryUrl ?? repositoryUrl, workspacePath };
+  return { repositoryUrl: options.repositoryUrl ?? repositoryUrl, workspacePath, entryCount: entries.length };
+}
+
+export async function waitForGitBugFixture(page, { timeout = 30_000 } = {}) {
+  await page.waitForFunction(() => {
+    const readiness = globalThis.__almTooGitBugFixtureReady;
+    return Boolean(readiness?.workspacePath && readiness.entryCount > 0);
+  }, undefined, { timeout });
 }
 
 export async function snapshotGitBugRepository(page, repositoryWorkspacePath = workspacePath) {
