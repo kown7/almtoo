@@ -238,6 +238,7 @@ public sealed class GitBugWorkspaceManagerTests
     {
         var fake = new FakeGitBugAccessor
         {
+            DetailHandler = (_, _) => ValueTask.FromResult(Success(FirstDetail with { Description = string.Empty })),
             EditHandler = request => ValueTask.FromResult(Success(new GitBugIssueEditResult(request.IssueId, "revision", "review")))
         };
         using var manager = CreateManager(fake);
@@ -245,13 +246,14 @@ public sealed class GitBugWorkspaceManagerTests
         Assert.True(await manager.LoadIssuesAsync(new(SearchText: "reviewed")));
         Assert.True(await manager.OpenIssueAsync(FirstId));
 
-        Assert.True(await manager.EditSelectedIssueAsync("Updated title", "Updated description"));
+        Assert.True(await manager.EditSelectedIssueAsync("Updated title", string.Empty));
 
         var request = Assert.Single(fake.EditRequests);
         Assert.Equal(FirstId, request.IssueId);
         Assert.Equal("Updated title", request.Title);
-        Assert.Equal("Updated description", request.Description);
+        Assert.Equal(string.Empty, request.Description);
         Assert.Equal(GitBugWorkspaceStatus.DetailReady, manager.State.Status);
+        Assert.Equal(string.Empty, manager.State.SelectedIssue!.Description);
         Assert.True(manager.State.LastWriteSucceeded);
         Assert.True(manager.State.LastRefreshSucceeded);
         Assert.Contains("No commit or push", manager.State.Message);

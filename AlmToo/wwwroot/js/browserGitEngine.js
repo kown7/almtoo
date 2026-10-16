@@ -710,7 +710,7 @@ export async function editGitBugIssue(request) {
     }
     return await writeGitBugOperation(request, operation, [
       { type: 2, title },
-      { type: 6, message: description }
+      { type: 6, message: description.length === 0 ? null : description }
     ]);
   } catch (error) {
     return normalizedGitBugWriteFailure(operation, error);
@@ -931,7 +931,6 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
   let authorDisplayName = null;
   let state = 'open';
   let labels = null;
-  let pendingDescription;
   let detailBytes = 0;
   const comments = [];
 
@@ -971,14 +970,17 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
       if (!operation || !Number.isInteger(operation.type) || !Number.isFinite(operation.timestamp)) {
         throw new Error('git-bug-operation-invalid');
       }
-      if (operation.type === 1 && commitIndex === 0 && title === undefined) {
+      if (operation.type === 1 && title === undefined) {
         title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
-        description = pendingDescription ?? requireBoundedGitBugBody(operation.message, 'description', true);
+        description = requireBoundedGitBugBody(operation.message ?? '', 'description', true);
         authorDisplayName = actor;
         detailBytes += textEncoder.encode(description).byteLength * 2;
         if (description.length > 0) {
           comments.push({ authorDisplayName: actor, body: description });
         }
+      } else if (operation.type === 1) {
+        // Cumulative Git-Bug operation envelopes repeat the creation record.
+        // The first creation record wins; later copies are historical data.
       } else if (operation.type === 2) {
         title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
       } else if (operation.type === 3) {
@@ -986,10 +988,9 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
         detailBytes += textEncoder.encode(body).byteLength;
         comments.push({ authorDisplayName: actor, body });
       } else if (operation.type === 6) {
-        // Git-Bug v4 uses type 6 for an issue description edit. Commits are
-        // traversed newest-first, so retain the newest edit until creation is
-        // encountered rather than rejecting an otherwise readable issue.
-        pendingDescription = requireBoundedGitBugBody(operation.message, 'description', true);
+        // Git-Bug v4 uses type 6 for an issue description edit. The history
+        // is normalized oldest-first, so apply each edit as it is encountered.
+        description = requireBoundedGitBugBody(operation.message ?? '', 'description', true);
       } else if (operation.type === 4 && operation.status === 2) {
         state = 'closed';
       } else if (operation.type === 5 && Array.isArray(operation.added)

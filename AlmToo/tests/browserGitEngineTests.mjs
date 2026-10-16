@@ -1005,6 +1005,13 @@ test('Git-Bug issue edits and comments write only the approved bug ref without p
     preconditions: { expectedRevision: currentRevision },
     serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
   });
+  const emptyEdit = await engine.editGitBugIssue({
+    issueId,
+    title: 'Updated without description',
+    description: '',
+    preconditions: { expectedRevision: currentRevision },
+    serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
+  });
   const comment = await engine.createGitBugComment({
     issueId,
     body: 'Follow-up 日本語 🚀',
@@ -1016,16 +1023,17 @@ test('Git-Bug issue edits and comments write only the approved bug ref without p
   assert.equal(comment.succeeded, true);
   assert.equal(edit.value.commitCreated, false);
   assert.equal(comment.value.commitCreated, false);
-  assert.equal(writes.commits.length, 2, 'Git-Bug history requires local commits, but no ordinary repository commit is created');
+  assert.equal(writes.commits.length, 3, 'Git-Bug history requires local commits, but no ordinary repository commit is created');
   assert.ok(writes.commits.every(({ ref, parent, tree }) => ref === `refs/bugs/${issueId}` && parent[0] === currentRevision && tree === 'new-tree-oid'));
-  assert.deepEqual(writes.refs.map(({ ref }) => ref), [`refs/bugs/${issueId}`, `refs/bugs/${issueId}`]);
+  assert.deepEqual(writes.refs.map(({ ref }) => ref), [`refs/bugs/${issueId}`, `refs/bugs/${issueId}`, `refs/bugs/${issueId}`]);
   assert.equal(writes.pushes, 0);
   assert.equal(writes.adds, 0);
   assert.equal(writes.removes, 0);
   assert.equal(writes.flushed, true);
   assert.match(writes.blobs[0], /Updated description/);
-  assert.match(writes.blobs[1], /Follow-up/);
-  assert.equal(JSON.stringify({ edit, comment }).includes(issueId), true);
+  assert.match(writes.blobs[1], /"message":null/);
+  assert.match(writes.blobs[2], /Follow-up/);
+  assert.equal(JSON.stringify({ edit, emptyEdit, comment }).includes(issueId), true);
   assert.equal(JSON.stringify({ edit, comment }).includes('refs/'), false);
 });
 

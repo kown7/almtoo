@@ -206,7 +206,7 @@ public sealed record GitBugIssueSummary(
 public sealed record GitBugIssueDetail(
     GitBugIssueSummary Summary,
     string Revision,
-    string? Description,
+    string Description,
     IReadOnlyList<GitBugComment> Comments);
 
 public sealed record GitBugComment(
