@@ -137,6 +137,41 @@ public sealed class GitBugAccessorContractTests
         Assert.Null(detail.Diagnostic);
     }
 
+    [Fact]
+    public async Task Omitted_detail_description_maps_to_safe_empty_text()
+    {
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["getGitBugIssue"] = JsonSerializer.Serialize(new
+            {
+                operation = "gitBug.getIssue",
+                succeeded = true,
+                message = "Loaded.",
+                value = new
+                {
+                    summary = new
+                    {
+                        id = IssueId,
+                        title = "Minimal issue",
+                        state = "open",
+                        labels = (string[]?)null,
+                        authorDisplayName = (string?)null
+                    },
+                    revision = "3333333333333333333333333333333333333333",
+                    comments = Array.Empty<object>()
+                }
+            })
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+
+        var detail = await accessor.GetIssueAsync(new(IssueId));
+
+        Assert.True(detail.Succeeded);
+        Assert.Equal(string.Empty, detail.Value!.Description);
+        Assert.Empty(detail.Value.Comments);
+        Assert.Null(detail.Diagnostic);
+    }
+
     [Theory]
     [InlineData("gitBugDataUnavailable", GitOperationFailureKind.GitBugDataUnavailable, "no supported Git-Bug issue data")]
     [InlineData("gitBugFormatUnsupported", GitOperationFailureKind.GitBugFormatUnsupported, "version is not supported")]

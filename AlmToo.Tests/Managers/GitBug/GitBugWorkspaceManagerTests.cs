@@ -269,6 +269,7 @@ public sealed class GitBugWorkspaceManagerTests
         Assert.True(await manager.OpenIssueAsync(FirstId));
 
         Assert.False(await manager.EditSelectedIssueAsync("bad\n title", "description"));
+        Assert.False(await manager.EditSelectedIssueAsync("Valid title", null!));
         Assert.False(await manager.AddCommentToSelectedIssueAsync(string.Empty));
         Assert.Empty(fake.EditRequests);
         Assert.Empty(fake.CommentRequests);

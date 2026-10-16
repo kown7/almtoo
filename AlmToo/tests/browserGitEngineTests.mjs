@@ -950,6 +950,29 @@ test('Git-Bug Resource exports normalize missing workspace and excessive-ref fai
   assert.equal(objectReadCount, 0);
 });
 
+test('Git-Bug issue edits reject null and omitted descriptions with safe failures', async () => {
+  resetBrowserGlobals();
+  installLoadingDocument();
+  const engine = await importFreshModule();
+  const baseRequest = {
+    issueId: 'a'.repeat(64),
+    title: 'Valid title',
+    preconditions: { expectedRevision: 'b'.repeat(40) },
+    serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
+  };
+
+  for (const request of [
+    { ...baseRequest, description: null },
+    { ...baseRequest }
+  ]) {
+    const result = await engine.editGitBugIssue(request);
+    assert.equal(result.succeeded, false);
+    assert.equal(result.failureKind, 'gitBugWriteInvalidRequest');
+    assert.equal(result.diagnostic, null);
+    assert.equal(result.message, 'The Git-Bug write request is not valid.');
+  }
+});
+
 test('Git-Bug issue edits and comments write only the approved bug ref without push or worktree effects', async () => {
   resetBrowserGlobals();
   installLoadingDocument();
