@@ -153,7 +153,7 @@ public static class GitBugWriteContract
         && IsValidSerialization(request.Serialization)
         && IsBounded(request.IssueId.Value, 64)
         && IsBounded(request.Title, MaximumTitleLength)
-        && IsBounded(request.Description, MaximumBodyLength, allowEmpty: true)
+        && IsBounded(request.Description, MaximumBodyLength, allowEmpty: true, allowLineFeeds: true)
         && request.Preconditions.ReviewedOperation == GitBugWriteOperations.IssueEdit;
 
     public static bool IsValidComment(GitBugCommentCreateRequest? request) =>
@@ -161,7 +161,7 @@ public static class GitBugWriteContract
         && IsValidPreconditions(request.Preconditions)
         && request.Preconditions.IssueId == request.IssueId
         && IsValidSerialization(request.Serialization)
-        && IsBounded(request.Body, MaximumBodyLength, allowEmpty: false)
+        && IsBounded(request.Body, MaximumBodyLength, allowEmpty: false, allowLineFeeds: true)
         && request.Preconditions.ReviewedOperation == GitBugWriteOperations.CommentCreate;
 
     private static bool IsAllowedRepositoryUri(Uri repository) =>
@@ -170,11 +170,17 @@ public static class GitBugWriteContract
             && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
                 || IPAddress.TryParse(repository.Host, out var address) && IPAddress.IsLoopback(address)));
 
-    private static bool IsBounded(string? value, int maximum, bool allowEmpty = false) =>
+    private static bool IsBounded(
+        string? value,
+        int maximum,
+        bool allowEmpty = false,
+        bool allowLineFeeds = false) =>
         value is not null
         && (allowEmpty || value.Length > 0)
         && value.Length <= maximum
-        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+        && value.IndexOf('\0') < 0
+        && value.IndexOf('\r') < 0
+        && (allowLineFeeds || value.IndexOf('\n') < 0);
 }
 
 public readonly record struct GitBugIssueId(string Value);

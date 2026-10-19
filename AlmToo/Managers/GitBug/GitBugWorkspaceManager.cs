@@ -463,23 +463,30 @@ public sealed class GitBugWorkspaceManager : IDisposable
             return false;
         }
 
-        var value = operation == GitBugWriteOperations.IssueEdit ? first : second;
-        if (value is null || (operation == GitBugWriteOperations.IssueEdit && second is null)
-            || (!allowEmptyBody && value.Length == 0) || value.IndexOfAny(['\0', '\r', '\n']) >= 0)
+        var title = operation == GitBugWriteOperations.IssueEdit ? first : null;
+        var body = second;
+        var titleHasInvalidCharacters = title is not null
+            && HasInvalidGitBugTextCharacters(title, allowLineFeeds: false);
+        var bodyHasInvalidCharacters = body is not null
+            && HasInvalidGitBugTextCharacters(body, allowLineFeeds: true);
+        if (title is null || body is null
+            || (operation == GitBugWriteOperations.IssueEdit && title.Length == 0)
+            || (!allowEmptyBody && body.Length == 0)
+            || titleHasInvalidCharacters
+            || bodyHasInvalidCharacters)
         {
             message = "Enter valid Git-Bug text without control characters.";
             return false;
         }
 
-        if (operation == GitBugWriteOperations.IssueEdit && (first!.Length > GitBugWriteContract.MaximumTitleLength
-            || second!.Length > GitBugWriteContract.MaximumBodyLength
-            || second.IndexOfAny(['\0', '\r', '\n']) >= 0))
+        if (operation == GitBugWriteOperations.IssueEdit && (title.Length > GitBugWriteContract.MaximumTitleLength
+            || body.Length > GitBugWriteContract.MaximumBodyLength))
         {
-            message = "The Git-Bug issue text is too long.";
+            message = "The Git-Bug issue title or description is too long.";
             return false;
         }
 
-        if (operation == GitBugWriteOperations.CommentCreate && value.Length > GitBugWriteContract.MaximumBodyLength)
+        if (operation == GitBugWriteOperations.CommentCreate && body.Length > GitBugWriteContract.MaximumBodyLength)
         {
             message = "The Git-Bug comment is too long.";
             return false;
@@ -1121,6 +1128,11 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
     private static bool IsBoundedQueryText(string? value) =>
         value is null || value.Length is > 0 and <= MaximumQueryLength && value.IndexOfAny(['\0', '\r']) < 0;
+
+    private static bool HasInvalidGitBugTextCharacters(string value, bool allowLineFeeds) =>
+        value.IndexOf('\0') >= 0
+        || value.IndexOf('\r') >= 0
+        || (!allowLineFeeds && value.IndexOf('\n') >= 0);
 
     private static bool IsValidIssueId(GitBugIssueId issueId) =>
         issueId.Value is { Length: 64 } && issueId.Value.All(Uri.IsHexDigit);

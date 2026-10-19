@@ -374,6 +374,44 @@ public sealed class GitBugAccessorContractTests
         Assert.DoesNotContain("secret-token", serialized, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Write_contracts_allow_multiline_bodies_but_keep_titles_single_line()
+    {
+        var issueId = new GitBugIssueId(IssueId);
+        var preconditions = new GitBugWritePreconditions(
+            new("https://github.com/example/project.git", "project"),
+            issueId,
+            "1111111111111111111111111111111111111111",
+            GitBugWriteOperations.IssueEdit);
+        var serialization = new GitBugSerializationMetadata(
+            GitBugWriteContract.SupportedStorageVersion,
+            GitBugWriteContract.Utf8Encoding,
+            true);
+
+        Assert.True(GitBugWriteContract.IsValidIssueEdit(new(
+            issueId,
+            "Single-line title",
+            "First line\nSecond line",
+            preconditions,
+            serialization)));
+        Assert.False(GitBugWriteContract.IsValidIssueEdit(new(
+            issueId,
+            "Title\ncontinued",
+            "First line\nSecond line",
+            preconditions,
+            serialization)));
+        Assert.True(GitBugWriteContract.IsValidComment(new(
+            issueId,
+            "First line\nSecond line",
+            preconditions with { ReviewedOperation = GitBugWriteOperations.CommentCreate },
+            serialization)));
+        Assert.False(GitBugWriteContract.IsValidComment(new(
+            issueId,
+            "First line\rSecond line",
+            preconditions with { ReviewedOperation = GitBugWriteOperations.CommentCreate },
+            serialization)));
+    }
+
     private static void AssertInvalid<T>(GitOperationResult<T> result)
     {
         Assert.False(result.Succeeded);

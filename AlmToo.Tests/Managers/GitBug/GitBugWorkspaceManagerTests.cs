@@ -234,6 +234,25 @@ public sealed class GitBugWorkspaceManagerTests
     }
 
     [Fact]
+    public async Task Multiline_issue_description_is_accepted_and_forwarded_to_accessor()
+    {
+        var fake = new FakeGitBugAccessor
+        {
+            DetailHandler = (_, _) => ValueTask.FromResult(Success(FirstDetail)),
+            EditHandler = request => ValueTask.FromResult(Success(new GitBugIssueEditResult(request.IssueId, "revision", "review")))
+        };
+        using var manager = CreateManager(fake);
+        manager.SetRepository(Repository);
+        Assert.True(await manager.LoadIssuesAsync(new(SearchText: "reviewed")));
+        Assert.True(await manager.OpenIssueAsync(FirstId));
+
+        Assert.True(await manager.EditSelectedIssueAsync("Updated title", "First line\nSecond line"));
+
+        var request = Assert.Single(fake.EditRequests);
+        Assert.Equal("First line\nSecond line", request.Description);
+    }
+
+    [Fact]
     public async Task Valid_issue_edit_calls_accessor_once_and_refreshes_detail_and_list()
     {
         var fake = new FakeGitBugAccessor
