@@ -251,3 +251,15 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] The combined run was repeated after one isolated transient recovery assertion failure; the isolated test and final four-test run both passed. No architectural exception is required.
 
 **Result:** PASS
+
+## M012 Branch and history workflow planning review
+
+- [x] **Client:** branch selection and history views will be implemented as Razor components that render passive `RepositoryWorkspaceState` and emit explicit branch-switch and history intents; they will not call browser Git APIs or inspect raw diagnostics.
+- [x] **Manager:** `RepositoryWorkspaceManager` remains the cohesive orchestration boundary for branch discovery, clean-worktree gating, cancellation-safe switching, state transitions, and refresh after a successful switch.
+- [x] **Accessor:** `IBrowserGitAccessor` and `BrowserGitAccessor` will expose typed branch and history operations at the existing browser-platform boundary; no new pass-through interface is planned.
+- [x] **Resource:** `browserGitEngine.js` will own isomorphic-git ref enumeration, checkout, bounded log reads, and safe failure mapping. The Resource will not leak raw Git errors to the Client.
+- [x] **Engine policy:** branch-switch eligibility and dirty-worktree rules belong in the Manager; deterministic branch/history bounds and Git/ref parsing remain in the Accessor/Resource boundary.
+- [x] **Interface justification:** any new `IBrowserGitAccessor` methods protect the existing JS/browser platform substitution boundary and keep Clients dependent on Managers rather than IJSRuntime; no interface-per-feature decomposition is permitted.
+- [x] No architectural exception is required.
+
+**Result:** PASS
