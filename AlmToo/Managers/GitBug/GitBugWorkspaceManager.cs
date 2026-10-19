@@ -469,24 +469,29 @@ public sealed class GitBugWorkspaceManager : IDisposable
             && HasInvalidGitBugTextCharacters(title, allowLineFeeds: false);
         var bodyHasInvalidCharacters = body is not null
             && HasInvalidGitBugTextCharacters(body, allowLineFeeds: true);
-        if (title is null || body is null
-            || (operation == GitBugWriteOperations.IssueEdit && title.Length == 0)
-            || (!allowEmptyBody && body.Length == 0)
-            || titleHasInvalidCharacters
-            || bodyHasInvalidCharacters)
+        if (operation == GitBugWriteOperations.IssueEdit
+            && (title is null || body is null || title.Length == 0
+                || titleHasInvalidCharacters || bodyHasInvalidCharacters))
         {
             message = "Enter valid Git-Bug text without control characters.";
             return false;
         }
 
-        if (operation == GitBugWriteOperations.IssueEdit && (title.Length > GitBugWriteContract.MaximumTitleLength
-            || body.Length > GitBugWriteContract.MaximumBodyLength))
+        if (operation == GitBugWriteOperations.CommentCreate
+            && (body is null || (!allowEmptyBody && body.Length == 0) || bodyHasInvalidCharacters))
+        {
+            message = "Enter valid Git-Bug text without control characters.";
+            return false;
+        }
+
+        if (operation == GitBugWriteOperations.IssueEdit && (title!.Length > GitBugWriteContract.MaximumTitleLength
+            || body!.Length > GitBugWriteContract.MaximumBodyLength))
         {
             message = "The Git-Bug issue title or description is too long.";
             return false;
         }
 
-        if (operation == GitBugWriteOperations.CommentCreate && body.Length > GitBugWriteContract.MaximumBodyLength)
+        if (operation == GitBugWriteOperations.CommentCreate && body!.Length > GitBugWriteContract.MaximumBodyLength)
         {
             message = "The Git-Bug comment is too long.";
             return false;
