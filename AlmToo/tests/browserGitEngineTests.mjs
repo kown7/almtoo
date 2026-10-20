@@ -1487,3 +1487,138 @@ test('synchronize rejects malformed, mismatched, failed, and non-fast-forward pa
     assert.deepEqual({ HEAD: fixture.state.refs.HEAD, local: fixture.state.refs['refs/heads/main'], files: fixture.state.files }, { HEAD: before.refs.HEAD, local: before.refs['refs/heads/main'], files: before.files });
   }
 });
+
+test('getBranches returns bounded current, local, and remote-tracking branch metadata', async () => {
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async currentBranch() { return 'main'; },
+      async listBranches({ remote }) {
+        return remote ? ['main', 'feature/x'] : ['main', 'feature/x'];
+      },
+      async listRemotes() { return [{ remote: 'origin', url: 'https://example.test/repo.git' }]; }
+    }
+  });
+
+  const result = await engine.getBranches();
+  assert.equal(result.operation, 'git.branch.list');
+  assert.equal(result.succeeded, true);
+  assert.deepEqual(result.value.current, { name: 'main', isDetached: false });
+  assert.deepEqual(result.value.choices, [
+    { name: 'feature/x', kind: 0, isCurrent: false },
+    { name: 'main', kind: 0, isCurrent: true },
+    { name: 'origin/feature/x', kind: 1, isCurrent: false },
+    { name: 'origin/main', kind: 1, isCurrent: false }
+  ]);
+  assert.equal(result.value.boundedResultCount, 4);
+});
+
+test('getBranches represents an empty detached repository without inventing a branch', async () => {
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async currentBranch() { return undefined; },
+      async listBranches() { return []; },
+      async listRemotes() { return []; }
+    }
+  });
+
+  const result = await engine.getBranches();
+  assert.equal(result.succeeded, true);
+  assert.deepEqual(result.value, {
+    current: { name: null, isDetached: true },
+    choices: [],
+    boundedResultCount: 0
+  });
+});
+
+test('getBranches maps malformed and oversized ref data to safe categorized failures', async () => {
+  const malformed = await openFakeRepository({
+    gitOverrides: { async currentBranch() { return 'unsafe branch'; } }
+  });
+  const malformedResult = await malformed.getBranches();
+  assert.equal(malformedResult.succeeded, false);
+  assert.equal(malformedResult.failureKind, 'branchHistoryDataMalformed');
+  assert.equal(malformedResult.diagnostic, null);
+
+  const oversized = await openFakeRepository({
+    gitOverrides: {
+      async currentBranch() { return 'main'; },
+      async listBranches() { return Array.from({ length: 101 }, (_, index) => `branch-${index}`); },
+      async listRemotes() { return []; }
+    }
+  });
+  const oversizedResult = await oversized.getBranches();
+  assert.equal(oversizedResult.succeeded, false);
+  assert.equal(oversizedResult.failureKind, 'branchHistoryLimitExceeded');
+});
+
+test('getHistory reads bounded commit metadata without checkout or reference mutation', async () => {
+  const commitId = 'a'.repeat(40);
+  const parentId = 'b'.repeat(40);
+  const logCalls = [];
+  let mutated = false;
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async log(options) {
+        logCalls.push(options);
+        return [{
+          oid: commitId,
+          commit: {
+            parent: [parentId],
+            message: 'Initial change',
+            author: { name: 'Ada Lovelace', timestamp: 1700000000, timezoneOffset: 0 }
+          }
+        }];
+      },
+      async checkout() { mutated = true; },
+      async writeRef() { mutated = true; },
+      async deleteRef() { mutated = true; }
+    }
+  });
+
+  const result = await engine.getHistory({ branchName: 'main', limit: 10 });
+  assert.equal(result.operation, 'git.history.read');
+  assert.equal(result.succeeded, true);
+  assert.equal(result.value.branchName, 'main');
+  assert.equal(result.value.boundedResultCount, 1);
+  assert.deepEqual(result.value.entries[0], {
+    commitId,
+    parentCommitId: parentId,
+    message: 'Initial change',
+    authorName: 'Ada Lovelace',
+    authoredAt: '2023-11-14T22:13:20.000Z'
+  });
+  assert.equal(logCalls.length, 1);
+  assert.equal(logCalls[0].ref, 'main');
+  assert.equal(logCalls[0].depth, 10);
+  assert.equal(mutated, false);
+});
+
+test('getHistory rejects invalid requests, malformed commits, and oversized results safely', async () => {
+  const invalid = await openFakeRepository();
+  const invalidResult = await invalid.getHistory({ branchName: 'bad branch', limit: 10 });
+  assert.equal(invalidResult.succeeded, false);
+  assert.equal(invalidResult.failureKind, 'branchHistoryInvalidRequest');
+
+  const malformed = await openFakeRepository({
+    gitOverrides: {
+      async log() { return [{ oid: 'not-a-commit', commit: { parent: [], message: '', author: { name: 'Ada', timestamp: 1 } } }]; }
+    }
+  });
+  const malformedResult = await malformed.getHistory({ branchName: 'main', limit: 10 });
+  assert.equal(malformedResult.succeeded, false);
+  assert.equal(malformedResult.failureKind, 'branchHistoryDataMalformed');
+
+  const oversized = await openFakeRepository({
+    gitOverrides: {
+      async log() {
+        return Array.from({ length: 101 }, (_, index) => ({
+          oid: index.toString(16).padStart(40, '0'),
+          commit: { parent: [], message: '', author: { name: 'Ada', timestamp: 1 } }
+        }));
+      }
+    }
+  });
+  const oversizedResult = await oversized.getHistory({ branchName: 'main', limit: 100 });
+  assert.equal(oversizedResult.succeeded, false);
+  assert.equal(oversizedResult.failureKind, 'branchHistoryLimitExceeded');
+});

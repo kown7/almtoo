@@ -58,7 +58,7 @@ public enum GitBugWriteStage
     Commit
 }
 
-/// <summary>Credential-free identity for the active repository/workspace.</summary>
+/// <summary>Non-sensitive identity for the active repository/workspace.</summary>
 public sealed record GitBugRepositoryIdentity(string RepositoryUrl, string WorkspaceName);
 
 /// <summary>Immutable review preconditions; a changed revision requires a new review.</summary>
@@ -364,7 +364,7 @@ public record SynchronizationReview(
     IReadOnlyList<ChangedFileSummary> ChangedFiles,
     SynchronizationDecisionState Decision);
 
-/// <summary>A safe message and stable category; raw Accessor diagnostics remain outside this contract.</summary>
+/// <summary>A safe message and stable category; internal Accessor details remain outside this contract.</summary>
 public record SynchronizationFailure(
     SynchronizationFailureCategory Category,
     string Message);
@@ -382,7 +382,7 @@ public enum BranchChoiceKind
     RemoteTracking
 }
 
-/// <summary>Credential-free metadata for the checked-out branch, including an empty or detached repository.</summary>
+/// <summary>Non-sensitive metadata for the checked-out branch, including an empty or detached repository.</summary>
 public sealed record CurrentBranch(string? Name, bool IsDetached);
 
 /// <summary>A selectable local or remote-tracking branch name.</summary>
@@ -397,7 +397,7 @@ public sealed record BranchSnapshot(
 /// <summary>Bounded input for a read-only history request.</summary>
 public sealed record BranchHistoryRequest(string? BranchName = null, int Limit = BrowserGitBranchHistoryContract.DefaultHistoryLimit);
 
-/// <summary>Credential-free metadata for one recent commit.</summary>
+/// <summary>Non-sensitive metadata for one recent commit.</summary>
 public sealed record CommitHistoryEntry(
     string CommitId,
     string? ParentCommitId,
@@ -411,7 +411,7 @@ public sealed record CommitHistory(
     IReadOnlyList<CommitHistoryEntry> Entries,
     int BoundedResultCount);
 
-/// <summary>Safe categories for branch and history failures; raw Git diagnostics never cross this boundary.</summary>
+/// <summary>Safe categories for branch and history failures; internal Git details never cross this boundary.</summary>
 public enum BranchHistoryFailureCategory
 {
     RepositoryUnavailable,
