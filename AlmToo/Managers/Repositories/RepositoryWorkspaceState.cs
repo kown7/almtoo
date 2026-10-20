@@ -11,6 +11,7 @@ public enum RepositoryWorkspaceOperation
     LoadFile,
     SaveFile,
     RefreshStatus,
+    LoadBranchHistory,
     Commit,
     InspectPush,
     StoreCredential,
@@ -54,6 +55,24 @@ public sealed class RepositoryWorkspaceState
 
     public IReadOnlyList<ChangedFile> ChangedFiles { get; internal set; } = Array.Empty<ChangedFile>();
     public CommitInfo? CreatedCommit { get; internal set; }
+
+    public CurrentBranch? CurrentBranch { get; internal set; }
+    public IReadOnlyList<BranchChoice> AvailableBranches { get; internal set; } = Array.Empty<BranchChoice>();
+    public CommitHistory? RecentHistory { get; internal set; }
+    public bool IsBranchHistoryLoading { get; internal set; }
+    public bool IsBranchSwitching { get; internal set; }
+    public bool BranchHistoryWasCancelled { get; internal set; }
+    public BranchHistoryFailure? BranchHistoryFailure { get; internal set; }
+    public string? BranchHistoryFailureCode => BranchHistoryFailure?.Category switch
+    {
+        BranchHistoryFailureCategory.RepositoryUnavailable => "repository-unavailable",
+        BranchHistoryFailureCategory.DataMalformed => "data-malformed",
+        BranchHistoryFailureCategory.InvalidRequest => "invalid-request",
+        BranchHistoryFailureCategory.UnsupportedReference => "unsupported-reference",
+        BranchHistoryFailureCategory.ResultLimitExceeded => "result-limit-exceeded",
+        BranchHistoryFailureCategory.Unknown => "unknown",
+        _ => null
+    };
 
     public PushReview? PushReview { get; internal set; }
     public bool PushConfirmed { get; internal set; }

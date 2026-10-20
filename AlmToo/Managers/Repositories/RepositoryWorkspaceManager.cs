@@ -65,8 +65,16 @@ public sealed class RepositoryWorkspaceManager : IDisposable
                 return false;
             }
 
+            if (!await LoadBranchHistoryCoreAsync(token))
+            {
+                return false;
+            }
+
             return Succeed(open.Message);
         }, cancellationToken);
+
+    public Task<bool> LoadBranchHistoryAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.LoadBranchHistory, LoadBranchHistoryCoreAsync, cancellationToken);
 
     public Task<bool> LoadDirectoryAsync(string path, CancellationToken cancellationToken = default) =>
         RunAsync(RepositoryWorkspaceOperation.LoadDirectory, token => LoadDirectoryCoreAsync(path, token), cancellationToken);
@@ -423,6 +431,66 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         return Succeed(result.Message);
     }
 
+    private async Task<bool> LoadBranchHistoryCoreAsync(CancellationToken cancellationToken)
+    {
+        if (!RequireRepository())
+        {
+            return false;
+        }
+
+        State.IsBranchHistoryLoading = true;
+        State.BranchHistoryWasCancelled = false;
+        State.BranchHistoryFailure = null;
+        NotifyChanged();
+
+        try
+        {
+            var branches = await gitAccessor.GetBranchesAsync(cancellationToken);
+            if (!branches.Succeeded || branches.Value is null)
+            {
+                return FailBranchHistory(branches, "Branch information is unavailable. Reopen the repository and try again.");
+            }
+
+            var history = await gitAccessor.GetHistoryAsync(
+                new BranchHistoryRequest(branches.Value.Current?.Name), cancellationToken);
+            if (!history.Succeeded || history.Value is null)
+            {
+                return FailBranchHistory(history, "Recent commit history is unavailable. Reopen the repository and try again.");
+            }
+
+            State.CurrentBranch = branches.Value.Current;
+            State.AvailableBranches = branches.Value.Choices;
+            State.RecentHistory = history.Value;
+            return Succeed("Branch and recent history information was refreshed.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            State.BranchHistoryWasCancelled = true;
+            throw;
+        }
+        finally
+        {
+            State.IsBranchHistoryLoading = false;
+            NotifyChanged();
+        }
+    }
+
+    private bool FailBranchHistory<T>(GitOperationResult<T> result, string fallbackMessage)
+    {
+        var category = result.FailureKind switch
+        {
+            GitOperationFailureKind.BranchHistoryDataUnavailable => BranchHistoryFailureCategory.RepositoryUnavailable,
+            GitOperationFailureKind.BranchHistoryDataMalformed => BranchHistoryFailureCategory.DataMalformed,
+            GitOperationFailureKind.BranchHistoryInvalidRequest => BranchHistoryFailureCategory.InvalidRequest,
+            GitOperationFailureKind.BranchHistoryUnsupportedReference => BranchHistoryFailureCategory.UnsupportedReference,
+            GitOperationFailureKind.BranchHistoryLimitExceeded => BranchHistoryFailureCategory.ResultLimitExceeded,
+            _ => BranchHistoryFailureCategory.Unknown
+        };
+
+        State.BranchHistoryFailure = new(category, fallbackMessage);
+        return Fail(fallbackMessage, result.FailureKind);
+    }
+
     private async Task<bool> RunAsync(
         RepositoryWorkspaceOperation operation,
         Func<CancellationToken, Task<bool>> action,
@@ -536,6 +604,13 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         State.CurrentPath = "/";
         State.ChangedFiles = Array.Empty<ChangedFile>();
         State.CreatedCommit = null;
+        State.CurrentBranch = null;
+        State.AvailableBranches = Array.Empty<BranchChoice>();
+        State.RecentHistory = null;
+        State.IsBranchHistoryLoading = false;
+        State.IsBranchSwitching = false;
+        State.BranchHistoryWasCancelled = false;
+        State.BranchHistoryFailure = null;
         ClearSelection();
         InvalidatePushReview();
     }
