@@ -9,6 +9,8 @@ async function clientSources() {
   return Promise.all([
     source('Pages/Home.razor'),
     source('Components/RepositoryFileBrowser.razor'),
+    source('Components/RepositoryBranchSelector.razor'),
+    source('Components/RepositoryCommitHistory.razor'),
     source('Components/RepositoryChangedFiles.razor'),
     source('Components/RepositoryCommitForm.razor')
   ]);
@@ -47,6 +49,8 @@ test('Home delegates the complete repository workflow to the Manager', async () 
     'Workspace.EditSelectedFile(',
     'Workspace.SaveSelectedFileAsync()',
     'Workspace.RefreshStatusAsync()',
+    'Workspace.LoadBranchHistoryAsync()',
+    'Workspace.SwitchBranchAsync(branchName)',
     'Workspace.CommitAsync(input)',
     'Workspace.InspectPushAsync()',
     'Workspace.StoreCredentialAsync(credentialForAttempt)',
@@ -65,6 +69,8 @@ test('Home renders Manager-owned state and passes that state to presentation chi
 
   assert.match(home, /private RepositoryWorkspaceState State => Workspace\.State/);
   assert.match(home, /<RepositoryFileBrowser State="State"[\s\S]*OnDirectorySelected="LoadDirectoryAsync"[\s\S]*OnFileSelected="SelectFileAsync"/);
+  assert.match(home, /<RepositoryBranchSelector State="State"[\s\S]*OnRefreshRequested="LoadBranchHistoryAsync"[\s\S]*OnBranchSelected="SwitchBranchAsync"/);
+  assert.match(home, /<RepositoryCommitHistory State="State"[\s\S]*OnRetryRequested="LoadBranchHistoryAsync"\s*\/>/);
   assert.match(home, /<RepositoryChangedFiles State="State" OnRefreshRequested="RefreshStatusAsync"/);
   assert.match(home, /<RepositoryCommitForm State="State" OnCommitRequested="CommitAsync"/);
   assert.match(home, /@State\.Repository\.RepositoryUrl/);
@@ -74,14 +80,16 @@ test('Home renders Manager-owned state and passes that state to presentation chi
 });
 
 test('repository child components are presentation-only Manager state and callback surfaces', async () => {
-  const [fileBrowser, changedFiles, commitForm] = await Promise.all([
+  const [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm] = await Promise.all([
     source('Components/RepositoryFileBrowser.razor'),
+    source('Components/RepositoryBranchSelector.razor'),
+    source('Components/RepositoryCommitHistory.razor'),
     source('Components/RepositoryChangedFiles.razor'),
     source('Components/RepositoryCommitForm.razor')
   ]);
-  const children = [fileBrowser, changedFiles, commitForm].join('\n');
+  const children = [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm].join('\n');
 
-  for (const child of [fileBrowser, changedFiles, commitForm]) {
+  for (const child of [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm]) {
     assert.match(child, /@using AlmToo\.Managers\.Repositories/);
     assert.match(child, /RepositoryWorkspaceState State/);
     assert.doesNotMatch(child, /@inject|Workspace\.|Accessor|IJSRuntime/);

@@ -67,6 +67,17 @@ export function inspectArchitecture(snapshot) {
   failures.push(...matchingSources(snapshot.clients, /\b(?:IJSRuntime|IJSObjectReference|JSImport)\b|\bInvokeAsync\s*</, 'CLIENT_GIT_INTEROP', 'Client must not own Git-related JavaScript interop'));
   failures.push(...matchingSources(snapshot.clients, /\.Diagnostic\b|\b(?:personalAccessToken|accessToken)\b/i, 'CLIENT_DIAGNOSTIC_EXPOSURE', 'Client must not expose raw diagnostics or credential values'));
 
+  for (const path of ['Components/RepositoryBranchSelector.razor', 'Components/RepositoryCommitHistory.razor']) {
+    const client = snapshot.clients.get(path);
+    if (client === undefined) continue;
+    if (!/@using\s+AlmToo\.Managers\.Repositories/.test(client) || !/RepositoryWorkspaceState\s+State/.test(client)) {
+      failures.push(violation('BRANCH_HISTORY_STATE', path, 'branch and history Clients must render passive RepositoryWorkspaceState'));
+    }
+    if (!/EventCallback/.test(client) || /@inject\b|\bWorkspace\.|State\.[A-Za-z]\w*\s*=(?!=)/.test(client)) {
+      failures.push(violation('BRANCH_HISTORY_CALLBACK_BOUNDARY', path, 'branch and history Clients must expose callbacks without Manager orchestration or state mutation'));
+    }
+  }
+
   for (const [path, source] of snapshot.managers) {
     const declared = new Set([...source.matchAll(/\b(?:class|record)\s+([A-Z]\w*Manager)\b/g)].map(match => match[1]));
     const referenced = new Set([...source.matchAll(/\b([A-Z]\w*Manager)\b/g)].map(match => match[1]));
