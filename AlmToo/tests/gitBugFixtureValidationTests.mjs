@@ -79,6 +79,17 @@ test('controlled remote exposes smart HTTP and redacts credentials from failures
   }
 });
 
+test('controlled remote rejects non-function repository seed hooks before serving', async () => {
+  await assert.rejects(
+    () => startControlledGitBugRemote({ seedRepository: 'not-a-callback' }),
+    error => {
+      assert.equal(error.name, 'TypeError');
+      assert.match(error.message, /seedRepository must be a function/);
+      return true;
+    }
+  );
+});
+
 test('controlled remote supports explicit failure transitions and cleanup', async () => {
   const remote = await startControlledGitBugRemote();
   try {
