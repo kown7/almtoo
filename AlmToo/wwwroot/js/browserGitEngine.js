@@ -446,7 +446,7 @@ export async function checkoutBranch(request) {
 
     const currentName = await git.currentBranch({ fs, dir, fullname: false });
     if (currentName !== branchName) {
-      await git.checkout({ fs, dir, ref: branchName });
+      await git.checkout({ fs, dir, ref: branchName, noUpdateHead: false });
     }
 
     const checkedOutName = await git.currentBranch({ fs, dir, fullname: false });
