@@ -83,7 +83,19 @@ export async function startControlledGitBugRemote(options = {}) {
   const password = typeof options.password === 'string' ? options.password : 'fixture-password';
   const expectedAuthorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
   const root = await mkdtemp(path.join(os.tmpdir(), 'almtoo-gitbug-remote-'));
-  const repository = await seedBareRepository(root);
+  let repository;
+  try {
+    repository = await seedBareRepository(root);
+    if (options.seedRepository !== undefined) {
+      if (typeof options.seedRepository !== 'function') {
+        throw new TypeError('seedRepository must be a function when provided.');
+      }
+      await options.seedRepository(repository);
+    }
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
   let failureMode = parseFailure(options.failureMode);
   let requestCount = 0;
   let closed = false;

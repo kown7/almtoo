@@ -381,7 +381,7 @@ public sealed class RepositoryWorkspaceManagerTests
         manager.ConfirmPushReview(true);
     }
 
-    private sealed class FakeBrowserAccessor : IBrowserGitAccessor, IBrowserFileAccessor
+    internal sealed class FakeBrowserAccessor : IBrowserGitAccessor, IBrowserFileAccessor
     {
         public List<string> Calls { get; } = [];
         public List<RepositoryOpenRequest> OpenRequests { get; } = [];
@@ -391,6 +391,8 @@ public sealed class RepositoryWorkspaceManagerTests
         public int InspectCalls { get; private set; }
         public int PushCalls { get; private set; }
         public int SynchronizeCalls { get; private set; }
+        public int CheckoutCalls { get; private set; }
+        public List<CheckoutBranchRequest> CheckoutRequests { get; } = [];
         public Func<SynchronizationRequest, GitOperationResult<SynchronizationReview>> Synchronize { get; set; } = request =>
             new GitOperationResult<SynchronizationReview>("synchronize", true, "Ready.", new(
                 request.RepositoryUrl, request.Branch, "local", new("incoming", "local", "Incoming", "Author", DateTimeOffset.UnixEpoch), [],
@@ -399,6 +401,9 @@ public sealed class RepositoryWorkspaceManagerTests
         public Func<FilterFilesRequest, GitOperationResult<FilterFilesResult>> Filter { get; set; }
         public Func<FilterFilesRequest, CancellationToken, ValueTask<GitOperationResult<FilterFilesResult>>>? FilterAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<IReadOnlyList<ChangedFile>>>>? StatusAsync { get; set; }
+        public Func<CancellationToken, ValueTask<GitOperationResult<BranchSnapshot>>>? BranchesAsync { get; set; }
+        public Func<BranchHistoryRequest, CancellationToken, ValueTask<GitOperationResult<CommitHistory>>>? HistoryAsync { get; set; }
+        public Func<CheckoutBranchRequest, CancellationToken, ValueTask<GitOperationResult>>? CheckoutAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<SynchronizationReview>>>? SynchronizeHandler { get; set; }
         public Func<string, GitOperationResult<bool>> StoreCredential { get; set; } = _ =>
             new GitOperationResult<bool>("store-credential", true, "Stored.", true);
@@ -432,6 +437,40 @@ public sealed class RepositoryWorkspaceManagerTests
             }
             return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Status refreshed.", [new("/README.md", GitChangeKind.Modified)]);
         }
+
+        public async ValueTask<GitOperationResult<BranchSnapshot>> GetBranchesAsync(CancellationToken cancellationToken = default) =>
+            BranchesAsync is null
+                ? new GitOperationResult<BranchSnapshot>(
+                    BrowserGitBranchHistoryOperations.ListBranches,
+                    true,
+                    "No branches loaded in this test double.",
+                    new BranchSnapshot(null, [], 0))
+                : await BranchesAsync(cancellationToken);
+
+        public async ValueTask<GitOperationResult> CheckoutBranchAsync(CheckoutBranchRequest request, CancellationToken cancellationToken = default)
+        {
+            Calls.Add("checkout");
+            CheckoutCalls++;
+            CheckoutRequests.Add(request);
+            if (CheckoutAsync is not null)
+            {
+                return await CheckoutAsync(request, cancellationToken);
+            }
+
+            return new GitOperationResult(
+                BrowserGitBranchHistoryOperations.CheckoutBranch,
+                true,
+                "Branch switched in this test double.");
+        }
+
+        public async ValueTask<GitOperationResult<CommitHistory>> GetHistoryAsync(BranchHistoryRequest request, CancellationToken cancellationToken = default) =>
+            HistoryAsync is null
+                ? new GitOperationResult<CommitHistory>(
+                    BrowserGitBranchHistoryOperations.ReadHistory,
+                    true,
+                    "No history loaded in this test double.",
+                    new CommitHistory(request.BranchName, [], 0))
+                : await HistoryAsync(request, cancellationToken);
 
         public ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default)
         {

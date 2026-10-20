@@ -1,0 +1,67 @@
+@using AlmToo.Managers.Repositories
+
+<section class="repository-commit-history" aria-labelledby="repository-history-heading">
+    <div class="repository-commit-history__header">
+        <div>
+            <p class="helper-text">Local history</p>
+            <h2 id="repository-history-heading">Recent commits</h2>
+        </div>
+        @if (State.RecentHistory is not null)
+        {
+            <span class="repository-commit-history__count" aria-label="Recent commit count">
+                @State.RecentHistory.BoundedResultCount commit@(State.RecentHistory.BoundedResultCount == 1 ? string.Empty : "s")
+            </span>
+        }
+    </div>
+
+    @if (IsLoading)
+    {
+        <p class="status-message info" role="status" aria-live="polite">Loading recent commit history...</p>
+    }
+    else if (State.BranchHistoryFailure is not null)
+    {
+        <div class="repository-commit-history__feedback" role="alert" aria-live="assertive">
+            <p class="status-message error" data-history-failure="@State.BranchHistoryFailureCode">@State.BranchHistoryFailure.Message</p>
+            <button class="secondary-action" type="button" @onclick="OnRetryRequested" disabled="@IsBusy">Retry history</button>
+        </div>
+    }
+    else if (State.RecentHistory is null || State.RecentHistory.Entries.Count == 0)
+    {
+        <p class="repository-commit-history__empty" role="status" aria-live="polite">
+            No commits were found for this branch yet.
+        </p>
+        <button class="secondary-action" type="button" @onclick="OnRetryRequested" disabled="@IsBusy">Refresh history</button>
+    }
+    else
+    {
+        <ol class="repository-commit-history__list" aria-label="Recent commit history">
+            @foreach (var commit in State.RecentHistory.Entries)
+            {
+                <li class="repository-commit-history__item">
+                    <div class="repository-commit-history__summary">
+                        <strong>@commit.Message</strong>
+                        <span class="repository-commit-history__sha" title="Commit identifier">@ShortCommitId(commit.CommitId)</span>
+                    </div>
+                    <div class="repository-commit-history__metadata">
+                        <span>@commit.AuthorName</span>
+                        <time datetime="@commit.AuthoredAt.ToString("O")">@commit.AuthoredAt.ToLocalTime().ToString("f")</time>
+                    </div>
+                </li>
+            }
+        </ol>
+        <p class="repository-commit-history__bounded" role="status" aria-live="polite">
+            Showing the most recent @State.RecentHistory.BoundedResultCount commit@(State.RecentHistory.BoundedResultCount == 1 ? string.Empty : "s").
+        </p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter] public EventCallback OnRetryRequested { get; set; }
+
+    private bool IsLoading => State.IsBranchHistoryLoading || State.Operation == RepositoryWorkspaceOperation.LoadBranchHistory;
+    private bool IsBusy => State.IsBusy || State.IsBranchHistoryLoading || State.IsBranchSwitching;
+
+    private static string ShortCommitId(string commitId) =>
+        commitId.Length <= 10 ? commitId : commitId[..10];
+}

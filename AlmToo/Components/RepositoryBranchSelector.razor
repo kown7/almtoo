@@ -1,0 +1,107 @@
+@using AlmToo.Managers.Repositories
+
+<section class="repository-branch-selector" aria-labelledby="repository-branch-heading">
+    <div class="repository-branch-selector__header">
+        <div>
+            <p class="helper-text">Workspace navigation</p>
+            <h2 id="repository-branch-heading">Branches</h2>
+        </div>
+        <button class="repository-branch-selector__refresh" type="button"
+                @onclick="OnRefreshRequested" disabled="@IsBusy">
+            @(IsLoading ? "Refreshing..." : "Refresh branches")
+        </button>
+    </div>
+
+    <div class="repository-branch-selector__current" aria-live="polite">
+        <span class="repository-branch-selector__label">Current branch</span>
+        <strong>@CurrentBranchLabel</strong>
+    </div>
+
+    @if (IsLoading)
+    {
+        <p class="status-message info" role="status" aria-live="polite">Loading branch choices...</p>
+    }
+    else if (State.BranchHistoryFailure is not null)
+    {
+        <div class="repository-branch-selector__feedback" role="alert" aria-live="assertive">
+            <p class="status-message error" data-branch-failure="@State.BranchHistoryFailureCode">@State.BranchHistoryFailure.Message</p>
+            <button class="secondary-action" type="button" @onclick="OnRefreshRequested" disabled="@IsBusy">Retry branch loading</button>
+        </div>
+    }
+    else if (State.HasUnsavedChanges || State.ChangedFiles.Count > 0)
+    {
+        <p class="repository-branch-selector__guidance" role="status" aria-live="polite">
+            Save the edited file and commit or discard changed files before switching branches.
+        </p>
+    }
+
+    <div class="repository-branch-selector__control">
+        <label for="repository-branch">Switch to a local branch</label>
+        <select id="repository-branch" value="@SelectedBranch" @onchange="HandleBranchChanged" disabled="@IsBusy">
+            <option value="">Select a local branch</option>
+            @foreach (var branch in State.AvailableBranches)
+            {
+                if (string.Equals(branch.Kind.ToString(), "Local", StringComparison.Ordinal))
+                {
+                    <option value="@branch.Name">@branch.Name@(branch.IsCurrent ? " (current)" : string.Empty)</option>
+                }
+            }
+        </select>
+        <p class="field-help" id="repository-branch-help">
+            Branch switching is limited to local branches and is blocked while the workspace is busy.
+        </p>
+    </div>
+
+    @if (!IsLoading && State.AvailableBranches.Count == 0 && State.BranchHistoryFailure is null)
+    {
+        <p class="repository-branch-selector__empty">No local branches are available in this workspace.</p>
+    }
+
+    @if (IsSwitching)
+    {
+        <p class="status-message info" role="status" aria-live="polite">Switching branch and refreshing workspace files...</p>
+    }
+    else if (State.Result?.Operation == RepositoryWorkspaceOperation.SwitchBranch)
+    {
+        <p class="status-message @(State.Result.Succeeded ? "success" : "error")"
+           role="@(State.Result.Succeeded ? "status" : "alert")"
+           aria-live="@(State.Result.Succeeded ? "polite" : "assertive")">@State.Result.Message</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter] public EventCallback OnRefreshRequested { get; set; }
+    [Parameter] public EventCallback<string> OnBranchSelected { get; set; }
+
+    private string? SelectedBranch { get; set; }
+    private bool IsLoading => State.IsBranchHistoryLoading || State.Operation == RepositoryWorkspaceOperation.LoadBranchHistory;
+    private bool IsSwitching => State.IsBranchSwitching || State.Operation == RepositoryWorkspaceOperation.SwitchBranch;
+    private bool IsBusy => State.IsBusy || State.IsBranchHistoryLoading || State.IsBranchSwitching;
+    private string CurrentBranchLabel => State.CurrentBranch is null
+        ? "No branch checked out"
+        : State.CurrentBranch.IsDetached
+            ? $"Detached at {State.CurrentBranch.Name ?? "an unnamed commit"}"
+            : State.CurrentBranch.Name ?? "No branch checked out";
+
+    protected override void OnParametersSet()
+    {
+        if (!IsSwitching && State.CurrentBranch is not null &&
+            (string.IsNullOrWhiteSpace(SelectedBranch) || State.CurrentBranch.IsDetached))
+        {
+            SelectedBranch = State.CurrentBranch.Name;
+        }
+    }
+
+    private async Task HandleBranchChanged(ChangeEventArgs args)
+    {
+        var branchName = args.Value?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(branchName) || IsBusy)
+        {
+            return;
+        }
+
+        SelectedBranch = branchName;
+        await OnBranchSelected.InvokeAsync(branchName);
+    }
+}

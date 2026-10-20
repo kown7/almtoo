@@ -300,6 +300,266 @@ export async function getStatus() {
   }
 }
 
+const branchHistoryLimits = Object.freeze({
+  maximumBranches: 100,
+  maximumHistoryEntries: 100,
+  maximumBranchNameLength: 256,
+  maximumCommitIdLength: 40,
+  maximumCommitMessageLength: 4096,
+  maximumAuthorLength: 512
+});
+
+function isSafeBranchName(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= branchHistoryLimits.maximumBranchNameLength
+    && !/[\\\0\r\n \t~^:?*\[]/.test(value)
+    && !value.startsWith('/')
+    && !value.endsWith('/')
+    && !value.includes('//')
+    && !value.includes('..')
+    && !value.includes('@{');
+}
+
+function isSafeCommitId(value) {
+  return typeof value === 'string'
+    && value.length === branchHistoryLimits.maximumCommitIdLength
+    && /^[0-9a-f]+$/i.test(value);
+}
+
+function isSafeText(value, maximum, { allowEmpty = false, allowLineFeeds = false } = {}) {
+  return typeof value === 'string'
+    && (allowEmpty || value.trim().length > 0)
+    && value.length <= maximum
+    && !value.includes('\0')
+    && !value.includes('\r')
+    && (allowLineFeeds || !value.includes('\n'));
+}
+
+function sortBranchChoices(choices) {
+  return choices.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+}
+
+function remoteBranchName(remote, branch) {
+  if (!isSafeBranchName(branch)) {
+    throw new TypeError('The repository returned an unsafe remote branch name.');
+  }
+  return branch.startsWith(`${remote}/`) ? branch : `${remote}/${branch}`;
+}
+
+export async function getBranches() {
+  const operation = 'git.branch.list';
+
+  try {
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    const currentName = await git.currentBranch({ fs, dir, fullname: false });
+    if (currentName !== undefined && currentName !== null && !isSafeBranchName(currentName)) {
+      return failureWithKind(operation, 'Branch data could not be read safely.', 'branchHistoryDataMalformed');
+    }
+
+    const choices = [];
+    const seen = new Set();
+    const addChoice = (name, kind, isCurrent = false) => {
+      if (!isSafeBranchName(name)) {
+        throw new TypeError('The repository returned an unsafe branch name.');
+      }
+      if (seen.has(name)) return;
+      seen.add(name);
+      choices.push({ name, kind, isCurrent });
+      if (choices.length > branchHistoryLimits.maximumBranches) {
+        throw new RangeError('The repository returned too many branches.');
+      }
+    };
+
+    const localBranches = await git.listBranches({ fs, dir });
+    if (!Array.isArray(localBranches)) {
+      return failureWithKind(operation, 'Branch data could not be read safely.', 'branchHistoryDataMalformed');
+    }
+    for (const branch of localBranches) {
+      addChoice(branch, 0, branch === currentName);
+    }
+
+    if (typeof git.listRemotes === 'function') {
+      const remotes = await git.listRemotes({ fs, dir });
+      if (!Array.isArray(remotes)) {
+        return failureWithKind(operation, 'Branch data could not be read safely.', 'branchHistoryDataMalformed');
+      }
+      for (const remoteEntry of remotes) {
+        const remote = typeof remoteEntry === 'string' ? remoteEntry : remoteEntry?.remote;
+        if (!isSafeBranchName(remote)) {
+          return failureWithKind(operation, 'Branch data could not be read safely.', 'branchHistoryDataMalformed');
+        }
+        const remoteBranches = await git.listBranches({ fs, dir, remote });
+        if (!Array.isArray(remoteBranches)) {
+          return failureWithKind(operation, 'Branch data could not be read safely.', 'branchHistoryDataMalformed');
+        }
+        for (const branch of remoteBranches) {
+          addChoice(remoteBranchName(remote, branch), 1);
+        }
+      }
+    }
+
+    sortBranchChoices(choices);
+    return success(operation, 'Branches were read from the browser-local repository.', {
+      current: { name: currentName ?? null, isDetached: currentName === undefined || currentName === null },
+      choices,
+      boundedResultCount: choices.length
+    });
+  } catch (error) {
+    const failureKind = error instanceof RangeError
+      ? 'branchHistoryLimitExceeded'
+      : error instanceof TypeError
+        ? 'branchHistoryDataMalformed'
+        : 'branchHistoryDataUnavailable';
+    return failureWithKind(operation, 'Branches could not be read from the browser-local repository.', failureKind, getDiagnostic(error));
+  }
+}
+
+export async function checkoutBranch(request) {
+  const operation = 'git.branch.checkout';
+
+  try {
+    const branchName = request?.branchName;
+    if (!isSafeBranchName(branchName)) {
+      return failureWithKind(operation, 'The branch selection is not valid.', 'branchSwitchInvalidRequest');
+    }
+
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    const matrix = await git.statusMatrix({ fs, dir });
+    const hasChanges = matrix.some(([, head, workdir, stage]) => mapChangeKind(head, workdir, stage) !== null);
+    if (hasChanges) {
+      return failureWithKind(
+        operation,
+        'The branch could not be switched because the browser-local worktree has uncommitted changes.',
+        'branchSwitchDirtyWorktree');
+    }
+
+    const localBranches = await git.listBranches({ fs, dir });
+    if (!Array.isArray(localBranches) || !localBranches.includes(branchName)) {
+      return failureWithKind(
+        operation,
+        'The requested local branch is not available for checkout.',
+        'branchSwitchUnsupportedReference');
+    }
+
+    const currentName = await git.currentBranch({ fs, dir, fullname: false });
+    if (currentName !== branchName) {
+      await git.checkout({ fs, dir, ref: branchName, noUpdateHead: false });
+    }
+
+    const checkedOutName = await git.currentBranch({ fs, dir, fullname: false });
+    if (checkedOutName !== branchName) {
+      return failureWithKind(
+        operation,
+        'The browser-local repository did not confirm the requested branch.',
+        'branchSwitchUnknown');
+    }
+
+    await persistFilesystem(fs);
+    return success(operation, 'Switched the browser-local repository branch.');
+  } catch (error) {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    const diagnostic = getDiagnostic(error);
+    const failureKind = /NotFoundError|ResolveRefError|NoRefFound/i.test(code)
+      ? 'branchSwitchUnsupportedReference'
+      : 'branchSwitchUnavailable';
+    return failureWithKind(
+      operation,
+      'The browser-local repository branch could not be switched.',
+      failureKind,
+      diagnostic);
+  }
+}
+
+function isUnsupportedHistoryReference(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  const diagnostic = getDiagnostic(error);
+  return /NotFoundError|ResolveRefError|NoRefFound/i.test(code)
+    || /(?:branch|ref|reference).*not found|could not resolve/i.test(diagnostic ?? '');
+}
+
+function normalizeHistoryCommit(commit) {
+  const commitId = commit?.oid;
+  const metadata = commit?.commit;
+  const parentIds = metadata?.parent;
+  if (!Array.isArray(parentIds)) {
+    throw new TypeError('The repository returned malformed parent metadata.');
+  }
+  const parentCommitId = parentIds.length > 0 ? parentIds[0] : null;
+  const message = metadata?.message;
+  const author = metadata?.author;
+  const timestamp = author?.timestamp;
+
+  if (!isSafeCommitId(commitId)
+      || (parentCommitId !== null && !isSafeCommitId(parentCommitId))
+      || !isSafeText(message, branchHistoryLimits.maximumCommitMessageLength, { allowEmpty: true, allowLineFeeds: true })
+      || !isSafeText(author?.name, branchHistoryLimits.maximumAuthorLength)
+      || !Number.isFinite(timestamp)
+      || !Number.isInteger(timestamp)) {
+    throw new TypeError('The repository returned malformed commit metadata.');
+  }
+
+  const authoredAt = new Date(timestamp * 1000);
+  if (Number.isNaN(authoredAt.valueOf())) {
+    throw new TypeError('The repository returned an invalid commit timestamp.');
+  }
+
+  return {
+    commitId,
+    parentCommitId,
+    message,
+    authorName: author.name,
+    authoredAt: authoredAt.toISOString()
+  };
+}
+
+export async function getHistory(request = {}) {
+  const operation = 'git.history.read';
+  const branchName = request?.branchName ?? null;
+  const limit = request?.limit;
+
+  if (!Number.isInteger(limit)
+      || limit <= 0
+      || limit > branchHistoryLimits.maximumHistoryEntries
+      || (branchName !== null && !isSafeBranchName(branchName))) {
+    return failureWithKind(operation, 'The branch history request is not valid.', 'branchHistoryInvalidRequest');
+  }
+
+  try {
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    let resolvedBranchName = branchName;
+    if (resolvedBranchName === null) {
+      const currentName = await git.currentBranch({ fs, dir, fullname: false });
+      if (currentName !== undefined && currentName !== null && !isSafeBranchName(currentName)) {
+        return failureWithKind(operation, 'Commit history could not be read safely.', 'branchHistoryDataMalformed');
+      }
+      resolvedBranchName = currentName ?? null;
+    }
+
+    const commits = await git.log({ fs, dir, ref: branchName ?? 'HEAD', depth: limit });
+    if (!Array.isArray(commits) || commits.length > limit || commits.length > branchHistoryLimits.maximumHistoryEntries) {
+      return failureWithKind(operation, 'Commit history is too large to read safely.', 'branchHistoryLimitExceeded');
+    }
+
+    const entries = commits.map(normalizeHistoryCommit);
+    return success(operation, 'Recent commit history was read from the browser-local repository.', {
+      branchName: resolvedBranchName,
+      entries,
+      boundedResultCount: entries.length
+    });
+  } catch (error) {
+    const failureKind = error instanceof TypeError
+      ? 'branchHistoryDataMalformed'
+      : isUnsupportedHistoryReference(error)
+        ? 'branchHistoryUnsupportedReference'
+        : 'branchHistoryDataUnavailable';
+    return failureWithKind(operation, 'Commit history could not be read from the browser-local repository.', failureKind, getDiagnostic(error));
+  }
+}
+
 export async function commit(request) {
   const operation = 'commit';
 

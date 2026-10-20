@@ -33,6 +33,17 @@ public enum GitOperationFailureKind
     GitBugWriteUnavailable,
     GitBugWriteSerializationFailed,
     GitBugWriteUnknown,
+    BranchHistoryDataUnavailable,
+    BranchHistoryDataMalformed,
+    BranchHistoryInvalidRequest,
+    BranchHistoryUnsupportedReference,
+    BranchHistoryLimitExceeded,
+    BranchHistoryUnknown,
+    BranchSwitchInvalidRequest,
+    BranchSwitchDirtyWorktree,
+    BranchSwitchUnsupportedReference,
+    BranchSwitchUnavailable,
+    BranchSwitchUnknown,
     Unknown
 }
 
@@ -52,7 +63,7 @@ public enum GitBugWriteStage
     Commit
 }
 
-/// <summary>Credential-free identity for the active repository/workspace.</summary>
+/// <summary>Non-sensitive identity for the active repository/workspace.</summary>
 public sealed record GitBugRepositoryIdentity(string RepositoryUrl, string WorkspaceName);
 
 /// <summary>Immutable review preconditions; a changed revision requires a new review.</summary>
@@ -358,7 +369,184 @@ public record SynchronizationReview(
     IReadOnlyList<ChangedFileSummary> ChangedFiles,
     SynchronizationDecisionState Decision);
 
-/// <summary>A safe message and stable category; raw Accessor diagnostics remain outside this contract.</summary>
+/// <summary>A safe message and stable category; internal Accessor details remain outside this contract.</summary>
 public record SynchronizationFailure(
     SynchronizationFailureCategory Category,
     string Message);
+
+/// <summary>Stable operation names for bounded branch reads and safe local branch switching.</summary>
+public static class BrowserGitBranchHistoryOperations
+{
+    public const string ListBranches = "git.branch.list";
+    public const string CheckoutBranch = "git.branch.checkout";
+    public const string ReadHistory = "git.history.read";
+}
+
+public enum BranchChoiceKind
+{
+    Local,
+    RemoteTracking
+}
+
+/// <summary>Non-sensitive metadata for the checked-out branch, including an empty or detached repository.</summary>
+public sealed record CurrentBranch(string? Name, bool IsDetached);
+
+/// <summary>A selectable local or remote-tracking branch name.</summary>
+public sealed record BranchChoice(string Name, BranchChoiceKind Kind, bool IsCurrent = false);
+
+/// <summary>Bounded branch discovery output; the count is the number of returned choices, not an unbounded repository total.</summary>
+public sealed record BranchSnapshot(
+    CurrentBranch? Current,
+    IReadOnlyList<BranchChoice> Choices,
+    int BoundedResultCount);
+
+/// <summary>Bounded input for a safe local branch checkout request.</summary>
+public sealed record CheckoutBranchRequest(string BranchName);
+
+/// <summary>Bounded input for a read-only history request.</summary>
+public sealed record BranchHistoryRequest(string? BranchName = null, int Limit = BrowserGitBranchHistoryContract.DefaultHistoryLimit);
+
+/// <summary>Non-sensitive metadata for one recent commit.</summary>
+public sealed record CommitHistoryEntry(
+    string CommitId,
+    string? ParentCommitId,
+    string Message,
+    string AuthorName,
+    DateTimeOffset AuthoredAt);
+
+/// <summary>Bounded recent history output for the requested branch or current checkout.</summary>
+public sealed record CommitHistory(
+    string? BranchName,
+    IReadOnlyList<CommitHistoryEntry> Entries,
+    int BoundedResultCount);
+
+/// <summary>Safe categories for branch and history failures; internal Git details never cross this boundary.</summary>
+public enum BranchHistoryFailureCategory
+{
+    RepositoryUnavailable,
+    DataMalformed,
+    InvalidRequest,
+    UnsupportedReference,
+    ResultLimitExceeded,
+    Unknown
+}
+
+public sealed record BranchHistoryFailure(
+    BranchHistoryFailureCategory Category,
+    string Message);
+
+/// <summary>Pure bounds and safety checks shared by the Accessor and its contract tests.</summary>
+public static class BrowserGitBranchHistoryContract
+{
+    public const int MaximumBranches = 100;
+    public const int MaximumHistoryEntries = 100;
+    public const int DefaultHistoryLimit = 50;
+    public const int MaximumBranchNameLength = 256;
+    public const int MaximumCommitIdLength = 40;
+    public const int MaximumCommitMessageLength = 4096;
+    public const int MaximumAuthorLength = 512;
+    public const int MaximumFailureMessageLength = 512;
+
+    public static bool IsValidOperation(string? operation) => operation is
+        BrowserGitBranchHistoryOperations.ListBranches or
+        BrowserGitBranchHistoryOperations.CheckoutBranch or
+        BrowserGitBranchHistoryOperations.ReadHistory;
+
+    public static bool IsValidFailure(GitOperationFailureKind kind) => kind is
+        GitOperationFailureKind.BranchHistoryDataUnavailable or
+        GitOperationFailureKind.BranchHistoryDataMalformed or
+        GitOperationFailureKind.BranchHistoryInvalidRequest or
+        GitOperationFailureKind.BranchHistoryUnsupportedReference or
+        GitOperationFailureKind.BranchHistoryLimitExceeded or
+        GitOperationFailureKind.BranchHistoryUnknown or
+        GitOperationFailureKind.BranchSwitchInvalidRequest or
+        GitOperationFailureKind.BranchSwitchDirtyWorktree or
+        GitOperationFailureKind.BranchSwitchUnsupportedReference or
+        GitOperationFailureKind.BranchSwitchUnavailable or
+        GitOperationFailureKind.BranchSwitchUnknown;
+
+    public static bool IsValidCurrentBranch(CurrentBranch? branch) =>
+        branch is not null
+        && (branch.IsDetached
+            ? branch.Name is null || IsSafeRefName(branch.Name)
+            : IsSafeRefName(branch.Name));
+
+    public static bool IsValidBranchChoice(BranchChoice? choice) =>
+        choice is not null && IsSafeRefName(choice.Name);
+
+    public static bool IsValidSnapshot(BranchSnapshot? snapshot) =>
+        snapshot is not null
+        && snapshot.BoundedResultCount == snapshot.Choices.Count
+        && snapshot.BoundedResultCount <= MaximumBranches
+        && (snapshot.Current is null || IsValidCurrentBranch(snapshot.Current))
+        && snapshot.Choices.All(IsValidBranchChoice)
+        && snapshot.Choices.Select(choice => choice.Name)
+            .Distinct(StringComparer.Ordinal)
+            .Count() == snapshot.Choices.Count;
+
+    public static bool IsValidCheckoutRequest(CheckoutBranchRequest? request) =>
+        request is not null && IsSafeRefName(request.BranchName);
+
+    public static bool IsValidRequest(BranchHistoryRequest? request) =>
+        request is not null
+        && request.Limit is > 0 and <= MaximumHistoryEntries
+        && (request.BranchName is null || IsSafeRefName(request.BranchName));
+
+    public static bool IsValidCommitHistoryEntry(CommitHistoryEntry? entry) =>
+        entry is not null
+        && IsCommitId(entry.CommitId)
+        && (entry.ParentCommitId is null || IsCommitId(entry.ParentCommitId))
+        && IsSafeText(entry.Message, MaximumCommitMessageLength, allowEmpty: true, allowLineFeeds: true)
+        && IsSafeText(entry.AuthorName, MaximumAuthorLength)
+        && entry.AuthoredAt != default;
+
+    public static bool IsValidHistory(CommitHistory? history) =>
+        history is not null
+        && history.BoundedResultCount == history.Entries.Count
+        && history.BoundedResultCount <= MaximumHistoryEntries
+        && (history.BranchName is null || IsSafeRefName(history.BranchName))
+        && history.Entries.All(IsValidCommitHistoryEntry);
+
+    public static bool IsValidFailure(BranchHistoryFailure? failure) =>
+        failure is not null
+        && IsSafeText(failure.Message, MaximumFailureMessageLength)
+        && Enum.IsDefined(failure.Category);
+
+    public static GitOperationFailureKind ToOperationFailure(BranchHistoryFailureCategory category) => category switch
+    {
+        BranchHistoryFailureCategory.RepositoryUnavailable => GitOperationFailureKind.BranchHistoryDataUnavailable,
+        BranchHistoryFailureCategory.DataMalformed => GitOperationFailureKind.BranchHistoryDataMalformed,
+        BranchHistoryFailureCategory.InvalidRequest => GitOperationFailureKind.BranchHistoryInvalidRequest,
+        BranchHistoryFailureCategory.UnsupportedReference => GitOperationFailureKind.BranchHistoryUnsupportedReference,
+        BranchHistoryFailureCategory.ResultLimitExceeded => GitOperationFailureKind.BranchHistoryLimitExceeded,
+        _ => GitOperationFailureKind.BranchHistoryUnknown
+    };
+
+    private static bool IsCommitId(string? value) =>
+        value is not null
+        && value.Length == MaximumCommitIdLength
+        && value.All(Uri.IsHexDigit);
+
+    private static bool IsSafeRefName(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= MaximumBranchNameLength
+        && value.IndexOfAny(['\\', '\0', '\r', '\n', ' ', '\t', '~', '^', ':', '?', '*', '[']) < 0
+        && !value.StartsWith("/", StringComparison.Ordinal)
+        && !value.EndsWith("/", StringComparison.Ordinal)
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.Contains("..", StringComparison.Ordinal)
+        && !value.Contains("@{", StringComparison.Ordinal);
+
+    private static bool IsSafeText(
+        string? value,
+        int maximum,
+        bool allowEmpty = false,
+        bool allowLineFeeds = false) =>
+        value is not null
+        && (allowEmpty || value.Trim().Length > 0)
+        && value.Length <= maximum
+        && value.IndexOf('\0') < 0
+        && value.IndexOf('\r') < 0
+        && (allowLineFeeds || value.IndexOf('\n') < 0);
+}

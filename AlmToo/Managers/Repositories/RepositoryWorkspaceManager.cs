@@ -65,7 +65,94 @@ public sealed class RepositoryWorkspaceManager : IDisposable
                 return false;
             }
 
+            if (!await LoadBranchHistoryCoreAsync(token))
+            {
+                return false;
+            }
+
             return Succeed(open.Message);
+        }, cancellationToken);
+
+    public Task<bool> LoadBranchHistoryAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.LoadBranchHistory, LoadBranchHistoryCoreAsync, cancellationToken);
+
+    public Task<bool> SwitchBranchAsync(string branchName, CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.SwitchBranch, async token =>
+        {
+            if (!RequireRepository())
+            {
+                return false;
+            }
+
+            var request = new CheckoutBranchRequest(branchName?.Trim() ?? string.Empty);
+            if (!BrowserGitBranchHistoryContract.IsValidCheckoutRequest(request))
+            {
+                return FailBranchSwitch(
+                    GitOperationFailureKind.BranchSwitchInvalidRequest,
+                    "Select a valid local branch before switching branches.");
+            }
+
+            if (State.HasUnsavedChanges)
+            {
+                return FailBranchSwitch(
+                    GitOperationFailureKind.BranchSwitchDirtyWorktree,
+                    "Save the edited file before switching branches.");
+            }
+
+            State.IsBranchSwitching = true;
+            State.BranchHistoryWasCancelled = false;
+            NotifyChanged();
+            try
+            {
+                // This read must be fresh and must be the only Accessor mutation before checkout.
+                var status = await gitAccessor.GetStatusAsync(token);
+                if (!status.Succeeded || status.Value is null)
+                {
+                    return FailBranchSwitch(status, "The worktree status could not be verified; no branch switch was attempted.");
+                }
+
+                State.ChangedFiles = status.Value;
+                NotifyChanged();
+                if (State.ChangedFiles.Count > 0)
+                {
+                    return FailBranchSwitch(
+                        GitOperationFailureKind.BranchSwitchDirtyWorktree,
+                        "Commit or discard the changed files before switching branches.");
+                }
+
+                token.ThrowIfCancellationRequested();
+                var checkout = await gitAccessor.CheckoutBranchAsync(request, token);
+                if (!checkout.Succeeded)
+                {
+                    return FailBranchSwitch(checkout, "The branch could not be switched safely. Select another local branch and try again.");
+                }
+
+                token.ThrowIfCancellationRequested();
+                if (!await LoadDirectoryCoreAsync("/", token))
+                {
+                    return FailBranchSwitchFromCurrentError("The switched branch directory could not be refreshed safely.");
+                }
+
+                token.ThrowIfCancellationRequested();
+                if (!await RefreshStatusCoreAsync(token))
+                {
+                    return FailBranchSwitchFromCurrentError("The switched branch status could not be refreshed safely.");
+                }
+
+                token.ThrowIfCancellationRequested();
+                if (!await LoadBranchHistoryCoreAsync(token))
+                {
+                    return false;
+                }
+
+                token.ThrowIfCancellationRequested();
+                return Succeed($"Switched to branch {request.BranchName} and refreshed the workspace.");
+            }
+            finally
+            {
+                State.IsBranchSwitching = false;
+                NotifyChanged();
+            }
         }, cancellationToken);
 
     public Task<bool> LoadDirectoryAsync(string path, CancellationToken cancellationToken = default) =>
@@ -423,6 +510,88 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         return Succeed(result.Message);
     }
 
+    private async Task<bool> LoadBranchHistoryCoreAsync(CancellationToken cancellationToken)
+    {
+        if (!RequireRepository())
+        {
+            return false;
+        }
+
+        State.IsBranchHistoryLoading = true;
+        State.BranchHistoryWasCancelled = false;
+        State.BranchHistoryFailure = null;
+        NotifyChanged();
+
+        try
+        {
+            var branches = await gitAccessor.GetBranchesAsync(cancellationToken);
+            if (!branches.Succeeded || branches.Value is null)
+            {
+                return FailBranchHistory(branches, "Branch information is unavailable. Reopen the repository and try again.");
+            }
+
+            var history = await gitAccessor.GetHistoryAsync(
+                new BranchHistoryRequest(branches.Value.Current?.Name), cancellationToken);
+            if (!history.Succeeded || history.Value is null)
+            {
+                return FailBranchHistory(history, "Recent commit history is unavailable. Reopen the repository and try again.");
+            }
+
+            State.CurrentBranch = branches.Value.Current;
+            State.AvailableBranches = branches.Value.Choices;
+            State.RecentHistory = history.Value;
+            return Succeed("Branch and recent history information was refreshed.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            State.BranchHistoryWasCancelled = true;
+            throw;
+        }
+        finally
+        {
+            State.IsBranchHistoryLoading = false;
+            NotifyChanged();
+        }
+    }
+
+    private bool FailBranchHistory<T>(GitOperationResult<T> result, string fallbackMessage)
+    {
+        var category = result.FailureKind switch
+        {
+            GitOperationFailureKind.BranchHistoryDataUnavailable => BranchHistoryFailureCategory.RepositoryUnavailable,
+            GitOperationFailureKind.BranchHistoryDataMalformed => BranchHistoryFailureCategory.DataMalformed,
+            GitOperationFailureKind.BranchHistoryInvalidRequest => BranchHistoryFailureCategory.InvalidRequest,
+            GitOperationFailureKind.BranchHistoryUnsupportedReference => BranchHistoryFailureCategory.UnsupportedReference,
+            GitOperationFailureKind.BranchHistoryLimitExceeded => BranchHistoryFailureCategory.ResultLimitExceeded,
+            _ => BranchHistoryFailureCategory.Unknown
+        };
+
+        State.BranchHistoryFailure = new(category, fallbackMessage);
+        return Fail(fallbackMessage, result.FailureKind);
+    }
+
+    private bool FailBranchSwitch(GitOperationFailureKind failureKind, string fallbackMessage) =>
+        Fail(GetBranchSwitchFailureMessage(failureKind, fallbackMessage), failureKind);
+
+    private bool FailBranchSwitch(GitOperationResult result, string fallbackMessage) =>
+        FailBranchSwitch(result.FailureKind ?? GitOperationFailureKind.BranchSwitchUnknown, fallbackMessage);
+
+    private bool FailBranchSwitch<T>(GitOperationResult<T> result, string fallbackMessage) =>
+        FailBranchSwitch(result.FailureKind ?? GitOperationFailureKind.BranchSwitchUnknown, fallbackMessage);
+
+    private bool FailBranchSwitchFromCurrentError(string fallbackMessage) =>
+        FailBranchSwitch(State.Error?.FailureKind ?? GitOperationFailureKind.BranchSwitchUnavailable, fallbackMessage);
+
+    private static string GetBranchSwitchFailureMessage(GitOperationFailureKind failureKind, string fallbackMessage) => failureKind switch
+    {
+        GitOperationFailureKind.BranchSwitchInvalidRequest => "Select a valid local branch before switching branches.",
+        GitOperationFailureKind.BranchSwitchDirtyWorktree => "Commit or discard the changed files before switching branches.",
+        GitOperationFailureKind.BranchSwitchUnsupportedReference => "The selected branch is not a supported local branch.",
+        GitOperationFailureKind.BranchSwitchUnavailable => "The repository state is unavailable; no branch switch was completed.",
+        GitOperationFailureKind.NetworkUnavailable => "The repository state could not be reached; no branch switch was completed.",
+        _ => fallbackMessage
+    };
+
     private async Task<bool> RunAsync(
         RepositoryWorkspaceOperation operation,
         Func<CancellationToken, Task<bool>> action,
@@ -536,6 +705,13 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         State.CurrentPath = "/";
         State.ChangedFiles = Array.Empty<ChangedFile>();
         State.CreatedCommit = null;
+        State.CurrentBranch = null;
+        State.AvailableBranches = Array.Empty<BranchChoice>();
+        State.RecentHistory = null;
+        State.IsBranchHistoryLoading = false;
+        State.IsBranchSwitching = false;
+        State.BranchHistoryWasCancelled = false;
+        State.BranchHistoryFailure = null;
         ClearSelection();
         InvalidatePushReview();
     }

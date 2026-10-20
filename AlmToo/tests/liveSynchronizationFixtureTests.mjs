@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 import { readLiveConfiguration } from '../e2e/liveSynchronizationFixture.mjs';
+import {
+  branchHistoryFixture,
+  startBranchHistoryFixture
+} from '../e2e/gitBranchHistoryFixture.mjs';
 
 const safeConfiguration = Object.freeze({
   ALMTOO_LIVE_GITHUB_OWNER: 'fixture-owner',
@@ -69,4 +73,24 @@ test('the committed live-fixture environment template is value-free', async () =
     'ALMTOO_LIVE_GITHUB_PAT=',
     'ALMTOO_LIVE_GITHUB_FILE='
   ]);
+});
+
+test('branch-history fixture seeds bounded divergent branches with isolated tracked state', async () => {
+  const fixture = await startBranchHistoryFixture();
+  try {
+    const snapshot = await fixture.snapshot();
+    assert.deepEqual(fixture.branchNames, [branchHistoryFixture.featureBranch, branchHistoryFixture.mainBranch]);
+    assert.equal(snapshot.branchNames.includes(branchHistoryFixture.featureBranch), true);
+    assert.equal(snapshot.branchNames.includes(branchHistoryFixture.mainBranch), true);
+    assert.equal(snapshot.refs[`heads/${branchHistoryFixture.featureBranch}`], snapshot.commits.featureCommit);
+    assert.equal(snapshot.refs[`heads/${branchHistoryFixture.mainBranch}`], snapshot.commits.mainCommit);
+    assert.notEqual(snapshot.commits.featureCommit, snapshot.commits.mainCommit);
+    assert.notEqual(snapshot.commits.featureCommit, snapshot.commits.baseCommit);
+    assert.notEqual(snapshot.commits.mainCommit, snapshot.commits.baseCommit);
+    assert.equal(snapshot.requestCount, 0);
+    assert.equal(fixture.credentials.password, 'fixture-password');
+    assert.equal(fixture.trackedFile, branchHistoryFixture.trackedFile);
+  } finally {
+    await fixture.close();
+  }
 });

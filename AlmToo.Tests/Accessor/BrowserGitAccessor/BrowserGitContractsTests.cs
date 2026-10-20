@@ -138,6 +138,81 @@ public sealed class BrowserGitContractsTests
     }
 
     [Fact]
+    public void Branch_snapshot_contract_accepts_current_empty_and_bounded_choices()
+    {
+        var emptyRepository = new BranchSnapshot(null, [], 0);
+        var snapshot = new BranchSnapshot(
+            new CurrentBranch("main", IsDetached: false),
+            [
+                new BranchChoice("main", BranchChoiceKind.Local, IsCurrent: true),
+                new BranchChoice("origin/main", BranchChoiceKind.RemoteTracking)
+            ],
+            2);
+
+        Assert.True(BrowserGitBranchHistoryContract.IsValidSnapshot(emptyRepository));
+        Assert.True(BrowserGitBranchHistoryContract.IsValidSnapshot(snapshot));
+        Assert.Equal(BrowserGitBranchHistoryOperations.ListBranches, "git.branch.list");
+        Assert.DoesNotContain(snapshot.GetType().GetProperties(), property =>
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Branch_and_history_contracts_reject_malformed_oversized_and_unsafe_values()
+    {
+        var unsafeBranch = new BranchChoice("feature..unsafe", BranchChoiceKind.Local);
+        var oversizedBranches = new BranchSnapshot(
+            new CurrentBranch("main", IsDetached: false),
+            Enumerable.Range(0, BrowserGitBranchHistoryContract.MaximumBranches + 1)
+                .Select(index => new BranchChoice($"branch-{index}", BranchChoiceKind.Local))
+                .ToArray(),
+            BrowserGitBranchHistoryContract.MaximumBranches + 1);
+        var invalidRequest = new BranchHistoryRequest("feature\nunsafe", BrowserGitBranchHistoryContract.DefaultHistoryLimit);
+        var malformedCommit = new CommitHistoryEntry(
+            new string('g', BrowserGitBranchHistoryContract.MaximumCommitIdLength),
+            null,
+            "message",
+            "Author",
+            DateTimeOffset.UtcNow);
+
+        Assert.False(BrowserGitBranchHistoryContract.IsValidBranchChoice(unsafeBranch));
+        Assert.False(BrowserGitBranchHistoryContract.IsValidSnapshot(oversizedBranches));
+        Assert.False(BrowserGitBranchHistoryContract.IsValidRequest(invalidRequest));
+        Assert.False(BrowserGitBranchHistoryContract.IsValidCommitHistoryEntry(malformedCommit));
+        Assert.False(BrowserGitBranchHistoryContract.IsValidCurrentBranch(new CurrentBranch(
+            new string('x', BrowserGitBranchHistoryContract.MaximumBranchNameLength + 1),
+            IsDetached: false)));
+    }
+
+    [Fact]
+    public void History_contract_accepts_bounded_entries_and_exposes_categorized_safe_failures()
+    {
+        var history = new CommitHistory(
+            "main",
+            [new CommitHistoryEntry(
+                new string('a', 40),
+                null,
+                "Initial commit",
+                "Example Author",
+                DateTimeOffset.Parse("2026-09-28T12:00:00Z"))],
+            1);
+        var failure = new BranchHistoryFailure(
+            BranchHistoryFailureCategory.DataMalformed,
+            "The browser returned malformed commit metadata.");
+
+        Assert.True(BrowserGitBranchHistoryContract.IsValidHistory(history));
+        Assert.True(BrowserGitBranchHistoryContract.IsValidFailure(failure));
+        Assert.Equal(
+            GitOperationFailureKind.BranchHistoryDataMalformed,
+            BrowserGitBranchHistoryContract.ToOperationFailure(failure.Category));
+        Assert.False(BrowserGitBranchHistoryContract.IsValidFailure(new BranchHistoryFailure(
+            failure.Category,
+            new string('x', BrowserGitBranchHistoryContract.MaximumFailureMessageLength + 1))));
+        Assert.DoesNotContain("token", JsonSerializer.Serialize(failure), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("diagnostic", JsonSerializer.Serialize(failure), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Local_commit_contract_bounds_metadata_and_never_models_credentials_or_push()
     {
         var request = new CommitRequest("Review local changes", "Example Author", "author@example.test");

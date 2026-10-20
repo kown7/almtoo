@@ -128,6 +128,88 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         return new GitOperationResult<UpdateFilesResult>(operation, true, "The browser-local files were updated.", new(validated.Select(update => update.Path).ToArray()));
     }
 
+    public async ValueTask<GitOperationResult<BranchSnapshot>> GetBranchesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = BrowserGitBranchHistoryOperations.ListBranches;
+        var result = await InvokeWithValueAsync<BranchSnapshotDto, BranchSnapshot>(
+            operation,
+            "getBranches",
+            value => value.ToContract(),
+            cancellationToken);
+
+        if (!result.Succeeded || result.Value is null)
+        {
+            return result;
+        }
+
+        return BrowserGitBranchHistoryContract.IsValidSnapshot(result.Value)
+            ? result
+            : new GitOperationResult<BranchSnapshot>(
+                operation,
+                false,
+                "Branch data could not be read safely.",
+                Value: default,
+                Diagnostic: null,
+                FailureKind: GitOperationFailureKind.BranchHistoryDataMalformed);
+    }
+
+    public async ValueTask<GitOperationResult> CheckoutBranchAsync(
+        CheckoutBranchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = BrowserGitBranchHistoryOperations.CheckoutBranch;
+        if (!BrowserGitBranchHistoryContract.IsValidCheckoutRequest(request))
+        {
+            return new GitOperationResult(
+                operation,
+                false,
+                "The branch selection is not valid.",
+                FailureKind: GitOperationFailureKind.BranchSwitchInvalidRequest);
+        }
+
+        return await InvokeAsync(operation, "checkoutBranch", cancellationToken, request);
+    }
+
+    public async ValueTask<GitOperationResult<CommitHistory>> GetHistoryAsync(
+        BranchHistoryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = BrowserGitBranchHistoryOperations.ReadHistory;
+        if (!BrowserGitBranchHistoryContract.IsValidRequest(request))
+        {
+            return new GitOperationResult<CommitHistory>(
+                operation,
+                false,
+                "The branch history request is not valid.",
+                Value: default,
+                Diagnostic: null,
+                FailureKind: GitOperationFailureKind.BranchHistoryInvalidRequest);
+        }
+
+        var result = await InvokeWithValueAsync<CommitHistoryDto, CommitHistory>(
+            operation,
+            "getHistory",
+            value => value.ToContract(),
+            cancellationToken,
+            request);
+
+        if (!result.Succeeded || result.Value is null)
+        {
+            return result;
+        }
+
+        return BrowserGitBranchHistoryContract.IsValidHistory(result.Value)
+            ? result
+            : new GitOperationResult<CommitHistory>(
+                operation,
+                false,
+                "Commit history could not be read safely.",
+                Value: default,
+                Diagnostic: null,
+                FailureKind: GitOperationFailureKind.BranchHistoryDataMalformed);
+    }
+
     public async ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(
         CancellationToken cancellationToken = default)
     {
@@ -651,6 +733,11 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         "gitBugWriteUnavailable" => GitOperationFailureKind.GitBugWriteUnavailable,
         "gitBugWriteSerializationFailed" => GitOperationFailureKind.GitBugWriteSerializationFailed,
         "gitBugWriteUnknown" => GitOperationFailureKind.GitBugWriteUnknown,
+        "branchSwitchInvalidRequest" => GitOperationFailureKind.BranchSwitchInvalidRequest,
+        "branchSwitchDirtyWorktree" => GitOperationFailureKind.BranchSwitchDirtyWorktree,
+        "branchSwitchUnsupportedReference" => GitOperationFailureKind.BranchSwitchUnsupportedReference,
+        "branchSwitchUnavailable" => GitOperationFailureKind.BranchSwitchUnavailable,
+        "branchSwitchUnknown" => GitOperationFailureKind.BranchSwitchUnknown,
         "unknown" => GitOperationFailureKind.Unknown,
         _ => null
     };
@@ -848,6 +935,90 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             byteCount = 0;
             return false;
         }
+    }
+
+    private sealed record BranchSnapshotDto
+    {
+        [JsonPropertyName("current")]
+        public CurrentBranchDto? Current { get; init; }
+
+        [JsonPropertyName("choices")]
+        public List<BranchChoiceDto> Choices { get; init; } = [];
+
+        [JsonPropertyName("boundedResultCount")]
+        public int BoundedResultCount { get; init; }
+
+        public BranchSnapshot ToContract() => new(
+            Current?.ToContract(),
+            Choices.Select(choice => choice.ToContract()).ToArray(),
+            BoundedResultCount);
+    }
+
+    private sealed record CurrentBranchDto
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; init; }
+
+        [JsonPropertyName("isDetached")]
+        public bool IsDetached { get; init; }
+
+        public CurrentBranch ToContract() => new(Name, IsDetached);
+    }
+
+    private sealed record BranchChoiceDto
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; init; } = string.Empty;
+
+        [JsonPropertyName("kind")]
+        public BranchChoiceKind Kind { get; init; }
+
+        [JsonPropertyName("isCurrent")]
+        public bool IsCurrent { get; init; }
+
+        public BranchChoice ToContract() => new(Name, Kind, IsCurrent);
+    }
+
+    private sealed record CommitHistoryDto
+    {
+        [JsonPropertyName("branchName")]
+        public string? BranchName { get; init; }
+
+        [JsonPropertyName("entries")]
+        public List<CommitHistoryEntryDto> Entries { get; init; } = [];
+
+        [JsonPropertyName("boundedResultCount")]
+        public int BoundedResultCount { get; init; }
+
+        public CommitHistory ToContract() => new(
+            BranchName,
+            Entries.Select(entry => entry.ToContract()).ToArray(),
+            BoundedResultCount);
+    }
+
+    private sealed record CommitHistoryEntryDto
+    {
+        [JsonPropertyName("commitId")]
+        public string CommitId { get; init; } = string.Empty;
+
+        [JsonPropertyName("parentCommitId")]
+        public string? ParentCommitId { get; init; }
+
+        [JsonPropertyName("message")]
+        public string Message { get; init; } = string.Empty;
+
+        [JsonPropertyName("authorName")]
+        public string AuthorName { get; init; } = string.Empty;
+
+        [JsonPropertyName("authoredAt")]
+        public DateTimeOffset AuthoredAt { get; init; }
+
+        public CommitHistoryEntry ToContract() => new(
+            CommitId,
+            ParentCommitId,
+            Message,
+            AuthorName,
+            AuthoredAt);
     }
 
     private sealed record BrowserGitResponse<TValue>
