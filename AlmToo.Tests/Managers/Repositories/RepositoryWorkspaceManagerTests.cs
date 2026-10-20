@@ -433,6 +433,20 @@ public sealed class RepositoryWorkspaceManagerTests
             return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Status refreshed.", [new("/README.md", GitChangeKind.Modified)]);
         }
 
+        public ValueTask<GitOperationResult<BranchSnapshot>> GetBranchesAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(new GitOperationResult<BranchSnapshot>(
+                BrowserGitBranchHistoryOperations.ListBranches,
+                true,
+                "No branches loaded in this test double.",
+                new BranchSnapshot(null, [], 0)));
+
+        public ValueTask<GitOperationResult<CommitHistory>> GetHistoryAsync(BranchHistoryRequest request, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(new GitOperationResult<CommitHistory>(
+                BrowserGitBranchHistoryOperations.ReadHistory,
+                true,
+                "No history loaded in this test double.",
+                new CommitHistory(request.BranchName, [], 0)));
+
         public ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default)
         {
             Calls.Add("commit");
