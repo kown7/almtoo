@@ -273,3 +273,13 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M012 S03 T01 branch and history Client implementation review
+
+- [x] `RepositoryBranchSelector.razor`, `RepositoryCommitHistory.razor`, and the branch/history section of `Pages/Home.razor` remain **Client** components: they render passive `RepositoryWorkspaceState`, expose accessible controls, and emit explicit refresh and branch-switch callbacks only.
+- [x] The new Razor components reference no `IBrowserGitAccessor`, `IJSRuntime`, browser Resource, raw diagnostic, or Accessor namespace; all branch eligibility, dirty-worktree rejection, refresh sequencing, cancellation, and safe failure mapping remain owned by `RepositoryWorkspaceManager`.
+- [x] Existing file, edit, commit, push, and synchronization Client boundaries remain unchanged. Home adds only concrete Manager callback adapters and does not introduce a new service, Engine, or interface.
+- [x] Loading, empty, dirty-worktree guidance, retry, bounded history count, keyboard-operable select/buttons, disabled busy states, and polite/assertive live regions are rendered at the Client boundary without exposing transport or Git diagnostics.
+- [x] No architectural exception is required.
+
+**Result:** PASS

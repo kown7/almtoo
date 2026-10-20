@@ -1,0 +1,128 @@
+.repository-commit-history {
+    border: 1px solid #dbe3ef;
+    border-radius: 1rem;
+    background: #ffffff;
+    box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.08);
+    display: grid;
+    gap: 1rem;
+    padding: 1.25rem;
+}
+
+.repository-commit-history__header {
+    align-items: start;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.repository-commit-history h2 {
+    margin: 0;
+}
+
+.repository-commit-history__count {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    color: #1d4ed8;
+    font-size: 0.9rem;
+    font-weight: 700;
+    padding: 0.35rem 0.7rem;
+    white-space: nowrap;
+}
+
+.repository-commit-history__list {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.8rem;
+    display: grid;
+    gap: 0;
+    list-style: none;
+    margin: 0;
+    overflow: hidden;
+    padding: 0;
+}
+
+.repository-commit-history__item {
+    display: grid;
+    gap: 0.45rem;
+    padding: 1rem;
+}
+
+.repository-commit-history__item + .repository-commit-history__item {
+    border-top: 1px solid #e2e8f0;
+}
+
+.repository-commit-history__summary,
+.repository-commit-history__metadata {
+    align-items: baseline;
+    display: flex;
+    gap: 0.75rem;
+    justify-content: space-between;
+}
+
+.repository-commit-history__summary strong {
+    color: #0f172a;
+    overflow-wrap: anywhere;
+}
+
+.repository-commit-history__sha {
+    color: #475569;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.repository-commit-history__metadata,
+.repository-commit-history__bounded {
+    color: #64748b;
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+.repository-commit-history__metadata time {
+    text-align: right;
+}
+
+.repository-commit-history__empty {
+    color: #475569;
+    margin: 0;
+}
+
+.repository-commit-history__feedback {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.repository-commit-history__feedback .status-message {
+    margin: 0;
+}
+
+.repository-commit-history .secondary-action {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 0.6rem;
+    color: #1d4ed8;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 700;
+    justify-self: start;
+    padding: 0.5rem 0.8rem;
+}
+
+.repository-commit-history .secondary-action:disabled {
+    color: #64748b;
+    cursor: not-allowed;
+    opacity: 0.75;
+}
+
+@media (max-width: 42rem) {
+    .repository-commit-history__header,
+    .repository-commit-history__summary,
+    .repository-commit-history__metadata {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .repository-commit-history__metadata time {
+        text-align: left;
+    }
+}
