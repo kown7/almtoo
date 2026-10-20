@@ -263,3 +263,13 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M012 S02 T02 safe branch switching implementation review
+
+- [x] `RepositoryWorkspaceManager` remains the **Manager**: it validates local branch intent, performs a fresh status read, rejects dirty or unavailable worktrees before checkout, fences stale cancellation before checkout and refresh, and publishes safe passive outcomes.
+- [x] `IBrowserGitAccessor.CheckoutBranchAsync` remains the existing **Accessor** platform seam; the Manager does not call JavaScript, browser storage, Git commands, or another Manager. The typed method is justified by the browser Git substitution boundary and test seam.
+- [x] Directory, status, branch, and history refreshes remain Accessor calls coordinated by the Manager; `RepositoryWorkspaceState` carries only passive repository metadata, stable failure kinds, cancellation, and loading/switching flags.
+- [x] Negative workflow tests prove dirty rejection, unavailable status, cancellation, stale clean-read cancellation, and safe diagnostic suppression; the focused .NET Manager suite passes 23/23.
+- [x] No architectural exception is required.
+
+**Result:** PASS

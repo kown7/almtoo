@@ -39,6 +39,11 @@ public enum GitOperationFailureKind
     BranchHistoryUnsupportedReference,
     BranchHistoryLimitExceeded,
     BranchHistoryUnknown,
+    BranchSwitchInvalidRequest,
+    BranchSwitchDirtyWorktree,
+    BranchSwitchUnsupportedReference,
+    BranchSwitchUnavailable,
+    BranchSwitchUnknown,
     Unknown
 }
 
@@ -369,10 +374,11 @@ public record SynchronizationFailure(
     SynchronizationFailureCategory Category,
     string Message);
 
-/// <summary>Stable operation names for bounded, read-only branch and history reads.</summary>
+/// <summary>Stable operation names for bounded branch reads and safe local branch switching.</summary>
 public static class BrowserGitBranchHistoryOperations
 {
     public const string ListBranches = "git.branch.list";
+    public const string CheckoutBranch = "git.branch.checkout";
     public const string ReadHistory = "git.history.read";
 }
 
@@ -393,6 +399,9 @@ public sealed record BranchSnapshot(
     CurrentBranch? Current,
     IReadOnlyList<BranchChoice> Choices,
     int BoundedResultCount);
+
+/// <summary>Bounded input for a safe local branch checkout request.</summary>
+public sealed record CheckoutBranchRequest(string BranchName);
 
 /// <summary>Bounded input for a read-only history request.</summary>
 public sealed record BranchHistoryRequest(string? BranchName = null, int Limit = BrowserGitBranchHistoryContract.DefaultHistoryLimit);
@@ -440,6 +449,7 @@ public static class BrowserGitBranchHistoryContract
 
     public static bool IsValidOperation(string? operation) => operation is
         BrowserGitBranchHistoryOperations.ListBranches or
+        BrowserGitBranchHistoryOperations.CheckoutBranch or
         BrowserGitBranchHistoryOperations.ReadHistory;
 
     public static bool IsValidFailure(GitOperationFailureKind kind) => kind is
@@ -448,7 +458,12 @@ public static class BrowserGitBranchHistoryContract
         GitOperationFailureKind.BranchHistoryInvalidRequest or
         GitOperationFailureKind.BranchHistoryUnsupportedReference or
         GitOperationFailureKind.BranchHistoryLimitExceeded or
-        GitOperationFailureKind.BranchHistoryUnknown;
+        GitOperationFailureKind.BranchHistoryUnknown or
+        GitOperationFailureKind.BranchSwitchInvalidRequest or
+        GitOperationFailureKind.BranchSwitchDirtyWorktree or
+        GitOperationFailureKind.BranchSwitchUnsupportedReference or
+        GitOperationFailureKind.BranchSwitchUnavailable or
+        GitOperationFailureKind.BranchSwitchUnknown;
 
     public static bool IsValidCurrentBranch(CurrentBranch? branch) =>
         branch is not null
@@ -468,6 +483,9 @@ public static class BrowserGitBranchHistoryContract
         && snapshot.Choices.Select(choice => choice.Name)
             .Distinct(StringComparer.Ordinal)
             .Count() == snapshot.Choices.Count;
+
+    public static bool IsValidCheckoutRequest(CheckoutBranchRequest? request) =>
+        request is not null && IsSafeRefName(request.BranchName);
 
     public static bool IsValidRequest(BranchHistoryRequest? request) =>
         request is not null

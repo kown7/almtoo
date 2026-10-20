@@ -12,6 +12,7 @@ public enum RepositoryWorkspaceOperation
     SaveFile,
     RefreshStatus,
     LoadBranchHistory,
+    SwitchBranch,
     Commit,
     InspectPush,
     StoreCredential,

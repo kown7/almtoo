@@ -154,6 +154,23 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 FailureKind: GitOperationFailureKind.BranchHistoryDataMalformed);
     }
 
+    public async ValueTask<GitOperationResult> CheckoutBranchAsync(
+        CheckoutBranchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = BrowserGitBranchHistoryOperations.CheckoutBranch;
+        if (!BrowserGitBranchHistoryContract.IsValidCheckoutRequest(request))
+        {
+            return new GitOperationResult(
+                operation,
+                false,
+                "The branch selection is not valid.",
+                FailureKind: GitOperationFailureKind.BranchSwitchInvalidRequest);
+        }
+
+        return await InvokeAsync(operation, "checkoutBranch", cancellationToken, request);
+    }
+
     public async ValueTask<GitOperationResult<CommitHistory>> GetHistoryAsync(
         BranchHistoryRequest request,
         CancellationToken cancellationToken = default)
@@ -716,6 +733,11 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
         "gitBugWriteUnavailable" => GitOperationFailureKind.GitBugWriteUnavailable,
         "gitBugWriteSerializationFailed" => GitOperationFailureKind.GitBugWriteSerializationFailed,
         "gitBugWriteUnknown" => GitOperationFailureKind.GitBugWriteUnknown,
+        "branchSwitchInvalidRequest" => GitOperationFailureKind.BranchSwitchInvalidRequest,
+        "branchSwitchDirtyWorktree" => GitOperationFailureKind.BranchSwitchDirtyWorktree,
+        "branchSwitchUnsupportedReference" => GitOperationFailureKind.BranchSwitchUnsupportedReference,
+        "branchSwitchUnavailable" => GitOperationFailureKind.BranchSwitchUnavailable,
+        "branchSwitchUnknown" => GitOperationFailureKind.BranchSwitchUnknown,
         "unknown" => GitOperationFailureKind.Unknown,
         _ => null
     };

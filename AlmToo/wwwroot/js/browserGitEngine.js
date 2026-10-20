@@ -416,6 +416,63 @@ export async function getBranches() {
   }
 }
 
+export async function checkoutBranch(request) {
+  const operation = 'git.branch.checkout';
+
+  try {
+    const branchName = request?.branchName;
+    if (!isSafeBranchName(branchName)) {
+      return failureWithKind(operation, 'The branch selection is not valid.', 'branchSwitchInvalidRequest');
+    }
+
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    const matrix = await git.statusMatrix({ fs, dir });
+    const hasChanges = matrix.some(([, head, workdir, stage]) => mapChangeKind(head, workdir, stage) !== null);
+    if (hasChanges) {
+      return failureWithKind(
+        operation,
+        'The branch could not be switched because the browser-local worktree has uncommitted changes.',
+        'branchSwitchDirtyWorktree');
+    }
+
+    const localBranches = await git.listBranches({ fs, dir });
+    if (!Array.isArray(localBranches) || !localBranches.includes(branchName)) {
+      return failureWithKind(
+        operation,
+        'The requested local branch is not available for checkout.',
+        'branchSwitchUnsupportedReference');
+    }
+
+    const currentName = await git.currentBranch({ fs, dir, fullname: false });
+    if (currentName !== branchName) {
+      await git.checkout({ fs, dir, ref: branchName });
+    }
+
+    const checkedOutName = await git.currentBranch({ fs, dir, fullname: false });
+    if (checkedOutName !== branchName) {
+      return failureWithKind(
+        operation,
+        'The browser-local repository did not confirm the requested branch.',
+        'branchSwitchUnknown');
+    }
+
+    await persistFilesystem(fs);
+    return success(operation, 'Switched the browser-local repository branch.');
+  } catch (error) {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    const diagnostic = getDiagnostic(error);
+    const failureKind = /NotFoundError|ResolveRefError|NoRefFound/i.test(code)
+      ? 'branchSwitchUnsupportedReference'
+      : 'branchSwitchUnavailable';
+    return failureWithKind(
+      operation,
+      'The browser-local repository branch could not be switched.',
+      failureKind,
+      diagnostic);
+  }
+}
+
 function isUnsupportedHistoryReference(error) {
   const code = typeof error?.code === 'string' ? error.code : '';
   const diagnostic = getDiagnostic(error);

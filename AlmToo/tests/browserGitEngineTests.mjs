@@ -126,6 +126,68 @@ async function openFakeRepository({ gitOverrides = {}, fsOverrides = {} } = {}) 
   return engine;
 }
 
+test('checkoutBranch rejects a dirty worktree before invoking checkout', async () => {
+  let checkoutCalls = 0;
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async currentBranch() {
+        return 'main';
+      },
+      async listBranches() {
+        return ['feature', 'main'];
+      },
+      async statusMatrix() {
+        return [['README.md', 1, 2, 1]];
+      },
+      async checkout() {
+        checkoutCalls += 1;
+      }
+    }
+  });
+
+  const result = await engine.checkoutBranch({ branchName: 'feature' });
+
+  assert.equal(result.succeeded, false);
+  assert.equal(result.failureKind, 'branchSwitchDirtyWorktree');
+  assert.equal(checkoutCalls, 0);
+});
+
+test('checkoutBranch switches a clean local branch and confirms the target', async () => {
+  let currentBranch = 'main';
+  let checkoutCalls = 0;
+  let flushCalls = 0;
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async currentBranch() {
+        return currentBranch;
+      },
+      async listBranches() {
+        return ['feature', 'main'];
+      },
+      async statusMatrix() {
+        return [];
+      },
+      async checkout({ ref }) {
+        checkoutCalls += 1;
+        currentBranch = ref;
+      }
+    },
+    fsOverrides: {
+      async flush() {
+        flushCalls += 1;
+      }
+    }
+  });
+
+  const result = await engine.checkoutBranch({ branchName: 'feature' });
+
+  assert.equal(result.succeeded, true);
+  assert.equal(result.operation, 'git.branch.checkout');
+  assert.equal(checkoutCalls, 1);
+  assert.equal(flushCalls, 1);
+  assert.equal(currentBranch, 'feature');
+});
+
 async function runPushFailure(error, token = 'github_pat_test-sentinel') {
   resetBrowserGlobals();
   installLoadingDocument();
