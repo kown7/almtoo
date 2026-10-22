@@ -235,4 +235,78 @@ public sealed class BrowserGitContractsTests
                 property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
         }
     }
+
+    [Fact]
+    public void Publication_contract_accepts_branch_and_git_bug_updates_with_bounded_safe_metadata()
+    {
+        var head = new string('a', 40);
+        var bugObject = new string('b', 40);
+        var identityObject = new string('c', 40);
+        var updates = new GitRefUpdate[]
+        {
+            new("refs/heads/main", GitRefNamespace.Branch, GitRefUpdateKind.Update, head, head),
+            new("refs/bugs/issue-1", GitRefNamespace.GitBug, GitRefUpdateKind.Create, bugObject),
+            new("refs/identities/author-1", GitRefNamespace.GitBug, GitRefUpdateKind.Update, identityObject, identityObject)
+        };
+        var preconditions = new GitRemotePrecondition[]
+        {
+            new("refs/heads/main", head),
+            new("refs/bugs/issue-1", null),
+            new("refs/identities/author-1", identityObject)
+        };
+        var review = new GitPublicationReview(
+            "https://github.com/example/project.git",
+            "main",
+            updates,
+            preconditions,
+            updates.Length);
+        var request = new GitPublicationRequest(review.RepositoryUrl, review.Branch, updates, preconditions);
+
+        Assert.True(BrowserGitPublicationContract.IsValidReview(review));
+        Assert.True(BrowserGitPublicationContract.IsValidRequest(request));
+        Assert.Equal(updates.Length, review.BoundedUpdateCount);
+        Assert.Equal(GitRefUpdateKind.Update, updates[0].Kind);
+        Assert.DoesNotContain(typeof(GitPublicationRequest).GetProperties(), property =>
+            property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Publication_contract_rejects_unsupported_namespaces_deletes_malformed_refs_and_unbounded_sets()
+    {
+        var objectId = new string('a', 40);
+        var validUpdate = new GitRefUpdate("refs/bugs/issue-1", GitRefNamespace.GitBug, GitRefUpdateKind.Create, objectId);
+        var validPrecondition = new GitRemotePrecondition(validUpdate.RefName, null);
+        var baseRequest = new GitPublicationRequest(
+            "https://github.com/example/project.git",
+            "main",
+            [validUpdate],
+            [validPrecondition]);
+
+        Assert.False(BrowserGitPublicationContract.IsValidUpdate(
+            new GitRefUpdate("refs/tags/v1", GitRefNamespace.Branch, GitRefUpdateKind.Update, objectId)));
+        Assert.False(BrowserGitPublicationContract.IsValidUpdate(
+            new GitRefUpdate("refs/bugs/issue-1", GitRefNamespace.GitBug, GitRefUpdateKind.Delete, objectId)));
+        Assert.False(BrowserGitPublicationContract.IsValidUpdate(
+            new GitRefUpdate("refs/bugs/issue\n1", GitRefNamespace.GitBug, GitRefUpdateKind.Create, objectId)));
+        Assert.False(BrowserGitPublicationContract.IsValidUpdate(
+            new GitRefUpdate("refs/bugs/issue-1", GitRefNamespace.GitBug, GitRefUpdateKind.Create, "not-an-object")));
+        Assert.False(BrowserGitPublicationContract.IsValidRemotePrecondition(
+            new GitRemotePrecondition("refs/tags/v1\n", null)));
+        Assert.False(BrowserGitPublicationContract.IsValidRequest(baseRequest with
+        {
+            Updates = [validUpdate, validUpdate]
+        }));
+        Assert.False(BrowserGitPublicationContract.IsValidRequest(baseRequest with
+        {
+            Updates = Enumerable.Repeat(validUpdate, BrowserGitPublicationContract.MaximumUpdates + 1).ToArray()
+        }));
+        Assert.False(BrowserGitPublicationContract.IsValidReview(new GitPublicationReview(
+            baseRequest.RepositoryUrl,
+            baseRequest.Branch,
+            [validUpdate],
+            [validPrecondition],
+            BoundedUpdateCount: 2)));
+    }
 }

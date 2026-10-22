@@ -122,3 +122,37 @@ test('Accessor normalizes cancellation, interop failures, initialization, and pa
   assert.match(service, /moduleTask is \{ IsCompletedSuccessfully: true \}/);
   assert.match(service, /credentialModuleTask is \{ IsCompletedSuccessfully: true \}/);
 });
+
+test('publication contracts allow only reviewed branch and Git-Bug refs with bounded preconditions', async () => {
+  const [facet, contracts, service, engine] = await Promise.all([
+    source('Accessor/BrowserGitAccessor/Interface/IGitPublicationAccessor.cs'),
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'),
+    source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
+    source('wwwroot/js/browserGitEngine.js')
+  ]);
+
+  assert.match(facet, /interface IGitPublicationAccessor/);
+  assert.match(facet, /InspectPublicationAsync/);
+  assert.match(facet, /PublishAsync\(\s*GitPublicationRequest request/);
+  for (const record of ['GitRefUpdate', 'GitRemotePrecondition', 'GitPublicationRequest', 'GitPublicationReview', 'GitPublicationReceipt']) {
+    assert.match(contracts, new RegExp(`record ${record}\\b`));
+  }
+  assert.match(contracts, /enum GitRefNamespace/);
+  assert.match(contracts, /Branch/);
+  assert.match(contracts, /GitBug/);
+  assert.match(contracts, /MaximumUpdates = 100/);
+  assert.match(contracts, /MaximumRemotePreconditions = 100/);
+  assert.match(contracts, /update\.Kind is GitRefUpdateKind\.Create or GitRefUpdateKind\.Update/);
+  assert.match(contracts, /HasUniqueRefs\(request\.Updates\.Select\(update => update\.RefName\)\)/);
+  assert.match(contracts, /BoundedUpdateCount == review\.Updates\.Count/);
+  assert.match(service, /BrowserGitPublicationContract\.IsValidReview/);
+  assert.match(service, /BrowserGitPublicationContract\.IsValidRequest/);
+  assert.match(service, /FailureKind: GitOperationFailureKind\.UnsupportedRef/);
+  assert.match(engine, /refs\/heads\//);
+  assert.match(engine, /refs\/bugs\//);
+  assert.match(engine, /refs\/identities\//);
+  assert.match(engine, /const refspecs = reviewed\.updates\.map/);
+  assert.match(engine, /remoteAhead/);
+  assert.match(engine, /networkUnavailable/);
+  assert.match(engine, /diagnostic: null/);
+});

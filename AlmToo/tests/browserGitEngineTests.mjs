@@ -1684,3 +1684,68 @@ test('getHistory rejects invalid requests, malformed commits, and oversized resu
   assert.equal(oversizedResult.succeeded, false);
   assert.equal(oversizedResult.failureKind, 'branchHistoryLimitExceeded');
 });
+
+test('publish rejects deletion and malformed refs with bounded redacted failures', async () => {
+  resetBrowserGlobals();
+  const engine = await importFreshModule();
+  const baseReview = {
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    branch: 'main',
+    outgoingCommitId: 'a'.repeat(40),
+    destinationRef: 'refs/heads/main',
+    remotePreconditions: [],
+    boundedUpdateCount: 1
+  };
+  const cases = [
+    {
+      name: 'deletion',
+      update: {
+        refName: 'refs/bugs/issue-1',
+        namespace: 'GitBug',
+        kind: 'Delete',
+        newObjectId: 'b'.repeat(40),
+        expectedOldObjectId: null
+      },
+      failureKind: 'gitBugDataMalformed'
+    },
+    {
+      name: 'unsupported namespace',
+      update: {
+        refName: 'refs/tags/v1',
+        namespace: 'Branch',
+        kind: 'Update',
+        newObjectId: 'b'.repeat(40),
+        expectedOldObjectId: null
+      },
+      failureKind: 'gitBugDataMalformed'
+    }
+  ];
+
+  for (const scenario of cases) {
+    const result = await engine.publish({
+      ...baseReview,
+      updates: [scenario.update]
+    }, 'secret-token');
+    assert.equal(result.succeeded, false, scenario.name);
+    assert.equal(result.failureKind, scenario.failureKind, scenario.name);
+    assert.equal(result.value, null, scenario.name);
+    assert.equal(result.diagnostic, null, scenario.name);
+    const serialized = JSON.stringify(result);
+    assert.equal(serialized.includes('secret-token'), false, scenario.name);
+    assert.equal(serialized.includes('refs/bugs/'), false, scenario.name);
+    assert.equal(serialized.includes('refs/tags/'), false, scenario.name);
+  }
+});
+
+test('publication source keeps branch and Git-Bug namespaces bounded and pushes explicit reviewed refspecs', async () => {
+  const moduleSource = await readFile(moduleUrl, 'utf8');
+  assert.ok(moduleSource.includes('refs/heads/'));
+  assert.ok(moduleSource.includes('refs/bugs/'));
+  assert.ok(moduleSource.includes('refs/identities/'));
+  assert.match(moduleSource, /maximumUpdates/);
+  assert.match(moduleSource, /maximumRemotePreconditions/);
+  assert.ok(moduleSource.includes('const refspecs = reviewed.updates.map(update => `${update.refName}:${update.refName}`)'));
+  assert.ok(moduleSource.includes('publishedRefs: reviewed.updates.map(update => update.refName)'));
+  assert.ok(moduleSource.includes('publication-network-unavailable'));
+  assert.ok(moduleSource.includes('publication-remote-malformed'));
+});
