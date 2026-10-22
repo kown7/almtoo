@@ -2,10 +2,16 @@
 
 <section class="changed-files" aria-labelledby="changed-files-heading">
     <div class="changed-files__header">
-        <div><p class="helper-text">Working tree</p><h2 id="changed-files-heading">Changed files</h2></div>
-        <button class="changed-files__refresh" type="button" @onclick="OnRefreshRequested" disabled="@State.IsBusy">
-            @(IsLoading ? "Refreshing..." : "Refresh")
-        </button>
+        <div>
+            <p class="helper-text">@(ReviewMode ? "Publication review" : "Working tree")</p>
+            <h2 id="changed-files-heading">@(ReviewMode ? "Changed files and refs" : "Changed files")</h2>
+        </div>
+        @if (!ReviewMode)
+        {
+            <button class="changed-files__refresh" type="button" @onclick="OnRefreshRequested" disabled="@State.IsBusy">
+                @(IsLoading ? "Refreshing..." : "Refresh")
+            </button>
+        }
     </div>
 
     @if (IsLoading)
@@ -17,35 +23,73 @@
         <p class="@MessageCssClass" role="status" aria-live="polite">@StatusResult.Message</p>
     }
 
-    @if (!IsLoading && State.ChangedFiles.Count == 0 && StatusResult is null)
+    @if (ReviewMode && !State.CommitReviewLoaded)
+    {
+        <button class="changed-files__review" type="button" @onclick="OnReviewRequested" disabled="@State.IsBusy">
+            @(IsLoading ? "Loading changed files…" : "Review changed files")
+        </button>
+    }
+    else if (!IsLoading && State.ChangedFiles.Count == 0 && StatusResult is null)
     {
         <p class="changed-files__empty">No changed files detected.</p>
     }
     else if (!IsLoading && State.ChangedFiles.Count == 0 && StatusResult?.Succeeded == true)
     {
-        <p class="changed-files__empty">Working tree is clean.</p>
+        <p class="changed-files__empty">@(ReviewMode ? "No changed files detected." : "Working tree is clean.")</p>
     }
     else if (State.ChangedFiles.Count > 0)
     {
-        <ul class="changed-files__list" aria-label="Changed file list">
-            @foreach (var file in State.ChangedFiles)
+        <section class="changed-files__review" aria-labelledby="changed-files-list-heading">
+            <h3 id="changed-files-list-heading">Changed files (@State.ChangedFiles.Count)</h3>
+            <ul class="changed-files__list" aria-label="Changed file list">
+                @foreach (var file in State.ChangedFiles)
+                {
+                    var kind = file.ChangeKind.ToString();
+                    <li class="changed-files__item">
+                        <span class="changed-files__badge changed-files__badge--@kind.ToLowerInvariant()">@(kind == "Unknown" ? "Changed" : kind)</span>
+                        <span class="changed-files__path">@file.Path</span>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+
+    @if (ReviewMode && State.CommitReviewLoaded)
+    {
+        <section class="changed-refs" aria-labelledby="changed-refs-heading">
+            <h3 id="changed-refs-heading">Changed refs (@State.ChangedRefs.Count)</h3>
+            @if (State.ChangedRefs.Count == 0)
             {
-                var kind = file.ChangeKind.ToString();
-                <li class="changed-files__item">
-                    <span class="changed-files__badge changed-files__badge--@kind.ToLowerInvariant()">@(kind == "Unknown" ? "Changed" : kind)</span>
-                    <span class="changed-files__path">@file.Path</span>
-                </li>
+                <p class="changed-files__empty">No changed refs detected.</p>
             }
-        </ul>
+            else
+            {
+                <ul class="changed-refs__list" aria-label="Changed ref list">
+                    @foreach (var change in State.ChangedRefs)
+                    {
+                        <li class="changed-refs__item">
+                            <code>@change.RefName</code>
+                            <span class="changed-files__badge">@change.Kind</span>
+                            <code>@change.NewObjectId</code>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
     }
 </section>
 
 @code {
     [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback OnRefreshRequested { get; set; }
+    [Parameter] public bool ReviewMode { get; set; }
+    [Parameter] public EventCallback OnReviewRequested { get; set; }
 
-    private bool IsLoading => State.Operation == RepositoryWorkspaceOperation.RefreshStatus;
-    private RepositoryWorkspaceResult? StatusResult =>
-        State.Result?.Operation == RepositoryWorkspaceOperation.RefreshStatus ? State.Result : null;
+    private bool IsLoading => ReviewMode
+        ? State.Operation == RepositoryWorkspaceOperation.ReviewCommit
+        : State.Operation == RepositoryWorkspaceOperation.RefreshStatus;
+    private RepositoryWorkspaceResult? StatusResult => ReviewMode
+        ? State.Result?.Operation == RepositoryWorkspaceOperation.ReviewCommit ? State.Result : null
+        : State.Result?.Operation == RepositoryWorkspaceOperation.RefreshStatus ? State.Result : null;
     private string MessageCssClass => $"status-message {(StatusResult?.Succeeded == true ? "success" : "error")}";
 }

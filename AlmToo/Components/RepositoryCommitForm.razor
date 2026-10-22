@@ -1,74 +1,197 @@
 @using AlmToo.Managers.Repositories
 
-<section class="commit-form" aria-labelledby="commit-form-heading">
-    <div>
-        <p class="helper-text">Local history</p>
-        <h2 id="commit-form-heading">Create a commit</h2>
-        <p class="commit-form__description">Save the current working tree as a local commit. Pushing is not included.</p>
-    </div>
-
-    <form @onsubmit="CreateCommitAsync" @onsubmit:preventDefault novalidate>
-        <div class="form-field">
-            <label for="commit-message">Commit message</label>
-            <input id="commit-message" @bind="CommitMessage" maxlength="200" disabled="@IsCommitting" />
+@if (!ReviewBeforeCommit || State.CommitReviewLoaded)
+{
+    <section class="commit-form" aria-labelledby="commit-form-heading">
+        <div>
+            <p class="helper-text">Local history</p>
+            @if (ReviewBeforeCommit)
+            {
+                <h3 id="commit-form-heading">Review local commit</h3>
+                <p class="commit-form__description">Confirm the reviewed files and refs before creating a local commit. Pushing is a separate explicit step.</p>
+            }
+            else
+            {
+                <h2 id="commit-form-heading">Create a commit</h2>
+                <p class="commit-form__description">Save the current working tree as a local commit. Pushing is not included.</p>
+            }
         </div>
-        <div class="commit-form__identity">
+
+        @if (CommitErrorMessage is not null)
+        {
+            <p class="status-message error" role="alert" aria-live="assertive">@CommitErrorMessage</p>
+        }
+
+        <form @onsubmit="CreateCommitAsync" @onsubmit:preventDefault novalidate>
             <div class="form-field">
-                <label for="commit-author-name">Author name</label>
-                <input id="commit-author-name" @bind="AuthorName" autocomplete="name" maxlength="100" disabled="@IsCommitting" />
+                <label for="@($"{InputIdPrefix}-message")">Commit message</label>
+                <input id="@($"{InputIdPrefix}-message")" @bind="CommitMessage" maxlength="200" disabled="@IsCommitting" />
             </div>
-            <div class="form-field">
-                <label for="commit-author-email">Author email</label>
-                <input id="commit-author-email" type="email" @bind="AuthorEmail" autocomplete="email" maxlength="254" disabled="@IsCommitting" />
+            <div class="commit-form__identity">
+                <div class="form-field">
+                    <label for="@($"{InputIdPrefix}-author-name")">Author name</label>
+                    <input id="@($"{InputIdPrefix}-author-name")" @bind="AuthorName" maxlength="120" disabled="@IsCommitting" />
+                </div>
+                <div class="form-field">
+                    <label for="@($"{InputIdPrefix}-author-email")">Author email</label>
+                    <input id="@($"{InputIdPrefix}-author-email")" type="email" @bind="AuthorEmail" maxlength="200" disabled="@IsCommitting" />
+                </div>
             </div>
+            <button type="submit" disabled="@IsCommitting">
+                @(IsCommitting ? "Preparing..." : ReviewBeforeCommit ? "Review commit" : "Create local commit")
+            </button>
+        </form>
+
+        @if (ReviewBeforeCommit && State.ProposedCommit is not null)
+        {
+            <div class="gitbug-commit-confirmation" role="group" aria-labelledby="gitbug-confirm-heading">
+                <h4 id="gitbug-confirm-heading">Confirm local commit</h4>
+                <p id="gitbug-confirm-description">Creating this commit changes only this browser-local repository. This action will not push to a remote.</p>
+                <button class="gitbug-action" type="button" aria-describedby="gitbug-confirm-description" @onclick="ConfirmCommitAsync" disabled="@State.IsBusy">
+                    Confirm and create local commit
+                </button>
+            </div>
+        }
+
+        @if (State.CreatedCommit is { } commit)
+        {
+            <p class="commit-form__success" role="status" aria-live="polite">
+                Local commit created: <code>@State.CreatedCommit.CommitId</code> with message "@State.CreatedCommit.Message"
+            </p>
+        }
+    </section>
+}
+
+@if (EnablePushWorkflow && State.CreatedCommit is not null)
+{
+    <section class="repository-push-panel gitbug-push-panel" aria-labelledby="gitbug-push-heading">
+        <div>
+            <p class="helper-text">Remote publication</p>
+            <h3 id="gitbug-push-heading">Push the reviewed commit</h3>
+            <p>Review the remote target and credential requirement before pushing the local commit.</p>
         </div>
-        <p class="commit-form__hint">Starter identity is stored only with commits in this browser-local repository.</p>
-        <button type="submit" disabled="@IsCommitting">@(IsCommitting ? "Creating commit..." : "Create local commit")</button>
-    </form>
 
-    @if (!string.IsNullOrWhiteSpace(EffectiveStatusMessage))
-    {
-        <p class="@StatusCssClass" role="status" aria-live="polite">@EffectiveStatusMessage</p>
-    }
+        @if (State.PushReview is null && State.Operation != RepositoryWorkspaceOperation.InspectPush)
+        {
+            <button class="gitbug-action" type="button" @onclick="ReviewPushAsync" disabled="@State.IsBusy">Review push target</button>
+        }
+        else if (State.PushReview is { } pushReview)
+        {
+            <div class="repository-push-review gitbug-push-review" role="group" aria-labelledby="gitbug-push-review-heading">
+                <h4 id="gitbug-push-review-heading">Confirm remote push</h4>
+                <dl>
+                    <div><dt>Repository</dt><dd>@pushReview.RepositoryUrl</dd></div>
+                    <div><dt>Branch</dt><dd>@pushReview.Branch</dd></div>
+                    <div><dt>Destination</dt><dd><code>@pushReview.DestinationRef</code></dd></div>
+                    <div><dt>Commit</dt><dd><code>@pushReview.OutgoingCommitId</code></dd></div>
+                </dl>
+                <p>This action sends only the reviewed commit to the reviewed remote branch.</p>
+            </div>
 
-    @if (State.CreatedCommit is not null)
-    {
-        <dl class="commit-form__confirmation">
-            <div><dt>Commit</dt><dd><code>@State.CreatedCommit.CommitId</code></dd></div>
-            <div><dt>Message</dt><dd>@State.CreatedCommit.Message</dd></div>
-        </dl>
-    }
-</section>
+            @if (!State.HasCredential || State.CredentialReplacementRequired)
+            {
+                <form class="repository-credential-form gitbug-credential-form" @onsubmit="SubmitCredentialAsync" @onsubmit:preventDefault novalidate>
+                    <label for="@CredentialInputId">Remote credential</label>
+                    <input id="@CredentialInputId" type="password" @bind="Credential" autocomplete="new-password" disabled="@State.IsBusy" />
+                    <small>The credential is kept only for this browser tab and never shown after submission.</small>
+                    <button class="gitbug-action" type="submit" disabled="@State.IsBusy">@(State.CredentialReplacementRequired ? "Replace credential" : "Use credential")</button>
+                </form>
+            }
+            else
+            {
+                <p class="gitbug-credential-status" role="status" aria-live="polite">A credential is available for this browser tab.</p>
+                @if (!State.PushConfirmed)
+                {
+                    <div class="repository-push-actions">
+                        <button class="gitbug-action" type="button" @onclick="ConfirmPushAsync" disabled="@State.IsBusy">Confirm push</button>
+                        @if (OnForgetCredentialRequested.HasDelegate)
+                        {
+                            <button class="gitbug-secondary-action" type="button" @onclick="ForgetCredentialAsync" disabled="@State.IsBusy">Forget credential</button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <button class="gitbug-action" type="button" @onclick="PushAsync" disabled="@State.IsBusy">
+                        @(State.Operation == RepositoryWorkspaceOperation.Push ? "Pushing…" : "Push reviewed commit")
+                    </button>
+                }
+            }
+
+            @if (State.PushFailureKind is not null)
+            {
+                <div class="gitbug-push-recovery" role="alert" aria-live="assertive">
+                    <p>@(State.Error?.Message ?? "The push did not complete.")</p>
+                    <button class="gitbug-secondary-action" type="button" @onclick="RetryPushAsync" disabled="@State.IsBusy">Retry push</button>
+                </div>
+            }
+            @if (State.Operation == RepositoryWorkspaceOperation.Push && State.Result?.Succeeded == true)
+            {
+                <p class="gitbug-push-success" role="status" aria-live="polite">Push completed successfully.</p>
+            }
+        }
+    </section>
+}
 
 @code {
     [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
-    [Parameter, EditorRequired] public EventCallback<RepositoryCommitInput> OnCommitRequested { get; set; }
+    [Parameter] public EventCallback<RepositoryCommitInput> OnCommitRequested { get; set; }
+    [Parameter] public EventCallback OnCommitConfirmed { get; set; }
+    [Parameter] public bool ReviewBeforeCommit { get; set; }
+    [Parameter] public bool EnablePushWorkflow { get; set; }
+    [Parameter] public string InputIdPrefix { get; set; } = "commit";
+    [Parameter] public string CredentialInputId { get; set; } = "push-credential";
+    [Parameter] public EventCallback OnPushReviewRequested { get; set; }
+    [Parameter] public EventCallback<string> OnCredentialSubmitted { get; set; }
+    [Parameter] public EventCallback OnPushConfirmed { get; set; }
+    [Parameter] public EventCallback OnPushRequested { get; set; }
+    [Parameter] public EventCallback OnRetryPushRequested { get; set; }
+    [Parameter] public EventCallback<string> OnCredentialReplacement { get; set; }
+    [Parameter] public EventCallback OnForgetCredentialRequested { get; set; }
 
     private string CommitMessage { get; set; } = string.Empty;
-    private string AuthorName { get; set; } = "AlmToo User";
-    private string AuthorEmail { get; set; } = "user@almtoo.local";
-    private string? ValidationMessage { get; set; }
-    private bool IsCommitting => State.Operation == RepositoryWorkspaceOperation.Commit;
-    private RepositoryWorkspaceResult? CommitResult =>
-        State.Result?.Operation == RepositoryWorkspaceOperation.Commit ? State.Result : null;
-    private string? EffectiveStatusMessage => ValidationMessage ?? CommitResult?.Message;
-    private string StatusCssClass => $"status-message {(ValidationMessage is not null || CommitResult?.Succeeded == false ? "error" : "success")}";
+    private string AuthorName { get; set; } = string.Empty;
+    private string AuthorEmail { get; set; } = string.Empty;
+    private string Credential { get; set; } = string.Empty;
+    private string? ValidationError { get; set; }
+    private bool IsCommitting => State.Operation is RepositoryWorkspaceOperation.ReviewCommit or RepositoryWorkspaceOperation.Commit;
+    private string? CommitErrorMessage => ValidationError ?? (State.Error?.Operation is RepositoryWorkspaceOperation.ReviewCommit or RepositoryWorkspaceOperation.Commit
+        ? State.Error.Message
+        : null);
 
     private async Task CreateCommitAsync()
     {
-        var message = CommitMessage.Trim();
-        var authorName = AuthorName.Trim();
-        var authorEmail = AuthorEmail.Trim();
-
-        ValidationMessage = Validate(message, authorName, authorEmail);
-        if (ValidationMessage is not null)
+        ValidationError = Validate(CommitMessage, AuthorName, AuthorEmail);
+        if (ValidationError is not null)
         {
             return;
         }
 
+        var message = CommitMessage.Trim();
+        var authorName = AuthorName.Trim();
+        var authorEmail = AuthorEmail.Trim();
         await OnCommitRequested.InvokeAsync(new RepositoryCommitInput(message, authorName, authorEmail));
-        ValidationMessage = null;
     }
+
+    private Task ConfirmCommitAsync() => OnCommitConfirmed.InvokeAsync();
+    private Task ReviewPushAsync() => OnPushReviewRequested.InvokeAsync();
+    private async Task SubmitCredentialAsync()
+    {
+        var credential = Credential;
+        Credential = string.Empty;
+        if (State.CredentialReplacementRequired)
+        {
+            await OnCredentialReplacement.InvokeAsync(credential);
+        }
+        else
+        {
+            await OnCredentialSubmitted.InvokeAsync(credential);
+        }
+    }
+    private Task ConfirmPushAsync() => OnPushConfirmed.InvokeAsync();
+    private Task PushAsync() => OnPushRequested.InvokeAsync();
+    private Task RetryPushAsync() => OnRetryPushRequested.InvokeAsync();
+    private Task ForgetCredentialAsync() => OnForgetCredentialRequested.InvokeAsync();
 
     private static string? Validate(string message, string authorName, string authorEmail)
     {

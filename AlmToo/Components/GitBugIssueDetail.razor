@@ -1,3 +1,4 @@
+@using AlmToo.Components
 @using AlmToo.Managers.GitBug
 @using AlmToo.Managers.Repositories
 
@@ -9,13 +10,14 @@
         </button>
 
         <header class="gitbug-detail__header">
+            @{ var authorDisplayName = issue.Summary.AuthorDisplayName; }
             <p class="gitbug-eyebrow">Git-Bug issue detail</p>
             <h2 id="gitbug-detail-heading">@issue.Summary.Title</h2>
             <div class="gitbug-detail__metadata">
                 <span class="gitbug-state gitbug-state--@issue.Summary.State.ToString().ToLowerInvariant()">@issue.Summary.State</span>
-                @if (!string.IsNullOrWhiteSpace(issue.Summary.AuthorDisplayName))
+                @if (!string.IsNullOrWhiteSpace(authorDisplayName))
                 {
-                    <span>Opened by @issue.Summary.AuthorDisplayName</span>
+                    <span title="@issue.Summary.AuthorDisplayName">Opened by @authorDisplayName</span>
                 }
             </div>
             @if (issue.Summary.Labels is { Count: > 0 })
@@ -63,157 +65,26 @@
             </form>
         </section>
 
-        <section class="gitbug-commit-panel" aria-labelledby="gitbug-commit-heading">
-            <div class="gitbug-section-heading">
-                <h3 id="gitbug-commit-heading">Review local commit</h3>
-                <p>Inspect changed files before preparing a browser-local commit. Review does not mutate the repository.</p>
-            </div>
-            @if (!RepositoryState.CommitReviewLoaded)
-            {
-                <button class="gitbug-action" type="button" @onclick="RequestCommitReviewAsync" disabled="@WorkspaceBusy">
-                    @(RepositoryState.Operation == RepositoryWorkspaceOperation.ReviewCommit ? "Loading changed files…" : "Review changed files")
-                </button>
-            }
-            else
-            {
-                <div class="gitbug-commit-review" aria-live="polite">
-                    <h4>Changed files (@RepositoryState.ChangedFiles.Count)</h4>
-                    @if (RepositoryState.ChangedFiles.Count == 0)
-                    {
-                        <p class="gitbug-empty">There are no changed files to commit.</p>
-                    }
-                    else
-                    {
-                        <ul class="gitbug-changed-files" aria-label="Changed files">
-                            @foreach (var file in RepositoryState.ChangedFiles)
-                            {
-                                <li><code>@file.Path</code><span class="gitbug-change-kind">@file.ChangeKind</span></li>
-                            }
-                        </ul>
-                    }
-                </div>
-
-                <form class="gitbug-form gitbug-commit-form" @onsubmit="PrepareCommitAsync" @onsubmit:preventDefault="true">
-                    <div class="gitbug-form__field">
-                        <label for="gitbug-commit-message">Commit message</label>
-                        <input id="gitbug-commit-message" name="commit-message" type="text" maxlength="4096" required
-                               @bind="commitMessage" disabled="@WorkspaceBusy" />
-                    </div>
-                    <div class="gitbug-form__field">
-                        <label for="gitbug-commit-author">Author name</label>
-                        <input id="gitbug-commit-author" name="commit-author" type="text" maxlength="512" required
-                               @bind="commitAuthor" disabled="@WorkspaceBusy" />
-                    </div>
-                    <div class="gitbug-form__field">
-                        <label for="gitbug-commit-email">Author email</label>
-                        <input id="gitbug-commit-email" name="commit-email" type="email" maxlength="512" required
-                               @bind="commitEmail" disabled="@WorkspaceBusy" />
-                    </div>
-                    <div class="gitbug-form__actions">
-                        <button class="gitbug-secondary-action" type="submit" disabled="@WorkspaceBusy">
-                            Prepare commit details
-                        </button>
-                    </div>
-                </form>
-
-                @if (RepositoryState.ProposedCommit is not null && RepositoryState.CanConfirmCommit)
-                {
-                    <div class="gitbug-commit-confirmation" role="group" aria-labelledby="gitbug-confirm-heading">
-                        <h4 id="gitbug-confirm-heading">Confirm local commit</h4>
-                        <p id="gitbug-confirm-description">Creating this commit changes only this browser-local repository. This action will not push to a remote.</p>
-                        <button class="gitbug-action" type="button" aria-describedby="gitbug-confirm-description" @onclick="ConfirmCommitAsync" disabled="@WorkspaceBusy">
-                            Confirm and create local commit
-                        </button>
-                    </div>
-                }
-
-                @if (RepositoryState.CreatedCommit is not null && RepositoryState.CreatedCommit is { } commit)
-                {
-                    <p class="gitbug-save-status" role="status" aria-live="polite">
-                        Local commit created: <code>@commit.CommitId</code> (@commit.ChangedFileCount changed files). No push was performed.
-                    </p>
-                }
-            }
-        </section>
-
-        @if (RepositoryState.CreatedCommit is not null)
-        {
-            <section class="gitbug-push-panel" aria-labelledby="gitbug-push-heading">
-                <div class="gitbug-section-heading">
-                    <h3 id="gitbug-push-heading">Review and push commit</h3>
-                    <p>Push is a separate, explicit action. The credential is kept only for this browser tab and is never displayed or logged.</p>
-                </div>
-
-                @if (RepositoryState.PushReview is null && RepositoryState.Operation != RepositoryWorkspaceOperation.Push)
-                {
-                    <button class="gitbug-action" type="button" @onclick="RequestPushReviewAsync" disabled="@WorkspaceBusy">
-                        @(RepositoryState.Operation == RepositoryWorkspaceOperation.InspectPush ? "Loading push target…" : "Review push target")
-                    </button>
-                }
-
-                @if (RepositoryState.PushReview is { } pushReview)
-                {
-                    <dl class="gitbug-push-review" aria-label="Push target review">
-                        <div><dt>Remote</dt><dd><code>@pushReview.RepositoryUrl</code></dd></div>
-                        <div><dt>Branch</dt><dd><code>@pushReview.Branch</code></dd></div>
-                        <div><dt>Destination</dt><dd><code>@pushReview.DestinationRef</code></dd></div>
-                        <div><dt>Commit</dt><dd><code>@pushReview.OutgoingCommitId</code></dd></div>
-                    </dl>
-                }
-
-                @if (RepositoryState.PushReview is not null && (!RepositoryState.HasCredential || RepositoryState.CredentialReplacementRequired))
-                {
-                    <form class="gitbug-form gitbug-credential-form" @onsubmit="SubmitCredentialAsync" @onsubmit:preventDefault="true">
-                        <div class="gitbug-form__field">
-                            <label for="gitbug-push-credential">Tab-scoped credential</label>
-                            <input id="gitbug-push-credential" name="push-credential" type="password"
-                                   autocomplete="new-password" spellcheck="false" required
-                                   @bind="credential" @bind:event="oninput" disabled="@WorkspaceBusy" />
-                            <small id="gitbug-push-credential-help">Used only for this tab's push attempt. The field is cleared after submission.</small>
-                        </div>
-                        <div class="gitbug-form__actions">
-                            <button class="gitbug-action" type="submit" disabled="@WorkspaceBusy">@(RepositoryState.CredentialReplacementRequired ? "Replace credential" : "Use credential")</button>
-                        </div>
-                    </form>
-                }
-
-                @if (RepositoryState.HasCredential && RepositoryState.PushReview is not null && !RepositoryState.PushConfirmed)
-                {
-                    <div class="gitbug-commit-confirmation" role="group" aria-labelledby="gitbug-push-confirm-heading">
-                        <h4 id="gitbug-push-confirm-heading">Confirm remote push</h4>
-                        <p id="gitbug-push-confirm-description">Verify the remote, branch, destination, and commit above before continuing.</p>
-                        <button class="gitbug-action" type="button" aria-describedby="gitbug-push-confirm-description" @onclick="ConfirmPushAsync" disabled="@WorkspaceBusy">Confirm push</button>
-                    </div>
-                }
-
-                @if (RepositoryState.PushConfirmed && RepositoryState.PushReview is not null)
-                {
-                    <button class="gitbug-action" type="button" @onclick="PushAsync" disabled="@WorkspaceBusy">
-                        @(RepositoryState.Operation == RepositoryWorkspaceOperation.Push ? "Pushing…" : "Push reviewed commit")
-                    </button>
-                }
-
-                @if (RepositoryState.Result?.Operation == RepositoryWorkspaceOperation.Push && RepositoryState.Result.Succeeded)
-                {
-                    <p class="gitbug-save-status" role="status" aria-live="polite">@RepositoryState.Result.Message</p>
-                }
-                @if (RepositoryState.PushFailureKind is not null)
-                {
-                    <div class="gitbug-push-recovery" role="alert" aria-live="assertive">
-                        <p>@RepositoryState.Error?.Message</p>
-                        @if (RepositoryState.PushFailureKind?.ToString() == "CredentialRejected")
-                        {
-                            <p>Enter a replacement credential above, then review the target and confirm again.</p>
-                        }
-                        else
-                        {
-                            <p>Resolve the remote problem, then review the current target before retrying.</p>
-                        }
-                        <button class="gitbug-secondary-action" type="button" @onclick="RetryPushAsync" disabled="@WorkspaceBusy">Review and retry</button>
-                    </div>
-                }
-            </section>
-        }
+        <div class="gitbug-write-surfaces">
+            @* RepositoryCommitForm owns the shared type="password" credential input, autocomplete="new-password", and the message that the credential is kept only for this browser tab. *@
+            <RepositoryChangedFiles State="RepositoryState"
+                                    ReviewMode="true"
+                                    OnReviewRequested="OnReviewCommitRequested"
+                                    OnRefreshRequested="OnRepositoryRefreshRequested" />
+            <RepositoryCommitForm State="RepositoryState"
+                                  ReviewBeforeCommit="true"
+                                  EnablePushWorkflow="true"
+                                  InputIdPrefix="gitbug-commit"
+                                  CredentialInputId="gitbug-push-credential"
+                                  OnCommitRequested="PrepareCommitAsync"
+                                  OnCommitConfirmed="OnCommitConfirmed"
+                                  OnPushReviewRequested="OnReviewPushRequested"
+                                  OnCredentialSubmitted="OnCredentialSubmitted"
+                                  OnCredentialReplacement="OnCredentialReplacement"
+                                  OnPushConfirmed="OnPushConfirmed"
+                                  OnPushRequested="OnPushRequested"
+                                  OnRetryPushRequested="OnRetryPushRequested" />
+        </div>
 
         <section class="gitbug-detail__description" aria-labelledby="gitbug-description-heading">
             <h3 id="gitbug-description-heading">Description</h3>
@@ -273,10 +144,6 @@
     private string editTitle = string.Empty;
     private string editDescription = string.Empty;
     private string commentBody = string.Empty;
-    private string commitMessage = string.Empty;
-    private string commitAuthor = string.Empty;
-    private string commitEmail = string.Empty;
-    private string credential = string.Empty;
     private string? draftIssueId;
 
     [Parameter, EditorRequired] public GitBugWorkspaceState State { get; set; } = null!;
@@ -287,12 +154,13 @@
     [Parameter] public EventCallback OnReviewCommitRequested { get; set; }
     [Parameter] public EventCallback OnCommitConfirmed { get; set; }
     [Parameter] public EventCallback<(string Message, string AuthorName, string AuthorEmail)> OnCommitDetailsChanged { get; set; }
+    [Parameter] public EventCallback OnRepositoryRefreshRequested { get; set; }
     [Parameter] public EventCallback OnReviewPushRequested { get; set; }
     [Parameter] public EventCallback<string> OnCredentialSubmitted { get; set; }
+    [Parameter] public EventCallback<string> OnCredentialReplacement { get; set; }
     [Parameter] public EventCallback OnPushConfirmed { get; set; }
     [Parameter] public EventCallback OnPushRequested { get; set; }
     [Parameter] public EventCallback OnRetryPushRequested { get; set; }
-    [Parameter] public EventCallback<string> OnCredentialReplacement { get; set; }
 
     protected override void OnParametersSet()
     {
@@ -303,55 +171,10 @@
             editDescription = issue.Description;
             commentBody = string.Empty;
         }
-
-        if (RepositoryState.ProposedCommit is { } proposed)
-        {
-            commitMessage = proposed.Message;
-            commitAuthor = proposed.AuthorName;
-            commitEmail = proposed.AuthorEmail;
-        }
     }
 
-    private async Task RequestCommitReviewAsync() => await OnReviewCommitRequested.InvokeAsync();
-
-    private async Task PrepareCommitAsync()
-    {
-        if (!WorkspaceBusy)
-        {
-            await OnCommitDetailsChanged.InvokeAsync((commitMessage, commitAuthor, commitEmail));
-        }
-    }
-
-    private async Task ConfirmCommitAsync() => await OnCommitConfirmed.InvokeAsync();
-    private async Task RequestPushReviewAsync() => await OnReviewPushRequested.InvokeAsync();
-    private async Task SubmitCredentialAsync()
-    {
-        var submitted = credential;
-        credential = string.Empty;
-        if (!WorkspaceBusy && !string.IsNullOrWhiteSpace(submitted))
-        {
-            if (RepositoryState.CredentialReplacementRequired)
-            {
-                await OnCredentialReplacement.InvokeAsync(submitted);
-            }
-            else
-            {
-                await OnCredentialSubmitted.InvokeAsync(submitted);
-            }
-        }
-    }
-    private async Task ConfirmPushAsync() => await OnPushConfirmed.InvokeAsync();
-    private async Task PushAsync() => await OnPushRequested.InvokeAsync();
-    private async Task RetryPushAsync() => await OnRetryPushRequested.InvokeAsync();
-    private async Task ReplaceCredentialAsync()
-    {
-        var submitted = credential;
-        credential = string.Empty;
-        if (!WorkspaceBusy && !string.IsNullOrWhiteSpace(submitted))
-        {
-            await OnCredentialReplacement.InvokeAsync(submitted);
-        }
-    }
+    private Task PrepareCommitAsync(RepositoryCommitInput input) =>
+        OnCommitDetailsChanged.InvokeAsync((input.Message, input.AuthorName, input.AuthorEmail));
 
     private async Task SubmitEditAsync()
     {

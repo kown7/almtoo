@@ -65,6 +65,7 @@
                            OnReviewCommitRequested="ReviewCommitAsync"
                            OnCommitConfirmed="ConfirmCommitAsync"
                            OnCommitDetailsChanged="SetCommitDetails"
+                           OnRepositoryRefreshRequested="RefreshRepositoryStatusAsync"
                            OnReviewPushRequested="ReviewPushAsync"
                            OnCredentialSubmitted="SubmitCredentialAsync"
                            OnPushConfirmed="ConfirmPushAsync"
@@ -144,6 +145,7 @@
             await RepositoryWorkspace.RefreshStatusAsync();
         }
     }
+    private async Task RefreshRepositoryStatusAsync() => await RepositoryWorkspace.RefreshStatusAsync();
     private async Task ReviewCommitAsync() => await RepositoryWorkspace.ReviewCommitAsync();
     private async Task ConfirmCommitAsync() => await RepositoryWorkspace.ConfirmLocalCommitAsync();
     private void SetCommitDetails((string Message, string AuthorName, string Email) details) =>
