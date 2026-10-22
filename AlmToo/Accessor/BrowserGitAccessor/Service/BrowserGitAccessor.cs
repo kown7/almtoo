@@ -296,12 +296,36 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 FailureKind: GitOperationFailureKind.UnsupportedRef);
         }
 
+        var initialized = await EnsureInitializedAsync(cancellationToken);
+        if (!initialized.Succeeded)
+        {
+            return new GitOperationResult<GitPublicationReceipt>(
+                "publish",
+                false,
+                "Browser Git could not be initialized for publication.",
+                Value: default,
+                FailureKind: GitOperationFailureKind.Unknown);
+        }
+
+        var credentialModule = await GetCredentialModuleAsync(cancellationToken);
+        var personalAccessToken = await credentialModule.InvokeAsync<string?>("getCredentialForPush", cancellationToken);
+        if (string.IsNullOrWhiteSpace(personalAccessToken))
+        {
+            return new GitOperationResult<GitPublicationReceipt>(
+                "publish",
+                false,
+                "Enter a token before publishing the reviewed refs.",
+                Value: default,
+                FailureKind: GitOperationFailureKind.CredentialRejected);
+        }
+
         var result = await InvokeWithValueAsync<GitPublicationReceiptDto, GitPublicationReceipt>(
             "publish",
             "publish",
             value => value.ToReceipt(),
             cancellationToken,
-            request);
+            request,
+            personalAccessToken);
 
         return SanitizePublicationResult(result);
     }
@@ -587,7 +611,18 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
     private static GitOperationResult<GitPublicationReceipt> SanitizePublicationResult(
         GitOperationResult<GitPublicationReceipt> result)
     {
-        if (result.Succeeded && result.Value is not null && BrowserGitPublicationContract.IsValidReceipt(result.Value))
+        if (!result.Succeeded)
+        {
+            return new GitOperationResult<GitPublicationReceipt>(
+                "publish",
+                false,
+                result.Message,
+                Value: default,
+                Diagnostic: null,
+                FailureKind: result.FailureKind ?? GitOperationFailureKind.Unknown);
+        }
+
+        if (result.Value is not null && BrowserGitPublicationContract.IsValidReceipt(result.Value))
         {
             return result with { Diagnostic = null, FailureKind = null };
         }
@@ -598,7 +633,7 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             "The reviewed publication result could not be read safely.",
             Value: default,
             Diagnostic: null,
-            FailureKind: result.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed);
+            FailureKind: GitOperationFailureKind.GitBugDataMalformed);
     }
 
     public async ValueTask DisposeAsync()

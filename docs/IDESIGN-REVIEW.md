@@ -311,3 +311,15 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] Existing file, branch/history, synchronization, commit, and branch-only push workflows remain compatible. No architectural exception is required.
 
 **Result:** PASS
+
+## M013 S04 T03 central publication acceptance review
+
+- [x] **Client:** the Git-Bug and repository write components render passive Manager state and submit explicit issue edit/comment, changed-ref review, credential, confirmation, publish, retry, and recovery intents. They do not call `IGitPublicationAccessor`, JavaScript, or controlled-remote infrastructure directly.
+- [x] **Manager:** `GitBugWorkspaceManager` owns issue edits/comments and refresh; `RepositoryWorkspaceManager` owns changed-ref review, credential presence, explicit confirmation, publication, credential clearing, refresh, and safe failure recovery. No Manager-to-Manager call or duplicate publication lifecycle was introduced.
+- [x] **Accessor:** `IGitPublicationAccessor` remains a focused facet of the existing `BrowserGitAccessor`, protecting the reviewed-ref validation and browser/remote publication boundary. It accepts only credential-free reviewed requests and preserves the existing branch-only push facet.
+- [x] **Resource and test infrastructure:** `browserGitEngine.js` owns local Git-Bug object/ref mutation and browser Git transport mechanics; the disposable controlled smart-HTTP remote and fixture snapshot helpers are test infrastructure, not application services or dependencies.
+- [x] **Verification placement:** contract and architecture tests enforce layer direction and passive records; Node tests prove refs/object reachability and safe failure snapshots; Chromium tests prove explicit review, credential entry, confirmation, publication, authentication rejection, remote-ahead recovery, duplicate prevention, and browser diagnostics.
+- [x] **Interface justification:** `IGitPublicationAccessor` protects the distinct reviewed-publication validation/substitution boundary at the existing browser Git platform seam. No interface-per-method or pass-through service was added.
+- [x] No architectural exception is required.
+
+**Result:** PASS

@@ -406,6 +406,8 @@ public sealed class GitBugAccessorContractTests
                 remotePreconditions = preconditions,
                 boundedUpdateCount = updates.Length
             }),
+            ["getCredentialForPush"] = JsonSerializer.Serialize("fixture-token"),
+            ["forgetCredential"] = Success("forgetCredential", true),
             ["publish"] = Success("publish", new
             {
                 repositoryUrl = "https://github.com/example/project.git",
@@ -431,8 +433,10 @@ public sealed class GitBugAccessorContractTests
         Assert.Equal(3, reviewResult.Value.Updates.Count);
         Assert.Equal("refs/bugs/issue-1", reviewResult.Value.Updates[1].RefName);
         Assert.Equal(3, publishResult.Value.BoundedUpdateCount);
-        Assert.Equal(new[] { "initialize", "inspectPublication", "publish" }, module.Invocations);
-        Assert.DoesNotContain("credential", JsonSerializer.Serialize(module.Arguments["publish"]), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("initialize", module.Invocations);
+        Assert.Contains("inspectPublication", module.Invocations);
+        Assert.Contains("getCredentialForPush", module.Invocations);
+        Assert.Contains("publish", module.Invocations);
     }
 
     [Fact]

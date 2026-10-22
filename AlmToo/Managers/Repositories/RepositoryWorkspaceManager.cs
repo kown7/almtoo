@@ -330,6 +330,11 @@ public sealed class RepositoryWorkspaceManager : IDisposable
                 return false;
             }
 
+            if (!await RefreshPublicationReviewCoreAsync(token))
+            {
+                return false;
+            }
+
             State.CommitReviewLoaded = true;
             State.LastRefreshSucceeded = true;
             return Succeed(State.ChangedFiles.Count == 0 && !State.HasChangedRefs
@@ -619,12 +624,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }
 
         State.ChangedFiles = result.Value;
-        if (!await RefreshPublicationReviewCoreAsync(token))
-        {
-            State.LastRefreshSucceeded = false;
-            return false;
-        }
-
+        InvalidatePublicationReview();
         State.LastRefreshSucceeded = true;
         return Succeed(result.Message);
     }
@@ -694,17 +694,19 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         {
             State.PublicationFailureKind = result.FailureKind;
             State.PushFailureKind = NormalizePushFailureKind(result.FailureKind);
-            if (State.PushFailureKind == GitOperationFailureKind.CredentialRejected)
-            {
-                State.HasCredential = false;
-                State.CredentialReplacementRequired = true;
-            }
-
+            await gitAccessor.ForgetCredentialAsync(token);
+            State.HasCredential = false;
+            State.CredentialReplacementRequired = true;
+            State.PublicationReview = null;
+            State.PublicationConfirmed = false;
             State.LastWriteSucceeded = false;
             return Fail(result, GetPublicationFailureGuidance(result.FailureKind));
         }
 
         var receipt = result.Value;
+        var forgotten = await gitAccessor.ForgetCredentialAsync(token);
+        State.HasCredential = false;
+        State.CredentialReplacementRequired = !forgotten.Succeeded || forgotten.Value is not true;
         State.PublicationReceipt = receipt;
         State.PublicationConfirmed = false;
         State.LastWriteSucceeded = true;
@@ -714,6 +716,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }
 
         State.PublicationReceipt = receipt;
+        State.PublicationReview = review;
         return Succeed(result.Message);
     }
 

@@ -1,6 +1,6 @@
 @using AlmToo.Managers.Repositories
 
-@if (!ReviewBeforeCommit || State.CommitReviewLoaded)
+@if (!EnablePublicationWorkflow && (!ReviewBeforeCommit || State.CommitReviewLoaded))
 {
     <section class="commit-form" aria-labelledby="commit-form-heading">
         <div>
@@ -133,7 +133,7 @@
     </section>
 }
 
-@if (EnablePublicationWorkflow && State.CreatedCommit is not null)
+@if (EnablePublicationWorkflow && (State.PublicationReview is not null || State.PublicationReceipt is not null || State.PublicationFailureKind is not null))
 {
     <section class="repository-push-panel gitbug-push-panel" aria-labelledby="gitbug-publication-heading">
         <p class="helper-text">Central publication</p>
@@ -141,6 +141,13 @@
         <p>Review the branch, Git-Bug refs, and remote preconditions before publishing.</p>
         @if (State.PublicationReview is null && State.Operation != RepositoryWorkspaceOperation.ReviewPublication)
         {
+            @if (State.PublicationFailureKind is not null)
+            {
+                <div class="gitbug-push-recovery" role="alert" aria-live="assertive">
+                    <p>@(State.Error?.Message ?? "The Git-Bug publication did not complete.")</p>
+                </div>
+                <button class="gitbug-secondary-action" type="button" @onclick="RetryPublicationAsync" disabled="@State.IsBusy">Review and retry</button>
+            }
             <button class="gitbug-action" type="button" @onclick="ReviewPublicationAsync" disabled="@State.IsBusy">Review Git-Bug refs</button>
         }
         else if (State.PublicationReview is { } publicationReview)

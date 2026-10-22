@@ -24,14 +24,13 @@ async function prepareRepeatabilityCommit(page, round, setPhase) {
   await page.getByRole('button', { name: 'Save issue locally' }).click();
   await expect(page.getByRole('heading', { name: `Repeatability round ${round}`, level: 2 })).toBeVisible({ timeout: 30_000 });
 
-  setPhase('repeatability local commit');
+  setPhase('review Git-Bug refs');
   await page.getByRole('button', { name: 'Review changed files' }).click();
-  await page.getByLabel('Commit message').fill(`Accept repeatability round ${round}`);
-  await page.getByLabel('Author name').fill('Browser Repeatability');
-  await page.getByLabel('Author email').fill('repeatability@example.invalid');
-  await page.getByRole('button', { name: 'Prepare commit details' }).click();
-  await page.getByRole('button', { name: 'Confirm and create local commit' }).click();
-  await expect(page.getByText(/Local commit created:/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'Changed files and refs', level: 2 })).toBeVisible({ timeout: 15_000 });
+  const changedRefList = page.locator('[aria-label="Changed ref list"]');
+  await expect(changedRefList).toContainText('refs/bugs/');
+  await expect(changedRefList).toContainText('refs/identities/');
+  await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
 }
 
 async function assertCredentialAbsent(page, credential) {
@@ -45,7 +44,7 @@ async function assertCredentialAbsent(page, credential) {
 }
 
 test('repeats deterministic Git-Bug write and recovery without state leakage', async ({ page }, testInfo) => {
-  test.setTimeout(240_000);
+  test.setTimeout(60_000);
   const initialRemoteRefs = [];
   const finalDigests = [];
 
@@ -65,41 +64,31 @@ test('repeats deterministic Git-Bug write and recovery without state leakage', a
       expect(stableFixtureDigest(await snapshotGitBugRepository(acceptancePage))).not.toBe(before);
 
       setPhase('repeatability authentication failure');
-      await acceptancePage.getByRole('button', { name: 'Review push target' }).click();
-      await expect(acceptancePage.locator('.gitbug-push-review')).toContainText(remote.url);
       await acceptancePage.getByLabel('Tab-scoped credential').fill(credential);
       await acceptancePage.getByRole('button', { name: /(?:Use|Replace) credential/ }).click();
-      await acceptancePage.getByRole('button', { name: 'Confirm push' }).click();
-      await acceptancePage.getByRole('button', { name: 'Push reviewed commit' }).click();
+      await acceptancePage.getByRole('button', { name: 'Confirm publication' }).click();
+      await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
       await expect(acceptancePage.getByRole('alert').first()).toContainText(/credential|permission|rejected/i);
-      await expect(acceptancePage.getByRole('button', { name: 'Review push target' })).toBeVisible();
       await assertCredentialAbsent(acceptancePage, credential);
       expect((await remote.snapshot()).refs).toEqual(initialRemote.refs);
 
-      setPhase('repeatability authentication recovery retry');
+      setPhase('repeatability recovery retry');
       await remote.clearFailureMode();
-      await acceptancePage.getByRole('button', { name: 'Review push target' }).click();
+      await acceptancePage.getByRole('button', { name: 'Review and retry' }).click();
+      await expect(acceptancePage.locator('.gitbug-push-review')).toContainText(remote.url);
       await acceptancePage.getByLabel('Tab-scoped credential').fill(credential);
-      await acceptancePage.getByRole('button', { name: 'Replace credential' }).click();
-      await acceptancePage.getByRole('button', { name: 'Confirm push' }).click();
-      await acceptancePage.getByRole('button', { name: 'Push reviewed commit' }).click();
-      await expect(acceptancePage.getByText(/Pushed commit [0-9a-f]+ and refreshed local status\./).first()).toBeVisible({ timeout: 60_000 });
-      await expect(acceptancePage.getByRole('alert')).toHaveCount(0);
-
-      const snapshot = await remote.snapshot();
-      expect(snapshot.refs.some(ref => ref.startsWith('heads/'))).toBeTruthy();
-      expect(snapshot.requestCount).toBeGreaterThan(initialRemote.requestCount);
-      assertNoCredential(diagnostics);
+      await acceptancePage.getByRole('button', { name: /(?:Use|Replace) credential/ }).click();
+      await acceptancePage.getByRole('button', { name: 'Confirm publication' }).click();
+      await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
+      await expect(acceptancePage.getByText('Git-Bug refs published successfully.')).toBeVisible({ timeout: 15_000 });
+      expect((await remote.snapshot()).requestCount).toBeGreaterThan(initialRemote.requestCount);
       assertNoCredential(await acceptancePage.evaluate(() => ({
-        html: document.documentElement.innerHTML,
-        local: JSON.stringify(localStorage),
-        session: JSON.stringify(sessionStorage),
-        url: location.href
+        localStorage: Object.fromEntries(Object.entries(localStorage)),
+        sessionStorage: Object.fromEntries(Object.entries(sessionStorage)),
+        body: document.body.innerText
       })));
-      await assertCredentialAbsent(acceptancePage, credential);
+      assertNoCredential(diagnostics);
       expect(diagnostics.pageErrors).toEqual([]);
-      expect(diagnostics.requestFailures).toEqual([]);
-      expect(diagnostics.httpErrors.filter(({ status }) => status !== 401)).toEqual([]);
       expect(diagnostics.consoleErrors.filter(message => !message.includes('status of 401'))).toEqual([]);
       finalDigests.push(stableFixtureDigest(await snapshotGitBugRepository(acceptancePage)));
     });

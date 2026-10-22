@@ -1419,7 +1419,7 @@ function isSafePublicationRef(value) {
     && (value.startsWith('refs/heads/')
       || value.startsWith('refs/bugs/')
       || value.startsWith('refs/identities/'))
-    && !/[\\0\\r\\n ~^:?*\\[]/.test(value)
+    && !/[\0\r\n ~^:?*\[]/.test(value)
     && !value.includes('..')
     && !value.includes('//');
 }
@@ -1666,11 +1666,33 @@ export async function inspectPublication() {
   }
 }
 
+async function withPublicationTimeout(promise, timeoutMs = 15_000) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('publication-network-unavailable')), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function publish(request, personalAccessToken) {
   const operation = 'publish';
   try {
     const token = requireText(personalAccessToken, 'personalAccessToken');
-    const reviewed = validatePublicationReview(request);
+    const destinationRef = `refs/heads/${request?.branch ?? ''}`;
+    const outgoingCommitId = Array.isArray(request?.updates)
+      ? request.updates.find(update => update?.refName === destinationRef)?.newObjectId
+      : null;
+    const reviewed = validatePublicationReview({
+      ...request,
+      destinationRef,
+      outgoingCommitId
+    });
     const current = await readPublicationState(operation);
     if (!samePublicationSet(reviewed, current)) {
       return failureWithKind(operation, 'The reviewed publication is stale and was not pushed.', 'remoteAhead');
@@ -1680,7 +1702,7 @@ export async function publish(request, personalAccessToken) {
     const refspecs = reviewed.updates.map(update => `${update.refName}:${update.refName}`);
     const pushRef = getGit().push.bind(getGit());
     for (const update of reviewed.updates) {
-      await pushRef({
+      await withPublicationTimeout(pushRef({
         fs,
         http: getGitHttp(),
         dir,
@@ -1688,8 +1710,8 @@ export async function publish(request, personalAccessToken) {
         corsProxy,
         ref: update.refName === current.destinationRef ? current.branch : update.refName,
         remoteRef: update.refName,
-        onAuth: () => ({ username: token, password: token })
-      });
+        onAuth: () => ({ username: token, password: 'x-oauth-basic' })
+      }));
     }
     return success(operation, 'The reviewed publication set was pushed.', {
       repositoryUrl: current.repositoryUrl,

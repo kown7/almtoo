@@ -2,15 +2,15 @@
 
 ## Status
 
-**Implemented and browser-verified Accessor, Resource, Manager, and Client boundary.** The fixture-proven, read-only `IGitBugAccessor` facet, browser decoder, concrete `GitBugWorkspaceManager`, and accessible list/detail Client are implemented and contract-locked. Chromium verification covers the supplied public repository, the supported fixture, and safe unavailable/unsupported states.
+**Implemented and browser-verified Accessor, Resource, Manager, and Client boundary.** The fixture-proven `IGitBugAccessor` read/write facet, browser decoder and Git-Bug writer, concrete `GitBugWorkspaceManager`, central `IGitPublicationAccessor` publication path, and accessible list/detail/edit Client are implemented and contract-locked. Chromium verification covers the supplied public repository, the supported fixture, controlled smart-HTTP publication, and safe unavailable/unsupported states.
 
 | Field | Decision |
 | --- | --- |
 | Host application | AlmToo Blazor WebAssembly application |
 | Owning concrete service | Existing `BrowserGitAccessor` |
 | New integration facet | `IGitBugAccessor`, implemented by `BrowserGitAccessor` |
-| First user value | Read-only browse and inspect Git-Bug issues in the already-open browser-local repository |
-| Explicitly deferred | Creating, editing, commenting on, closing, pushing, pulling, bridge management, authentication, and GitHub issue synchronization |
+| First user value | Browse, edit, and comment on Git-Bug issues in the already-open browser-local repository, then publish reviewed Git-Bug refs centrally |
+| Explicitly deferred | Closing issues, pulling or reconciling Git-Bug refs, bridge management, hosted issue synchronization, and operations not covered by the pinned storage contract |
 | Data source | Git-Bug data stored with the active Git repository; no browser call to a local `git bug` CLI |
 | Compatibility principle | Support only fixture-proven Git-Bug storage versions and surface an actionable unsupported-format result otherwise |
 
@@ -28,17 +28,17 @@ Git-Bug is Git-repository-native: it keeps issue data outside the working tree a
 
 ### Out of scope
 
-The first facet is deliberately **read-only**. It must not synthesize Git-Bug objects, invoke Git-Bug CLI commands, use a hosted GraphQL server, send credentials, write refs, stage files, commit, push, pull, or bridge issues to a third-party tracker. Those are separate product loops that need their own design, synchronization policy, and acceptance evidence.
+The read model remains deliberately bounded, but the implemented write loop now supports editing an existing issue and creating a comment in the active browser-local repository. It does not invoke Git-Bug CLI commands, use a hosted GraphQL server, or silently mutate unrelated refs. Central publication is a separate, explicit repository workflow that requires changed-ref review, credential entry, confirmation, and controlled-remote acceptance evidence.
 
 ## Architectural placement
 
 | Component | iDesign layer | Responsibility | Allowed dependencies | Forbidden dependencies |
 | --- | --- | --- | --- | --- |
 | Git-Bug page and issue components | Client | Render Manager-owned list/detail state; submit user intent | `GitBugWorkspaceManager`, passive page state | `IGitBugAccessor`, `BrowserGitAccessor`, `IJSRuntime`, Git-Bug storage parsing |
-| `GitBugWorkspaceManager` and state | Manager | Coordinate load/cancel/select transitions; translate typed Accessor results into display-safe state | `IGitBugAccessor`, passive Git-Bug contract records | Razor components, JS interop, raw refs/objects, Git-Bug parser rules |
+| `GitBugWorkspaceManager` and state | Manager | Coordinate load/cancel/select/edit/comment transitions; translate typed Accessor results into display-safe state | `IGitBugAccessor`, passive Git-Bug contract records | Razor components, JS interop, raw refs/objects, Git-Bug parser rules, publication transport |
 | `IGitBugAccessor` and Git-Bug records | Accessor contract | Define the external Git-Bug read boundary and passive resources | Contract records only | Client/Manager types, UI formatting, JS interop implementation |
-| `BrowserGitAccessor` Git-Bug facet | Accessor | Invoke the browser bridge, map bridge DTOs to typed resources, classify failures, preserve read-only operation | `IJSRuntime`, `browserGitEngine.js`, existing active repository context | Client/Manager state, Razor rendering, direct remote Git calls |
-| `browserGitEngine.js` Git-Bug reader | Resource | Resolve Git-Bug metadata in the active browser filesystem and decode only supported storage formats | `isomorphic-git`, LightningFS, local repository objects and refs | .NET UI state, credentials, network writes, Git-Bug mutations |
+| `BrowserGitAccessor` Git-Bug facet | Accessor | Invoke the browser bridge, map bridge DTOs to typed resources, classify failures, and preserve approved-ref boundaries | `IJSRuntime`, `browserGitEngine.js`, existing active repository context | Client/Manager state, Razor rendering, publication orchestration |
+| `browserGitEngine.js` Git-Bug reader/writer | Resource | Resolve supported Git-Bug metadata and perform bounded local issue/comment object and ref mutations | `isomorphic-git`, LightningFS, local repository objects and refs | .NET UI state, credentials, network publication, workflow sequencing |
 | Fixture repository and decoder fixtures | Resource/test infrastructure | Represent versioned Git-Bug repository data and expected public read models | Test harness and browser bridge tests | Production UI behavior |
 
 ### Dependency flow
@@ -63,7 +63,7 @@ The existing repository workflow remains independent. It may establish the activ
 
 `IGitBugAccessor` is a genuine external-format boundary, not a pass-through abstraction: Git-Bug’s storage/version semantics have credible alternate implementations (browser-local decoder today; a supported GraphQL or server-backed implementation later), and the interface isolates both that platform dependency and the required fixture seam. It is implemented by the existing cohesive `BrowserGitAccessor`; no extra service or interface-per-class is introduced.
 
-The public contract is intentionally a **read model**, not raw Git-Bug objects. Raw refs, object IDs, commits, filesystem paths, and parser-specific fields are Resource details and must not escape the Accessor.
+The public read contract is intentionally a **read model**, not raw Git-Bug objects. Write requests and receipts are likewise typed, bounded, credential-free records; raw refs, object IDs, commits, filesystem paths, and parser-specific fields remain Resource details and must not escape the Accessor.
 
 ### Implemented passive records
 
@@ -130,11 +130,13 @@ At the implemented Accessor boundary, cancellation and interop exceptions are re
 
 ### Browser bridge responsibilities
 
-`browserGitEngine.js` exposes two read-only exports:
+`browserGitEngine.js` exposes the fixture-proven read exports and bounded local write exports:
 
 ```text
-listGitBugIssues(query)  -> BrowserGitResponse<GitBugIssuePageDto>
-getGitBugIssue(issueId)  -> BrowserGitResponse<GitBugIssueDetailDto>
+listGitBugIssues(query)       -> BrowserGitResponse<GitBugIssuePageDto>
+getGitBugIssue(issueId)       -> BrowserGitResponse<GitBugIssueDetailDto>
+editGitBugIssue(request)      -> BrowserGitResponse<GitBugIssueEditResultDto>
+createGitBugComment(request)  -> BrowserGitResponse<GitBugCommentCreateResultDto>
 ```
 
 Each export must:
@@ -144,7 +146,7 @@ Each export must:
 3. Decode a pinned, fixture-proven storage schema into a JSON-safe DTO.
 4. Validate required identifier, title, state, ordering, and bounded text fields before returning success.
 5. Return a categorized bridge failure for absent, unsupported, or malformed data.
-6. Perform no network request and no write-capable Git operation.
+6. Read operations perform no network request or write-capable Git operation; write exports perform only the bounded local Git-Bug object/ref mutation described by the typed write contract.
 
 The managed `BrowserGitAccessor` owns JS module lifetime and maps DTOs exactly once to C# contract records. It must not duplicate Git-Bug format parsing or have a Client-visible `IJSRuntime` dependency.
 
@@ -242,7 +244,7 @@ The Client must not call `IGitBugAccessor`, inspect ref names, marshal JS, parse
 ## Data integrity, security, and privacy
 
 - Reads are restricted to the active browser-local repository. No ambient filesystem or cross-repository lookup is permitted.
-- The first implementation has no credential input, remote request, token persistence, or Git mutation path.
+- The read path has no credential input or remote request. The write path has no credential input and performs only bounded local Git-Bug object/ref mutation; credential handling and remote publication remain centralized in the repository publication workflow.
 - User-controlled title, description, comment, label, and actor text is rendered as text, never trusted HTML. Markdown rendering, if planned later, needs an explicit sanitization design.
 - Query text and issue IDs are bounded and validated before bridge invocation. Page size is clamped in the Manager and bridge.
 - The bridge returns aggregate/categorized diagnostics only. It never logs or returns raw object content, Git remote URLs, headers, credentials, or complete stack traces.
@@ -324,7 +326,7 @@ The broader checks also passed: `npm --prefix AlmToo run test:git-bug-client` (3
 
 ## S01 write contract: typed model, storage, and failure boundary
 
-This section is the shared write contract for Git-Bug issue and comment mutations. `DESIGN.md` repeats the same contract name, operation names, failure kinds, and proof boundary so the Git-Bug facet cannot acquire a second serialization or failure vocabulary. This section defines the contract and design constraints only; **production mutation is not implemented by S01**.
+This section is the shared write contract for Git-Bug issue and comment mutations. `DESIGN.md` repeats the same contract name, operation names, failure kinds, and proof boundary so the Git-Bug facet cannot acquire a second serialization or failure vocabulary. S01 established the contract; M013 S04 implements and browser-proves the local mutation plus central publication boundary.
 
 ### Write operation vocabulary
 
@@ -375,7 +377,7 @@ The implementation must expose one enum value and one mapping per category; in p
 
 Allowed observability fields are `operation`, `outcome`, `failureKind`, `stage`, `boundedItemCount`, and `reviewed`/`committed` booleans. The Manager may expose busy/result/error state and a safe failure category; it must not expose serialization bytes, refs, object IDs, or diagnostics. Accessor tests should retain only fixed-category failure evidence and aggregate counts.
 
-S01 proves the design boundary, canonical names, bounded/redacted failure rules, and fixture identifiers without invoking browser storage or mutating a repository. S02 may add immutable C# request/result contracts and focused validation tests. S03 may fixture-prove deterministic serialization and safe failure scenarios. A later implementation slice must separately prove actual mutation, repository immutability on failure, conflict handling, and browser acceptance; this document must not be read as claiming those writes already exist.
+S01 proved the design boundary, canonical names, bounded/redacted failure rules, and fixture identifiers. M013 S04 separately proves actual browser-local mutation, repository immutability on failure, reviewed central publication, credential rejection, remote-ahead recovery, duplicate prevention, and browser acceptance. This historical section remains the contract origin and must not be used to infer unsupported operation kinds or storage versions.
 
 ### S01 iDesign review checklist
 
@@ -383,9 +385,19 @@ S01 proves the design boundary, canonical names, bounded/redacted failure rules,
 - [x] **Dependency direction:** runtime calls remain `Client -> Manager -> Accessor -> browser/platform`; passive contract values cross the boundary laterally. No Client or Manager may call JavaScript, Git-Bug serialization, or raw Git storage directly.
 - [x] **Interface justification:** `IGitBugAccessor` protects the external Git-Bug format/browser platform boundary and fixture seam, with credible future local/server implementations. No new pass-through interface is introduced for writes.
 - [x] **Cohesion and decomposition:** write review and workflow order belong to the Manager; deterministic serialization and Git object/ref integration belong below the Accessor boundary; no interface-per-record or speculative Engine is introduced.
-- [x] **Verification placement:** contract validation belongs in focused .NET tests, deterministic fixture serialization/failure proof belongs in Node Resource tests, and end-to-end mutation belongs in a later browser slice. S01 itself has no mutation proof.
+- [x] **Verification placement:** contract validation belongs in focused .NET tests, deterministic fixture serialization/failure proof belongs in Node Resource tests, and M013 S04 browser acceptance owns end-to-end mutation, central publication, recovery, and credential-safety proof.
 - [x] **Exceptions:** none. Raw JavaScript and Git-Bug serialization do not enter Manager or Client, and no architectural exception is required.
+
+## M013 central publication boundary
+
+Git-Bug issue edits and comments are local browser-repository mutations first. `GitBugWorkspaceManager` owns issue selection, bounded input, local write sequencing, and refresh; it does not push. `RepositoryWorkspaceManager` owns the repository-wide publication transaction and is the only Manager that can publish the reviewed ref set.
+
+The publication review explicitly lists changed Git-Bug refs and the required identity ref, repository and branch coordinates, and remote preconditions. The Client must render that review, require explicit confirmation, collect a tab-scoped credential, and invoke publication only after confirmation. `IGitPublicationAccessor` validates the reviewed request and performs the smart-HTTP push; it never accepts an unreviewed Git-Bug operation or a credential-bearing DTO.
+
+A successful receipt identifies the published ref/object outcome without exposing credentials. The Manager then forgets the tab credential and refreshes status. Credential rejection, network loss, unsupported refs, and remote-ahead responses clear confirmation and credential state and return safe, retryable recovery guidance. No failure is implicitly replayed and no remote configuration is persisted by the browser harness.
+
+The M013 S04 acceptance proof uses a disposable controlled Git smart-HTTP remote. Before/after snapshots compare refs, Git-Bug partitions, required identity refs, and aggregate reachable-object evidence using a stable digest. Browser diagnostics assert that credentials are absent from visible state and failure artifacts. See `docs/M013-GIT-BUG-PUBLICATION-TRACEABILITY.md` for the scenario and command matrix.
 
 ## Shared write-contract reference
 
-The canonical write contract is named **Git-Bug S01 Write Contract**. `AlmToo/Accessor/BrowserGitAccessor/DESIGN.md` must retain matching operation names, failure kinds, storage invariants, redaction rules, layer constraints, and S01 proof boundary. Any future change to this vocabulary requires updating both documents and repeating the iDesign review.
+The canonical write contract is named **Git-Bug S01 Write Contract**. `AlmToo/Accessor/BrowserGitAccessor/DESIGN.md` must retain matching operation names, failure kinds, storage invariants, redaction rules, layer constraints, and proof boundary. Any future change to this vocabulary requires updating both documents and repeating the iDesign review.

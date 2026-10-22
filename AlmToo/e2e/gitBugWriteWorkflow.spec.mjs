@@ -31,7 +31,7 @@ test('edits an existing Git-Bug issue with an empty description', async ({ page 
 });
 
 test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', async ({ page }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(60_000);
   await withGitBugAcceptance(page, testInfo, {
     scenario: 'successful-git-bug-write',
     credential,
@@ -50,44 +50,43 @@ test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', 
     await expect(acceptancePage.getByRole('heading', { name: editedTitle, level: 2 })).toBeVisible({ timeout: 30_000 });
     await expect(acceptancePage.getByRole('textbox', { name: 'Description' })).toHaveValue(editedDescription, { timeout: 30_000 });
     await expect(acceptancePage.getByRole('button', { name: 'Confirm and create local commit' })).toHaveCount(0);
-    await expect(acceptancePage.getByRole('button', { name: 'Push reviewed commit' })).toHaveCount(0);
+    await expect(acceptancePage.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
 
     await acceptancePage.getByRole('textbox', { name: 'Comment' }).fill(comment);
     await acceptancePage.getByRole('button', { name: 'Add comment locally' }).click();
     await expect(acceptancePage.getByText(comment, { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(acceptancePage.getByRole('button', { name: 'Confirm and create local commit' })).toHaveCount(0);
-    await expect(acceptancePage.getByRole('button', { name: 'Push reviewed commit' })).toHaveCount(0);
+    await expect(acceptancePage.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
 
-    setPhase('review and create local commit');
-    await acceptancePage.getByRole('button', { name: 'Review changed files' }).click();
-    await expect(acceptancePage.getByRole('heading', { name: 'Review local commit', level: 3 })).toBeVisible();
-    await expect(acceptancePage.getByText(/changed file/i).first()).toBeVisible();
-    await acceptancePage.getByLabel('Commit message').fill('Accept Git-Bug browser write');
-    await acceptancePage.getByLabel('Author name').fill('Browser Acceptance');
-    await acceptancePage.getByLabel('Author email').fill('browser@example.invalid');
-    await acceptancePage.getByRole('button', { name: 'Prepare commit details' }).click();
-    await expect(acceptancePage.getByRole('heading', { name: 'Confirm local commit', level: 4 })).toBeVisible();
-    await acceptancePage.getByRole('button', { name: 'Confirm and create local commit' }).click();
-    await expect(acceptancePage.getByText(/Local commit created:/)).toBeVisible({ timeout: 30_000 });
-    const afterCommit = fixtureSnapshotDigest(await snapshotGitBugRepository(acceptancePage));
-    expect(afterCommit).not.toBe(before);
+    setPhase('review Git-Bug refs');
+    const reviewChangedFiles = acceptancePage.getByRole('button', { name: 'Review changed files' });
+    await expect(reviewChangedFiles).toBeEnabled({ timeout: 15_000 });
+    await reviewChangedFiles.click({ timeout: 15_000 });
+    await expect(acceptancePage.getByRole('heading', { name: 'Changed files and refs', level: 2 })).toBeVisible({ timeout: 15_000 });
+    const changedRefList = acceptancePage.locator('[aria-label="Changed ref list"]');
+    await expect(changedRefList).toContainText('refs/bugs/');
+    await expect(changedRefList).toContainText('refs/identities/');
+    await expect(acceptancePage.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
+    const afterLocalWrite = fixtureSnapshotDigest(await snapshotGitBugRepository(acceptancePage));
+    expect(afterLocalWrite).not.toBe(before);
 
-    setPhase('review and push commit');
-    await acceptancePage.getByRole('button', { name: 'Review push target' }).click();
+    setPhase('publish reviewed Git-Bug refs');
     await expect(acceptancePage.locator('.gitbug-push-review')).toContainText(repositoryUrl);
     await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('Branch');
-    await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('Destination');
-    await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('Commit');
+    await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('Reviewed refs');
+    await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('refs/bugs/');
+    await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('refs/identities/');
 
     const credentialInput = acceptancePage.getByLabel('Tab-scoped credential');
     await credentialInput.fill(credential);
     await acceptancePage.getByRole('button', { name: /(?:Use|Replace) credential/ }).click();
     await expect(credentialInput).toHaveCount(0);
-    await expect(acceptancePage.getByRole('heading', { name: 'Confirm remote push', level: 4 })).toBeVisible();
-    await acceptancePage.getByRole('button', { name: 'Confirm push' }).click();
-    await expect(acceptancePage.getByRole('button', { name: 'Push reviewed commit' })).toBeVisible();
-    await acceptancePage.getByRole('button', { name: 'Push reviewed commit' }).click();
-    await expect(acceptancePage.getByText(/Pushed commit [0-9a-f]+ and refreshed local status\./).first()).toBeVisible({ timeout: 60_000 });
+    await expect(acceptancePage.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible();
+    await acceptancePage.getByRole('button', { name: 'Confirm publication' }).click();
+    await expect(acceptancePage.getByRole('button', { name: 'Publish reviewed refs' })).toBeVisible();
+    await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
+    await expect(acceptancePage.getByRole('alert')).toHaveCount(0, { timeout: 15_000 });
+    await expect(acceptancePage.getByText('Git-Bug refs published successfully.')).toBeVisible({ timeout: 15_000 });
     await expect(acceptancePage.getByRole('alert')).toHaveCount(0);
 
     const snapshot = await remote.snapshot();

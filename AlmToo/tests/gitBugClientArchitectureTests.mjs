@@ -99,10 +99,10 @@ test('issue writes refresh the central repository state without a second publica
   assert.doesNotMatch(editAndComment, /CommitAsync|PushAsync|InspectPushAsync|Publish/);
 
   const editCheckpoint = workflow.indexOf("await expect(acceptancePage.getByRole('textbox', { name: 'Description' })).toHaveValue(editedDescription");
-  const reviewCheckpoint = workflow.indexOf("setPhase('review and create local commit')");
+  const reviewCheckpoint = workflow.indexOf("setPhase('review Git-Bug refs')");
   assert.ok(editCheckpoint >= 0 && reviewCheckpoint > editCheckpoint, 'browser workflow must review only after issue writes');
   assert.match(workflow.slice(editCheckpoint, reviewCheckpoint), /Confirm and create local commit[\s\S]*toHaveCount\(0\)/);
-  assert.match(workflow.slice(editCheckpoint, reviewCheckpoint), /Push reviewed commit[\s\S]*toHaveCount\(0\)/);
+  assert.match(workflow.slice(editCheckpoint, reviewCheckpoint), /Publish reviewed refs[\s\S]*toHaveCount\(0\)/);
 });
 
 test('Git-Bug children are passive accessible list and detail views', async () => {

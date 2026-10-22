@@ -111,7 +111,7 @@ public sealed class RepositoryWorkspaceManagerTests
     }
 
     [Fact]
-    public async Task Clean_or_dirty_status_review_also_loads_changed_refs_without_commit_or_push()
+    public async Task Status_refresh_stays_local_and_publication_review_is_explicit()
     {
         var fake = new FakeBrowserAccessor
         {
@@ -124,12 +124,14 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
 
         fake.Calls.Clear();
-        Assert.True(await manager.ReviewCommitAsync());
+        Assert.True(await manager.RefreshStatusAsync());
+        Assert.Equal(["status"], fake.Calls);
+        Assert.Null(manager.State.PublicationReview);
 
+        Assert.True(await manager.ReviewPublicationAsync());
         Assert.Equal(["status", "publication-review"], fake.Calls);
         Assert.Equal(PublicationReview, manager.State.PublicationReview);
         Assert.True(manager.State.HasChangedRefs);
-        Assert.True(manager.State.CommitReviewLoaded);
         Assert.DoesNotContain("commit", fake.Calls);
         Assert.DoesNotContain("push", fake.Calls);
     }

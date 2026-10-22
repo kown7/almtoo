@@ -5,23 +5,18 @@ import { withGitBugAcceptance } from './gitBugAcceptanceHarness.mjs';
 const credential = 'fixture-push-secret';
 
 async function openIssueAndPrepareCommit(page, remote, title, setPhase) {
-  setPhase('prepare recovery commit');
+  setPhase('review Git-Bug refs');
   await page.getByRole('button', { name: 'Open issue: Unicode café regression 🐛' }).click();
   await page.getByLabel('Title').fill(title);
   await page.getByRole('textbox', { name: 'Description' }).fill('Recovery-path edit with deterministic controlled remote failure.');
   await page.getByRole('button', { name: 'Save issue locally' }).click();
   await expect(page.getByRole('heading', { name: title, level: 2 })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Review changed files' }).click();
-  await page.getByLabel('Commit message').fill('Accept controlled recovery write');
-  await page.getByLabel('Author name').fill('Browser Recovery');
-  await page.getByLabel('Author email').fill('recovery@example.invalid');
-  await page.getByRole('button', { name: 'Prepare commit details' }).click();
-  await expect(page.getByRole('heading', { name: 'Confirm local commit', level: 4 })).toBeVisible();
-  await page.getByRole('button', { name: 'Confirm and create local commit' }).click();
-  await expect(page.getByText(/Local commit created:/)).toBeVisible({ timeout: 30_000 });
-  await page.getByRole('button', { name: 'Review push target' }).click();
-  await expect(page.locator('.gitbug-push-review')).toContainText(remote.url);
-  await expect(page.locator('.gitbug-push-review')).toContainText('Branch');
+  await expect(page.getByRole('heading', { name: 'Changed files and refs', level: 2 })).toBeVisible({ timeout: 15_000 });
+  const changedRefList = page.locator('[aria-label="Changed ref list"]');
+  await expect(changedRefList).toContainText('refs/bugs/');
+  await expect(changedRefList).toContainText('refs/identities/');
+  await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
 }
 
 async function assertCredentialCleared(page, { durable = true } = {}) {
@@ -44,15 +39,15 @@ async function assertCredentialCleared(page, { durable = true } = {}) {
 async function pushWithExplicitCredential(page) {
   await page.getByLabel('Tab-scoped credential').fill(credential);
   await page.getByRole('button', { name: /(?:Use|Replace) credential/ }).click();
-  await expect(page.getByRole('heading', { name: 'Confirm remote push', level: 4 })).toBeVisible();
-  await page.getByRole('button', { name: 'Confirm push' }).click();
-  await expect(page.getByRole('button', { name: 'Push reviewed commit' })).toBeVisible();
-  await page.getByRole('button', { name: 'Push reviewed commit' }).click();
+  await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible();
+  await page.getByRole('button', { name: 'Confirm publication' }).click();
+  await expect(page.getByRole('button', { name: 'Publish reviewed refs' })).toBeVisible();
+  await page.getByRole('button', { name: 'Publish reviewed refs' }).click();
 }
 
 test.describe('Git-Bug controlled push recovery', () => {
   test('recovers from authentication failure only after explicit credential replacement', async ({ page }, testInfo) => {
-    test.setTimeout(180_000);
+    test.setTimeout(60_000);
     await withGitBugAcceptance(page, testInfo, {
       scenario: 'authentication-failure-recovery',
       credential,
@@ -66,16 +61,16 @@ test.describe('Git-Bug controlled push recovery', () => {
       await assertCredentialCleared(acceptancePage, { durable: false });
       const rejectedRemote = await remote.snapshot();
       expect(rejectedRemote.refs).toEqual(initialRemote.refs);
-      await expect(acceptancePage.getByRole('button', { name: 'Review push target' })).toBeVisible();
+      await expect(acceptancePage.getByRole('button', { name: 'Review Git-Bug refs' })).toBeVisible();
 
       setPhase('authentication recovery retry');
       await remote.clearFailureMode();
-      await acceptancePage.getByRole('button', { name: 'Review push target' }).click();
+      await acceptancePage.getByRole('button', { name: 'Review Git-Bug refs' }).click();
       await acceptancePage.getByLabel('Tab-scoped credential').fill(credential);
       await acceptancePage.getByRole('button', { name: 'Replace credential' }).click();
-      await acceptancePage.getByRole('button', { name: 'Confirm push' }).click();
-      await acceptancePage.getByRole('button', { name: 'Push reviewed commit' }).click();
-      await expect(acceptancePage.getByText(/Pushed commit [0-9a-f]+ and refreshed local status\./).first()).toBeVisible({ timeout: 60_000 });
+      await acceptancePage.getByRole('button', { name: 'Confirm publication' }).click();
+      await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
+      await expect(acceptancePage.getByText('Git-Bug refs published successfully.')).toBeVisible({ timeout: 15_000 });
       expect((await remote.snapshot()).requestCount).toBeGreaterThan(initialRemote.requestCount);
       await assertCredentialCleared(acceptancePage);
       expect(diagnostics.pageErrors).toEqual([]);
@@ -84,7 +79,7 @@ test.describe('Git-Bug controlled push recovery', () => {
   });
 
   test('recovers from a network failure only after an explicit review retry', async ({ page }, testInfo) => {
-    test.setTimeout(180_000);
+    test.setTimeout(60_000);
     await withGitBugAcceptance(page, testInfo, {
       scenario: 'network-failure-recovery',
       credential,
@@ -103,9 +98,11 @@ test.describe('Git-Bug controlled push recovery', () => {
       await remote.clearFailureMode();
       await acceptancePage.getByRole('button', { name: 'Review and retry' }).click();
       await expect(acceptancePage.locator('.gitbug-push-review')).toContainText(remote.url);
-      await acceptancePage.getByRole('button', { name: 'Confirm push' }).click();
-      await acceptancePage.getByRole('button', { name: 'Push reviewed commit' }).click();
-      await expect(acceptancePage.getByText(/Pushed commit [0-9a-f]+ and refreshed local status\./).first()).toBeVisible({ timeout: 60_000 });
+      await acceptancePage.getByLabel('Tab-scoped credential').fill(credential);
+      await acceptancePage.getByRole('button', { name: /(?:Use|Replace) credential/ }).click();
+      await acceptancePage.getByRole('button', { name: 'Confirm publication' }).click();
+      await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
+      await expect(acceptancePage.getByText('Git-Bug refs published successfully.')).toBeVisible({ timeout: 15_000 });
       expect((await remote.snapshot()).requestCount).toBeGreaterThan(initialRemote.requestCount);
       await assertCredentialCleared(acceptancePage);
       expect(diagnostics.pageErrors).toEqual([]);
