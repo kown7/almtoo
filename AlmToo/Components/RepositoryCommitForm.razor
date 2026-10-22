@@ -133,15 +133,79 @@
     </section>
 }
 
+@if (EnablePublicationWorkflow && State.CreatedCommit is not null)
+{
+    <section class="repository-push-panel gitbug-push-panel" aria-labelledby="gitbug-publication-heading">
+        <p class="helper-text">Central publication</p>
+        <h3 id="gitbug-publication-heading">Publish reviewed Git-Bug refs</h3>
+        <p>Review the branch, Git-Bug refs, and remote preconditions before publishing.</p>
+        @if (State.PublicationReview is null && State.Operation != RepositoryWorkspaceOperation.ReviewPublication)
+        {
+            <button class="gitbug-action" type="button" @onclick="ReviewPublicationAsync" disabled="@State.IsBusy">Review Git-Bug refs</button>
+        }
+        else if (State.PublicationReview is { } publicationReview)
+        {
+            <div class="repository-push-review gitbug-push-review" role="group" aria-labelledby="gitbug-publication-review-heading">
+                <h4 id="gitbug-publication-review-heading">Confirm Git-Bug publication</h4>
+                <dl>
+                    <div><dt>Repository</dt><dd>@publicationReview.RepositoryUrl</dd></div>
+                    <div><dt>Branch</dt><dd>@publicationReview.Branch</dd></div>
+                    <div><dt>Reviewed refs</dt><dd>@publicationReview.BoundedUpdateCount</dd></div>
+                </dl>
+                <ul class="changed-refs__list" aria-label="Reviewed Git-Bug refs">
+                    @foreach (var update in publicationReview.Updates)
+                    {
+                        <li class="changed-refs__item"><code>@update.RefName</code><span class="changed-files__badge">@update.Kind</span></li>
+                    }
+                </ul>
+            </div>
+            @if (!State.HasCredential || State.CredentialReplacementRequired)
+            {
+                <form class="repository-credential-form gitbug-credential-form" @onsubmit="SubmitCredentialAsync" @onsubmit:preventDefault novalidate>
+                    <label for="@CredentialInputId">Tab-scoped credential</label>
+                    <input id="@CredentialInputId" type="password" aria-label="Tab-scoped credential" @bind="Credential" autocomplete="new-password" disabled="@State.IsBusy" />
+                    <small>The credential is kept only for this browser tab and never shown after submission.</small>
+                    <button class="gitbug-action" type="submit" disabled="@State.IsBusy">@(State.CredentialReplacementRequired ? "Replace credential" : "Use credential")</button>
+                </form>
+            }
+            else if (!State.PublicationConfirmed)
+            {
+                <p class="gitbug-credential-status" role="status" aria-live="polite">A credential is available for this browser tab.</p>
+                <button class="gitbug-action" type="button" @onclick="ConfirmPublicationAsync" disabled="@State.IsBusy">Confirm publication</button>
+            }
+            else
+            {
+                <button class="gitbug-action" type="button" @onclick="PublishPublicationAsync" disabled="@State.IsBusy">Publish reviewed refs</button>
+            }
+            @if (State.PublicationFailureKind is not null)
+            {
+                <div class="gitbug-push-recovery" role="alert" aria-live="assertive">
+                    <p>@(State.Error?.Message ?? "The Git-Bug publication did not complete.")</p>
+                    <button class="gitbug-secondary-action" type="button" @onclick="RetryPublicationAsync" disabled="@State.IsBusy">Review and retry</button>
+                </div>
+            }
+            @if (State.PublicationReceipt is not null && State.LastWriteSucceeded == true)
+            {
+                <p class="gitbug-push-success" role="status" aria-live="polite">Git-Bug refs published successfully.</p>
+            }
+        }
+    </section>
+}
+
 @code {
     [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback<RepositoryCommitInput> OnCommitRequested { get; set; }
     [Parameter] public EventCallback OnCommitConfirmed { get; set; }
     [Parameter] public bool ReviewBeforeCommit { get; set; }
     [Parameter] public bool EnablePushWorkflow { get; set; }
+    [Parameter] public bool EnablePublicationWorkflow { get; set; }
     [Parameter] public string InputIdPrefix { get; set; } = "commit";
     [Parameter] public string CredentialInputId { get; set; } = "push-credential";
     [Parameter] public EventCallback OnPushReviewRequested { get; set; }
+    [Parameter] public EventCallback OnPublicationReviewRequested { get; set; }
+    [Parameter] public EventCallback OnPublicationConfirmed { get; set; }
+    [Parameter] public EventCallback OnPublicationRequested { get; set; }
+    [Parameter] public EventCallback OnRetryPublicationRequested { get; set; }
     [Parameter] public EventCallback<string> OnCredentialSubmitted { get; set; }
     [Parameter] public EventCallback OnPushConfirmed { get; set; }
     [Parameter] public EventCallback OnPushRequested { get; set; }
@@ -175,6 +239,10 @@
 
     private Task ConfirmCommitAsync() => OnCommitConfirmed.InvokeAsync();
     private Task ReviewPushAsync() => OnPushReviewRequested.InvokeAsync();
+    private Task ReviewPublicationAsync() => OnPublicationReviewRequested.InvokeAsync();
+    private Task ConfirmPublicationAsync() => OnPublicationConfirmed.InvokeAsync();
+    private Task PublishPublicationAsync() => OnPublicationRequested.InvokeAsync();
+    private Task RetryPublicationAsync() => OnRetryPublicationRequested.InvokeAsync();
     private async Task SubmitCredentialAsync()
     {
         var credential = Credential;

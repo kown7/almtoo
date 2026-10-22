@@ -13,6 +13,13 @@ public sealed class RepositoryWorkspaceManagerTests
         "/README.md", "README.md", RepositoryFileKind.File, 12, true);
     private static readonly PushReview Review = new(
         Repository.RepositoryUrl, "main", "abc123", "refs/heads/main");
+    private static readonly GitPublicationReview PublicationReview = new(
+        Repository.RepositoryUrl,
+        "main",
+        [new("refs/bugs/issue", GitRefNamespace.GitBug, GitRefUpdateKind.Update,
+            new string('b', 64), new string('a', 64))],
+        [new("refs/heads/main", new string('c', 40))],
+        1);
 
     [Fact]
     public async Task OpenRepository_sequences_open_directory_and_status_into_coherent_state()
@@ -101,6 +108,30 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.False(await manager.SelectFileAsync("/missing.txt"));
         Assert.Equal(initialFilters, fake.FilterRequests.Count);
         Assert.Contains("no longer visible", manager.State.Error?.Message);
+    }
+
+    [Fact]
+    public async Task Clean_or_dirty_status_review_also_loads_changed_refs_without_commit_or_push()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Clean.", [])),
+            PublicationReviewAsync = _ => ValueTask.FromResult(new GitOperationResult<GitPublicationReview>(
+                "inspect-publication", true, "Refs reviewed.", PublicationReview))
+        };
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+
+        fake.Calls.Clear();
+        Assert.True(await manager.ReviewCommitAsync());
+
+        Assert.Equal(["status", "publication-review"], fake.Calls);
+        Assert.Equal(PublicationReview, manager.State.PublicationReview);
+        Assert.True(manager.State.HasChangedRefs);
+        Assert.True(manager.State.CommitReviewLoaded);
+        Assert.DoesNotContain("commit", fake.Calls);
+        Assert.DoesNotContain("push", fake.Calls);
     }
 
     [Fact]
@@ -447,6 +478,7 @@ public sealed class RepositoryWorkspaceManagerTests
         public Func<FilterFilesRequest, GitOperationResult<FilterFilesResult>> Filter { get; set; }
         public Func<FilterFilesRequest, CancellationToken, ValueTask<GitOperationResult<FilterFilesResult>>>? FilterAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<IReadOnlyList<ChangedFile>>>>? StatusAsync { get; set; }
+        public Func<CancellationToken, ValueTask<GitOperationResult<GitPublicationReview>>>? PublicationReviewAsync { get; set; }
         public Func<CancellationToken, ValueTask<GitOperationResult<BranchSnapshot>>>? BranchesAsync { get; set; }
         public Func<BranchHistoryRequest, CancellationToken, ValueTask<GitOperationResult<CommitHistory>>>? HistoryAsync { get; set; }
         public Func<CheckoutBranchRequest, CancellationToken, ValueTask<GitOperationResult>>? CheckoutAsync { get; set; }
@@ -483,6 +515,17 @@ public sealed class RepositoryWorkspaceManagerTests
                 return await StatusAsync(cancellationToken);
             }
             return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Status refreshed.", [new("/README.md", GitChangeKind.Modified)]);
+        }
+
+        public async ValueTask<GitOperationResult<GitPublicationReview>> InspectPublicationAsync(CancellationToken cancellationToken = default)
+        {
+            if (PublicationReviewAsync is null)
+            {
+                throw new NotSupportedException("Publication review is not configured in this test double.");
+            }
+
+            Calls.Add("publication-review");
+            return await PublicationReviewAsync(cancellationToken);
         }
 
         public async ValueTask<GitOperationResult<BranchSnapshot>> GetBranchesAsync(CancellationToken cancellationToken = default) =>

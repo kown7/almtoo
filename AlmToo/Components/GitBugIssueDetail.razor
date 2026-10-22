@@ -73,7 +73,8 @@
                                     OnRefreshRequested="OnRepositoryRefreshRequested" />
             <RepositoryCommitForm State="RepositoryState"
                                   ReviewBeforeCommit="true"
-                                  EnablePushWorkflow="true"
+                                  EnablePushWorkflow="false"
+                                  EnablePublicationWorkflow="true"
                                   InputIdPrefix="gitbug-commit"
                                   CredentialInputId="gitbug-push-credential"
                                   OnCommitRequested="PrepareCommitAsync"
@@ -83,7 +84,11 @@
                                   OnCredentialReplacement="OnCredentialReplacement"
                                   OnPushConfirmed="OnPushConfirmed"
                                   OnPushRequested="OnPushRequested"
-                                  OnRetryPushRequested="OnRetryPushRequested" />
+                                  OnRetryPushRequested="OnRetryPushRequested"
+                                  OnPublicationReviewRequested="OnPublicationReviewRequested"
+                                  OnPublicationConfirmed="OnPublicationConfirmed"
+                                  OnPublicationRequested="OnPublicationRequested"
+                                  OnRetryPublicationRequested="OnRetryPublicationRequested" />
         </div>
 
         <section class="gitbug-detail__description" aria-labelledby="gitbug-description-heading">
@@ -161,6 +166,10 @@
     [Parameter] public EventCallback OnPushConfirmed { get; set; }
     [Parameter] public EventCallback OnPushRequested { get; set; }
     [Parameter] public EventCallback OnRetryPushRequested { get; set; }
+    [Parameter] public EventCallback OnPublicationReviewRequested { get; set; }
+    [Parameter] public EventCallback OnPublicationConfirmed { get; set; }
+    [Parameter] public EventCallback OnPublicationRequested { get; set; }
+    [Parameter] public EventCallback OnRetryPublicationRequested { get; set; }
 
     protected override void OnParametersSet()
     {

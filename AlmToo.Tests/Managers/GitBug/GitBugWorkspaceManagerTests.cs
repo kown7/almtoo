@@ -299,6 +299,34 @@ public sealed class GitBugWorkspaceManagerTests
     }
 
     [Fact]
+    public async Task Issue_edit_and_comment_refresh_issue_state_without_starting_commit_or_push()
+    {
+        var fake = new FakeGitBugAccessor
+        {
+            DetailHandler = (_, _) => ValueTask.FromResult(Success(FirstDetail)),
+            EditHandler = request => ValueTask.FromResult(Success(new GitBugIssueEditResult(request.IssueId, "revision-edit", "review-edit"))),
+            CommentHandler = request => ValueTask.FromResult(Success(new GitBugCommentCreateResult(
+                request.IssueId, "comment", "revision-comment", "review-comment")))
+        };
+        using var manager = CreateManager(fake);
+        manager.SetRepository(Repository);
+        Assert.True(await manager.LoadIssuesAsync(new(SearchText: "reviewed")));
+        Assert.True(await manager.OpenIssueAsync(FirstId));
+
+        fake.Calls.Clear();
+        Assert.True(await manager.EditSelectedIssueAsync("Updated title", "Updated description"));
+        Assert.Equal(["edit", "detail", "list"], fake.Calls);
+        Assert.DoesNotContain("commit", fake.Calls);
+        Assert.DoesNotContain("push", fake.Calls);
+
+        fake.Calls.Clear();
+        Assert.True(await manager.AddCommentToSelectedIssueAsync("A follow-up comment"));
+        Assert.Equal(["comment", "detail", "list"], fake.Calls);
+        Assert.DoesNotContain("commit", fake.Calls);
+        Assert.DoesNotContain("push", fake.Calls);
+    }
+
+    [Fact]
     public async Task Invalid_edit_and_comment_inputs_do_not_call_accessor()
     {
         var fake = new FakeGitBugAccessor();
@@ -346,6 +374,7 @@ public sealed class GitBugWorkspaceManagerTests
 
     private sealed class FakeGitBugAccessor : IGitBugAccessor
     {
+        public List<string> Calls { get; } = [];
         public List<GitBugIssueQuery> ListQueries { get; } = [];
         public List<GitBugIssueId> DetailIds { get; } = [];
         public List<GitBugIssueEditRequest> EditRequests { get; } = [];
@@ -363,6 +392,7 @@ public sealed class GitBugWorkspaceManagerTests
             GitBugIssueQuery query,
             CancellationToken cancellationToken = default)
         {
+            Calls.Add("list");
             ListQueries.Add(query);
             return ListHandler(query, cancellationToken);
         }
@@ -371,6 +401,7 @@ public sealed class GitBugWorkspaceManagerTests
             GitBugIssueId issueId,
             CancellationToken cancellationToken = default)
         {
+            Calls.Add("detail");
             DetailIds.Add(issueId);
             return DetailHandler(issueId, cancellationToken);
         }
@@ -379,6 +410,7 @@ public sealed class GitBugWorkspaceManagerTests
             GitBugIssueEditRequest request,
             CancellationToken cancellationToken = default)
         {
+            Calls.Add("edit");
             EditRequests.Add(request);
             return EditHandler(request);
         }
@@ -387,6 +419,7 @@ public sealed class GitBugWorkspaceManagerTests
             GitBugCommentCreateRequest request,
             CancellationToken cancellationToken = default)
         {
+            Calls.Add("comment");
             CommentRequests.Add(request);
             return CommentHandler(request);
         }

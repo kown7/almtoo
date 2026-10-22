@@ -49,10 +49,14 @@ test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', 
     await acceptancePage.getByRole('button', { name: 'Save issue locally' }).click();
     await expect(acceptancePage.getByRole('heading', { name: editedTitle, level: 2 })).toBeVisible({ timeout: 30_000 });
     await expect(acceptancePage.getByRole('textbox', { name: 'Description' })).toHaveValue(editedDescription, { timeout: 30_000 });
+    await expect(acceptancePage.getByRole('button', { name: 'Confirm and create local commit' })).toHaveCount(0);
+    await expect(acceptancePage.getByRole('button', { name: 'Push reviewed commit' })).toHaveCount(0);
 
     await acceptancePage.getByRole('textbox', { name: 'Comment' }).fill(comment);
     await acceptancePage.getByRole('button', { name: 'Add comment locally' }).click();
     await expect(acceptancePage.getByText(comment, { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(acceptancePage.getByRole('button', { name: 'Confirm and create local commit' })).toHaveCount(0);
+    await expect(acceptancePage.getByRole('button', { name: 'Push reviewed commit' })).toHaveCount(0);
 
     setPhase('review and create local commit');
     await acceptancePage.getByRole('button', { name: 'Review changed files' }).click();
