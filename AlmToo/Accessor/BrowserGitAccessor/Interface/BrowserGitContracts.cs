@@ -388,7 +388,7 @@ public static class BrowserGitPublicationContract
         && IsAllowedRepositoryUri(request.RepositoryUrl)
         && IsSafeBranch(request.Branch)
         && request.Updates is not null
-        && request.Updates.Count <= MaximumUpdates
+        && request.Updates.Count is > 0 and <= MaximumUpdates
         && request.Updates.All(IsValidUpdate)
         && HasUniqueRefs(request.Updates.Select(update => update.RefName))
         && request.RemotePreconditions is not null
@@ -400,14 +400,25 @@ public static class BrowserGitPublicationContract
         review is not null
         && IsAllowedRepositoryUri(review.RepositoryUrl)
         && IsSafeBranch(review.Branch)
+        && review.Updates is not null
+        && review.BoundedUpdateCount is > 0 and <= MaximumUpdates
         && review.BoundedUpdateCount == review.Updates.Count
-        && review.BoundedUpdateCount <= MaximumUpdates
         && review.Updates.All(IsValidUpdate)
         && HasUniqueRefs(review.Updates.Select(update => update.RefName))
         && review.RemotePreconditions is not null
         && review.RemotePreconditions.Count <= MaximumRemotePreconditions
         && review.RemotePreconditions.All(IsValidRemotePrecondition)
         && HasUniqueRefs(review.RemotePreconditions.Select(precondition => precondition.RefName));
+
+    public static bool IsValidReceipt(GitPublicationReceipt? receipt) =>
+        receipt is not null
+        && IsAllowedRepositoryUri(receipt.RepositoryUrl)
+        && IsSafeBranch(receipt.Branch)
+        && receipt.AppliedUpdates is not null
+        && receipt.BoundedUpdateCount is > 0 and <= MaximumUpdates
+        && receipt.BoundedUpdateCount == receipt.AppliedUpdates.Count
+        && receipt.AppliedUpdates.All(IsValidUpdate)
+        && HasUniqueRefs(receipt.AppliedUpdates.Select(update => update.RefName));
 
     public static bool IsAllowedRef(string? refName, GitRefNamespace @namespace) =>
         @namespace switch

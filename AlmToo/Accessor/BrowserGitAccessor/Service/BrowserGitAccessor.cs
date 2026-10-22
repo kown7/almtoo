@@ -260,6 +260,52 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             cancellationToken);
     }
 
+    public async ValueTask<GitOperationResult<GitPublicationReview>> InspectPublicationAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var result = await InvokeWithValueAsync<GitPublicationReviewDto, GitPublicationReview>(
+            "inspectPublication",
+            "inspectPublication",
+            value => value.ToReview(),
+            cancellationToken);
+
+        if (!result.Succeeded || result.Value is null || !BrowserGitPublicationContract.IsValidReview(result.Value))
+        {
+            return new GitOperationResult<GitPublicationReview>(
+                "inspectPublication",
+                false,
+                "The reviewed publication set could not be read safely.",
+                Value: default,
+                FailureKind: GitOperationFailureKind.GitBugDataMalformed);
+        }
+
+        return result;
+    }
+
+    public async ValueTask<GitOperationResult<GitPublicationReceipt>> PublishAsync(
+        GitPublicationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!BrowserGitPublicationContract.IsValidRequest(request))
+        {
+            return new GitOperationResult<GitPublicationReceipt>(
+                "publish",
+                false,
+                "The reviewed publication request is invalid.",
+                Value: default,
+                FailureKind: GitOperationFailureKind.UnsupportedRef);
+        }
+
+        var result = await InvokeWithValueAsync<GitPublicationReceiptDto, GitPublicationReceipt>(
+            "publish",
+            "publish",
+            value => value.ToReceipt(),
+            cancellationToken,
+            request);
+
+        return SanitizePublicationResult(result);
+    }
+
     public async ValueTask<GitOperationResult<SynchronizationReview>> SynchronizeAsync(
         SynchronizationRequest request,
         CancellationToken cancellationToken = default)
@@ -536,6 +582,23 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
             Message = Redact(result.Message, personalAccessToken) ?? "The reviewed commit could not be pushed.",
             Diagnostic = Redact(result.Diagnostic, personalAccessToken)
         };
+    }
+
+    private static GitOperationResult<GitPublicationReceipt> SanitizePublicationResult(
+        GitOperationResult<GitPublicationReceipt> result)
+    {
+        if (result.Succeeded && result.Value is not null && BrowserGitPublicationContract.IsValidReceipt(result.Value))
+        {
+            return result with { Diagnostic = null, FailureKind = null };
+        }
+
+        return new GitOperationResult<GitPublicationReceipt>(
+            "publish",
+            false,
+            "The reviewed publication result could not be read safely.",
+            Value: default,
+            Diagnostic: null,
+            FailureKind: result.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed);
     }
 
     public async ValueTask DisposeAsync()
@@ -1358,6 +1421,64 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccess
                 ChangedFileCount is >= 0 and <= BrowserGitCommitContract.MaximumChangedFiles
                     ? ChangedFileCount.Value
                     : 0);
+    }
+
+    private sealed record GitPublicationReviewDto
+    {
+        [JsonPropertyName("repositoryUrl")] public string RepositoryUrl { get; init; } = string.Empty;
+        [JsonPropertyName("branch")] public string Branch { get; init; } = string.Empty;
+        [JsonPropertyName("updates")] public IReadOnlyList<GitRefUpdateDto> Updates { get; init; } = [];
+        [JsonPropertyName("remotePreconditions")] public IReadOnlyList<GitRemotePreconditionDto> RemotePreconditions { get; init; } = [];
+        [JsonPropertyName("boundedUpdateCount")] public int BoundedUpdateCount { get; init; }
+
+        public GitPublicationReview ToReview() => new(
+            RepositoryUrl,
+            Branch,
+            Updates.Select(update => update.ToContract()).ToArray(),
+            RemotePreconditions.Select(precondition => precondition.ToContract()).ToArray(),
+            BoundedUpdateCount);
+    }
+
+    private sealed record GitPublicationReceiptDto
+    {
+        [JsonPropertyName("repositoryUrl")] public string RepositoryUrl { get; init; } = string.Empty;
+        [JsonPropertyName("branch")] public string Branch { get; init; } = string.Empty;
+        [JsonPropertyName("appliedUpdates")] public IReadOnlyList<GitRefUpdateDto> AppliedUpdates { get; init; } = [];
+        [JsonPropertyName("boundedUpdateCount")] public int BoundedUpdateCount { get; init; }
+
+        public GitPublicationReceipt ToReceipt() => new(
+            RepositoryUrl,
+            Branch,
+            AppliedUpdates.Select(update => update.ToContract()).ToArray(),
+            BoundedUpdateCount);
+    }
+
+    private sealed record GitRefUpdateDto
+    {
+        [JsonPropertyName("refName")] public string RefName { get; init; } = string.Empty;
+        [JsonPropertyName("namespace")] public string Namespace { get; init; } = string.Empty;
+        [JsonPropertyName("kind")] public string Kind { get; init; } = string.Empty;
+        [JsonPropertyName("newObjectId")] public string NewObjectId { get; init; } = string.Empty;
+        [JsonPropertyName("expectedOldObjectId")] public string? ExpectedOldObjectId { get; init; }
+
+        public GitRefUpdate ToContract()
+        {
+            if (!Enum.TryParse<GitRefNamespace>(Namespace, true, out var @namespace)
+                || !Enum.TryParse<GitRefUpdateKind>(Kind, true, out var kind))
+            {
+                throw new InvalidOperationException("The publication ref update contract is malformed.");
+            }
+
+            return new(RefName, @namespace, kind, NewObjectId, ExpectedOldObjectId);
+        }
+    }
+
+    private sealed record GitRemotePreconditionDto
+    {
+        [JsonPropertyName("refName")] public string RefName { get; init; } = string.Empty;
+        [JsonPropertyName("expectedObjectId")] public string? ExpectedObjectId { get; init; }
+
+        public GitRemotePrecondition ToContract() => new(RefName, ExpectedObjectId);
     }
 
     private sealed record PushReviewDto

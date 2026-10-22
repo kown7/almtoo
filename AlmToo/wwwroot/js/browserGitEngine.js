@@ -28,6 +28,12 @@ const gitBugLimits = Object.freeze({
   commitMessage: 4096,
   commitEmail: 512
 });
+const publicationLimits = Object.freeze({
+  maximumUpdates: 100,
+  maximumRemotePreconditions: 100,
+  maximumRefNameLength: 256,
+  maximumObjectIdLength: 64
+});
 const gitBugSupportedMarker = 'version-4';
 const gitBugIssueIdPattern = /^[0-9a-f]{64}$/i;
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
@@ -1399,6 +1405,185 @@ async function getActiveWorkspace(operation) {
   return { fs, ...activeRepository };
 }
 
+function isSafePublicationObjectId(value) {
+  return typeof value === 'string'
+    && value.length <= publicationLimits.maximumObjectIdLength
+    && value.length >= 40
+    && /^[0-9a-f]+$/i.test(value);
+}
+
+function isSafePublicationRef(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= publicationLimits.maximumRefNameLength
+    && (value.startsWith('refs/heads/')
+      || value.startsWith('refs/bugs/')
+      || value.startsWith('refs/identities/'))
+    && !/[\\0\\r\\n ~^:?*\\[]/.test(value)
+    && !value.includes('..')
+    && !value.includes('//');
+}
+
+function publicationNamespace(refName) {
+  if (refName.startsWith('refs/heads/')) return 'Branch';
+  if (refName.startsWith('refs/bugs/') || refName.startsWith('refs/identities/')) return 'GitBug';
+  throw new TypeError('publication-ref-unsupported');
+}
+
+function normalizeListedRef(value, namespace) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError('publication-ref-malformed');
+  }
+  const prefix = `refs/${namespace}/`;
+  const refName = value.startsWith('refs/') ? value : `${prefix}${value}`;
+  if (!isSafePublicationRef(refName)
+      || (namespace === 'bugs' && !gitBugIssueIdPattern.test(refName.slice(prefix.length)))
+      || (namespace === 'identities' && !gitBugIssueIdPattern.test(refName.slice(prefix.length)))) {
+    throw new TypeError('publication-ref-unsupported');
+  }
+  return refName;
+}
+
+async function listLocalPublicationUpdates({ fs, dir, git, branch, outgoingCommitId }) {
+  const updates = [{
+    refName: `refs/heads/${branch}`,
+    namespace: 'Branch',
+    kind: 'Update',
+    newObjectId: outgoingCommitId,
+    expectedOldObjectId: null
+  }];
+
+  for (const namespace of ['bugs', 'identities']) {
+    let listed;
+    try {
+      listed = await git.listRefs({ fs, dir, filepath: `refs/${namespace}` });
+    } catch {
+      listed = [];
+    }
+    if (!Array.isArray(listed) || listed.length > publicationLimits.maximumUpdates) {
+      throw new RangeError('publication-update-limit');
+    }
+    for (const listedRef of listed) {
+      const refName = normalizeListedRef(listedRef, namespace);
+      const newObjectId = await git.resolveRef({ fs, dir, ref: refName });
+      if (!isSafePublicationObjectId(newObjectId)) {
+        throw new TypeError('publication-object-malformed');
+      }
+      updates.push({
+        refName,
+        namespace: 'GitBug',
+        kind: 'Update',
+        newObjectId,
+        expectedOldObjectId: null
+      });
+    }
+  }
+
+  if (updates.length > publicationLimits.maximumUpdates) {
+    throw new RangeError('publication-update-limit');
+  }
+  return updates;
+}
+
+async function readRemotePublicationPreconditions({ git, http, repositoryUrl, updates }) {
+  const prefixes = ['refs/heads/', 'refs/bugs/', 'refs/identities/'];
+  const advertised = new Map();
+  for (const prefix of prefixes) {
+    let refs;
+    try {
+      refs = await git.listServerRefs({ http, url: repositoryUrl, corsProxy, prefix });
+    } catch {
+      if (prefix === 'refs/heads/') {
+        throw new Error('publication-network-unavailable');
+      }
+      refs = [];
+    }
+    if (!Array.isArray(refs)) {
+      throw new TypeError('publication-remote-malformed');
+    }
+    for (const item of refs) {
+      const refName = item?.ref;
+      const objectId = item?.oid;
+      if (!isSafePublicationRef(refName) || !isSafePublicationObjectId(objectId)) {
+        throw new TypeError('publication-remote-malformed');
+      }
+      advertised.set(refName, objectId);
+    }
+  }
+  return updates.map(update => ({
+    refName: update.refName,
+    expectedObjectId: advertised.get(update.refName) ?? null
+  }));
+}
+
+function validatePublicationReview(review) {
+  if (!review || typeof review !== 'object'
+      || !isSafePublicationRef(review.destinationRef)
+      || !isSafePublicationObjectId(review.outgoingCommitId)
+      || !Array.isArray(review.updates)
+      || review.updates.length === 0
+      || review.updates.length > publicationLimits.maximumUpdates
+      || !Array.isArray(review.remotePreconditions)
+      || review.remotePreconditions.length > publicationLimits.maximumRemotePreconditions) {
+    throw new TypeError('publication-review-invalid');
+  }
+  const refs = new Set();
+  const normalizedUpdates = review.updates.map(update => ({
+    ...update,
+    namespace: typeof update?.namespace === 'number'
+      ? ['Branch', 'GitBug'][update.namespace]
+      : update?.namespace,
+    kind: typeof update?.kind === 'number'
+      ? ['Create', 'Update', 'Delete'][update.kind]
+      : update?.kind
+  }));
+  for (const update of normalizedUpdates) {
+    if (!update || !isSafePublicationRef(update.refName)
+        || refs.has(update.refName)
+        || !['Branch', 'GitBug'].includes(update.namespace)
+        || (update.namespace === 'Branch' && !update.refName.startsWith('refs/heads/'))
+        || (update.namespace === 'GitBug'
+          && !['refs/bugs/', 'refs/identities/'].some(prefix => update.refName.startsWith(prefix)))
+        || !isSafePublicationObjectId(update.newObjectId)
+        || !['Create', 'Update'].includes(update.kind)
+        || (update.expectedOldObjectId !== null
+          && update.expectedOldObjectId !== undefined
+          && !isSafePublicationObjectId(update.expectedOldObjectId))) {
+      throw new TypeError('publication-update-invalid');
+    }
+    refs.add(update.refName);
+  }
+  if (normalizedUpdates.some(update => update.kind === 'Delete')) {
+    throw new TypeError('publication-delete-rejected');
+  }
+  const preconditionRefs = new Set();
+  for (const precondition of review.remotePreconditions) {
+    if (!precondition || !isSafePublicationRef(precondition.refName)
+        || preconditionRefs.has(precondition.refName)
+        || !refs.has(precondition.refName)
+        || (precondition.expectedObjectId !== null
+          && !isSafePublicationObjectId(precondition.expectedObjectId))) {
+      throw new TypeError('publication-precondition-invalid');
+    }
+    preconditionRefs.add(precondition.refName);
+  }
+  return { ...review, updates: normalizedUpdates };
+}
+
+function stablePublicationList(items, key) {
+  return JSON.stringify([...items].sort((left, right) => left[key].localeCompare(right[key])));
+}
+
+function samePublicationSet(reviewed, current) {
+  return reviewed.repositoryUrl === current.repositoryUrl
+    && reviewed.branch === current.branch
+    && reviewed.outgoingCommitId === current.outgoingCommitId
+    && reviewed.destinationRef === current.destinationRef
+    && stablePublicationList(reviewed.updates, 'refName') === stablePublicationList(current.updates, 'refName')
+    && stablePublicationList(reviewed.remotePreconditions, 'refName')
+      === stablePublicationList(current.remotePreconditions, 'refName');
+}
+
 async function readPushState(operation) {
   const { fs, dir } = await getActiveWorkspace(operation);
   const git = getGit();
@@ -1426,6 +1611,122 @@ async function readPushState(operation) {
     branch,
     outgoingCommitId,
     destinationRef: `refs/heads/${branch}`
+  };
+}
+
+async function readPublicationState(operation) {
+  const { fs, dir } = await getActiveWorkspace(operation);
+  const git = getGit();
+  const origin = await git.getConfig({ fs, dir, path: 'remote.origin.url' });
+  if (typeof origin !== 'string' || origin.trim().length === 0) {
+    throw new Error('The active repository does not have an origin remote.');
+  }
+
+  const repositoryUrl = canonicalizeGitHubOrigin(origin);
+  const fullRef = await git.currentBranch({ fs, dir, fullname: true });
+  if (typeof fullRef !== 'string' || fullRef.length === 0) {
+    throw new Error('The active repository does not have a checked-out branch; detached HEAD cannot be published.');
+  }
+
+  const branch = parseLocalBranchRef(fullRef);
+  const outgoingCommitId = await git.resolveRef({ fs, dir, ref: 'HEAD' });
+  if (!isSafePublicationObjectId(outgoingCommitId)) {
+    throw new TypeError('publication-object-malformed');
+  }
+  const updates = await listLocalPublicationUpdates({ fs, dir, git, branch, outgoingCommitId });
+  const remotePreconditions = await readRemotePublicationPreconditions({
+    git,
+    http: getGitHttp(),
+    repositoryUrl,
+    updates
+  });
+  return {
+    repositoryUrl,
+    branch,
+    outgoingCommitId,
+    destinationRef: `refs/heads/${branch}`,
+    updates,
+    remotePreconditions,
+    boundedUpdateCount: updates.length
+  };
+}
+
+export async function inspectPublication() {
+  const operation = 'inspectPublication';
+  try {
+    const review = await readPublicationState(operation);
+    return success(operation, 'The reviewed publication set is ready.', review);
+  } catch (error) {
+    const category = error?.message === 'publication-network-unavailable'
+      ? 'networkUnavailable'
+      : error?.message === 'publication-ref-unsupported'
+        ? 'unsupportedRef'
+        : 'gitBugDataMalformed';
+    return failureWithKind(operation, 'The publication set could not be inspected safely.', category);
+  }
+}
+
+export async function publish(request, personalAccessToken) {
+  const operation = 'publish';
+  try {
+    const token = requireText(personalAccessToken, 'personalAccessToken');
+    const reviewed = validatePublicationReview(request);
+    const current = await readPublicationState(operation);
+    if (!samePublicationSet(reviewed, current)) {
+      return failureWithKind(operation, 'The reviewed publication is stale and was not pushed.', 'remoteAhead');
+    }
+
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const refspecs = reviewed.updates.map(update => `${update.refName}:${update.refName}`);
+    const pushRef = getGit().push.bind(getGit());
+    for (const update of reviewed.updates) {
+      await pushRef({
+        fs,
+        http: getGitHttp(),
+        dir,
+        url: current.repositoryUrl,
+        corsProxy,
+        ref: update.refName === current.destinationRef ? current.branch : update.refName,
+        remoteRef: update.refName,
+        onAuth: () => ({ username: token, password: token })
+      });
+    }
+    return success(operation, 'The reviewed publication set was pushed.', {
+      repositoryUrl: current.repositoryUrl,
+      branch: current.branch,
+      refspecs,
+      appliedUpdates: reviewed.updates,
+      boundedUpdateCount: reviewed.updates.length,
+      publishedRefs: reviewed.updates.map(update => update.refName),
+      publishedCount: reviewed.updates.length,
+      pushedCommitId: current.outgoingCommitId
+    });
+  } catch (error) {
+    const failureKind = error?.message === 'publication-network-unavailable'
+      ? 'networkUnavailable'
+      : error?.message === 'publication-ref-unsupported'
+        ? 'unsupportedRef'
+        : error?.message === 'publication-delete-rejected'
+          || error?.message === 'publication-ref-unsupported'
+          ? 'unsupportedRef'
+          : ['publication-ref-malformed', 'publication-object-malformed', 'publication-remote-malformed',
+            'publication-review-invalid', 'publication-update-invalid', 'publication-precondition-invalid']
+            .includes(error?.message)
+            ? 'gitBugDataMalformed'
+            : classifyPushFailure(error);
+    return normalizedPublicationFailure(failureKind);
+  }
+}
+
+function normalizedPublicationFailure(failureKind) {
+  const safeMessage = pushFailureDiagnostics[failureKind] ?? 'The reviewed publication could not be pushed safely.';
+  return {
+    operation: 'publish',
+    succeeded: false,
+    message: safeMessage,
+    value: null,
+    diagnostic: null,
+    failureKind
   };
 }
 
