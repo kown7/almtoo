@@ -58,7 +58,7 @@ public sealed class RepositoryWorkspaceState
     public IReadOnlyList<ChangedFile> ChangedFiles { get; internal set; } = Array.Empty<ChangedFile>();
     public bool HasChangedFiles => ChangedFiles.Count > 0;
     public bool CommitReviewLoaded { get; internal set; }
-    public CommitRequest? ProposedCommit { get; internal set; }
+    public RepositoryCommitInput? ProposedCommit { get; internal set; }
     public CommitInfo? CreatedCommit { get; internal set; }
     public bool CanConfirmCommit => CommitReviewLoaded && ProposedCommit is not null && !IsBusy;
     public bool? LastWriteSucceeded { get; internal set; }

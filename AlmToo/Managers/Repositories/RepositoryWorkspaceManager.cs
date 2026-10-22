@@ -339,7 +339,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
                 : "Review the changed files and enter commit details before confirming.");
         }, cancellationToken);
 
-    public void SetProposedCommit(CommitRequest? request)
+    public void SetProposedCommit(RepositoryCommitInput? request)
     {
         State.ProposedCommit = request;
         State.Error = null;
@@ -358,12 +358,12 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }, cancellationToken);
 
     public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
-        CommitAsync(new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
-
-    public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
         RunAsync(RepositoryWorkspaceOperation.Commit, token => CommitCoreAsync(request, token), cancellationToken);
 
-    private async Task<bool> CommitCoreAsync(CommitRequest request, CancellationToken token)
+    public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
+        CommitAsync(new RepositoryCommitInput(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
+
+    private async Task<bool> CommitCoreAsync(RepositoryCommitInput request, CancellationToken token)
     {
         if (!RequireRepository())
         {
@@ -377,7 +377,8 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             return Fail("Commit message, author name, and author email are required.");
         }
 
-        var result = await gitAccessor.CommitAsync(request, token);
+        var result = await gitAccessor.CommitAsync(
+            new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), token);
         if (!result.Succeeded || result.Value is null)
         {
             State.CreatedCommit = null;

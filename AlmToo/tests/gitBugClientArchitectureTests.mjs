@@ -30,6 +30,29 @@ test('Git-Bug navigation and composition expose the concrete Manager Client', as
   assert.doesNotMatch(program, /IGitBugWorkspaceManager/);
 });
 
+test('central repository Manager owns commit and push lifecycle while Git-Bug owns issue workflows', async () => {
+  const [page, gitBugManager, gitBugState, repositoryManager, repositoryState] = await Promise.all([
+    source('Pages/GitBug.razor'),
+    source('Managers/GitBug/GitBugWorkspaceManager.cs'),
+    source('Managers/GitBug/GitBugWorkspaceState.cs'),
+    source('Managers/Repositories/RepositoryWorkspaceManager.cs'),
+    source('Managers/Repositories/RepositoryWorkspaceState.cs')
+  ]);
+
+  assert.doesNotMatch(page, /AlmToo\.Accessor|\bCommitRequest\b|IGitBugAccessor|BrowserGitAccessor/);
+  assert.match(page, /RepositoryWorkspace\.SetProposedCommit\(new RepositoryCommitInput\(/);
+  assert.doesNotMatch(gitBugManager, /^\s*(?:public|private|protected)[^{\n]*(?:Commit|Push)[^{\n]*\(/m);
+  assert.doesNotMatch(gitBugState, /CommitReviewLoaded|ProposedCommit|CreatedCommit|PushReview|PushConfirmed|PushFailureKind|CredentialReplacementRequired/);
+
+  for (const lifecycleMethod of [
+    'ReviewCommitAsync', 'SetProposedCommit', 'ConfirmLocalCommitAsync', 'CommitAsync',
+    'InspectPushAsync', 'StoreCredentialAsync', 'PushReviewedCommitAsync', 'CancelCurrentOperation'
+  ]) assert.match(repositoryManager, new RegExp(`\\b${lifecycleMethod}\\b`), `missing repository lifecycle owner: ${lifecycleMethod}`);
+  assert.match(repositoryState, /RepositoryCommitInput\? ProposedCommit/);
+  assert.match(repositoryState, /PushReview\? PushReview/);
+  assert.match(repositoryState, /CredentialReplacementRequired/);
+});
+
 test('Git-Bug page renders every Manager-owned state and delegates intent', async () => {
   const { page } = await gitBugClientSources();
 

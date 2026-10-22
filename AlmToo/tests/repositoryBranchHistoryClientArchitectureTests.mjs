@@ -65,8 +65,14 @@ test('recent history exposes bounded results, keyboard controls, and safe recove
   assert.match(history, /@foreach \(var commit in State\.RecentHistory\.Entries\)/);
 });
 
-test('Home composes branch and history Clients through Manager-owned callbacks', async () => {
-  const { home } = await clientSources();
+test('repository Clients remain Accessor-free while Home composes the concrete Manager', async () => {
+  const { branch, history, home } = await clientSources();
+
+  for (const [path, client] of [[branchPath, branch], [historyPath, history], ['Pages/Home.razor', home]]) {
+    assert.doesNotMatch(client, /AlmToo\.Accessor|IBrowserGitAccessor|BrowserGitAccessor|IJSRuntime|IJSObjectReference|JSImport/, `${path} must remain Accessor-free`);
+  }
+  assert.match(home, /@inject RepositoryWorkspaceManager Workspace/);
+  assert.doesNotMatch(home, /RepositoryWorkspaceManager\s*\.[A-Za-z]+|new\s+RepositoryWorkspaceManager/);
 
   assert.match(home, /<RepositoryBranchSelector State="State"[\s\S]*OnRefreshRequested="LoadBranchHistoryAsync"[\s\S]*OnBranchSelected="SwitchBranchAsync" \/>/);
   assert.match(home, /<RepositoryCommitHistory State="State"[\s\S]*OnRetryRequested="LoadBranchHistoryAsync"\s*\/>/);

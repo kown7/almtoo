@@ -118,6 +118,52 @@ public sealed class RepositoryWorkspaceManagerTests
     }
 
     [Fact]
+    public async Task Commit_workflow_keeps_proposed_input_manager_owned_and_forwards_accessor_contract_only_at_the_boundary()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewCommitAsync());
+
+        var input = new RepositoryCommitInput("Review central ownership", "Ada", "ada@example.com");
+        manager.SetProposedCommit(input);
+
+        Assert.Same(input, manager.State.ProposedCommit);
+        Assert.True(await manager.ConfirmLocalCommitAsync());
+        Assert.Contains("commit", fake.Calls);
+        Assert.Null(manager.State.ProposedCommit);
+        Assert.True(manager.State.LastWriteSucceeded);
+    }
+
+    [Fact]
+    public async Task Commit_cancellation_preserves_bounded_cancelled_state_without_fabricating_a_commit()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewCommitAsync());
+        manager.SetProposedCommit(new RepositoryCommitInput("Cancel safely", "Ada", "ada@example.com"));
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fake.CommitHandler = async (_, token) =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new GitOperationResult<CommitInfo>("commit", true, "never", new("unexpected", "never"));
+        };
+
+        var operation = manager.ConfirmLocalCommitAsync();
+        await entered.Task;
+        manager.CancelCurrentOperation();
+
+        Assert.False(await operation);
+        Assert.True(manager.State.Error?.WasCancelled);
+        Assert.Null(manager.State.CreatedCommit);
+        Assert.Null(manager.State.LastWriteSucceeded);
+        Assert.Equal(RepositoryWorkspaceOperation.None, manager.State.Operation);
+    }
+
+    [Fact]
     public async Task Cancellation_is_forwarded_and_recorded_without_fabricating_success()
     {
         var fake = new FakeBrowserAccessor();
@@ -407,6 +453,7 @@ public sealed class RepositoryWorkspaceManagerTests
         public Func<CancellationToken, Task<GitOperationResult<SynchronizationReview>>>? SynchronizeHandler { get; set; }
         public Func<string, GitOperationResult<bool>> StoreCredential { get; set; } = _ =>
             new GitOperationResult<bool>("store-credential", true, "Stored.", true);
+        public Func<CommitRequest, CancellationToken, ValueTask<GitOperationResult<CommitInfo>>>? CommitHandler { get; set; }
         public Func<PushRequest, GitOperationResult<PushResult>> Push { get; set; } = request =>
             new GitOperationResult<PushResult>("push", true, "Pushed.", new(request.RepositoryUrl, request.Branch, request.DestinationRef, request.OutgoingCommitId));
 
@@ -472,10 +519,12 @@ public sealed class RepositoryWorkspaceManagerTests
                     new CommitHistory(request.BranchName, [], 0))
                 : await HistoryAsync(request, cancellationToken);
 
-        public ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default)
+        public async ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default)
         {
             Calls.Add("commit");
-            return ValueTask.FromResult(new GitOperationResult<CommitInfo>("commit", true, "Committed.", new("abc123", request.Message)));
+            return CommitHandler is null
+                ? new GitOperationResult<CommitInfo>("commit", true, "Committed.", new("abc123", request.Message))
+                : await CommitHandler(request, cancellationToken);
         }
 
         public ValueTask<GitOperationResult<PushReview>> InspectPushAsync(CancellationToken cancellationToken = default)

@@ -1,6 +1,6 @@
 @page "/git-bug"
+@* Client composition stays Manager-only; repository write inputs are Manager-owned. *@
 @using AlmToo.Components
-@using AlmToo.Accessor.BrowserGitAccessor.Interface
 @using AlmToo.Managers.GitBug
 @using AlmToo.Managers.Repositories
 @implements IDisposable
@@ -147,7 +147,7 @@
     private async Task ReviewCommitAsync() => await RepositoryWorkspace.ReviewCommitAsync();
     private async Task ConfirmCommitAsync() => await RepositoryWorkspace.ConfirmLocalCommitAsync();
     private void SetCommitDetails((string Message, string AuthorName, string Email) details) =>
-        RepositoryWorkspace.SetProposedCommit(new CommitRequest(details.Message, details.AuthorName, details.Email));
+        RepositoryWorkspace.SetProposedCommit(new RepositoryCommitInput(details.Message, details.AuthorName, details.Email));
     private async Task ReviewPushAsync() => await RepositoryWorkspace.InspectPushAsync();
     private async Task SubmitCredentialAsync(string credential) => await RepositoryWorkspace.StoreCredentialAsync(credential);
     private void ConfirmPushAsync() => RepositoryWorkspace.ConfirmPushReview(true);
