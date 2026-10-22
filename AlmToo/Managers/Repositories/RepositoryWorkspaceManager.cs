@@ -312,38 +312,91 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             return Succeed("Repository synchronization was applied and workspace status was refreshed.");
         }, cancellationToken);
 
-    public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
-        CommitAsync(new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
-
-    public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.Commit, async token =>
+    public Task<bool> ReviewCommitAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.ReviewCommit, async token =>
         {
             if (!RequireRepository())
             {
                 return false;
             }
 
-            if (request is null || string.IsNullOrWhiteSpace(request.Message) || string.IsNullOrWhiteSpace(request.AuthorName) || string.IsNullOrWhiteSpace(request.AuthorEmail))
-            {
-                return Fail("Commit message, author name, and author email are required.");
-            }
-
-            var result = await gitAccessor.CommitAsync(request, token);
+            State.CommitReviewLoaded = false;
+            State.ProposedCommit = null;
+            State.CreatedCommit = null;
+            var result = await gitAccessor.GetStatusAsync(token);
             if (!result.Succeeded || result.Value is null)
             {
-                State.CreatedCommit = null;
-                return Fail(result, "The local commit could not be created. Review the changed files and try again.");
+                State.LastRefreshSucceeded = false;
+                State.ChangedFiles = Array.Empty<ChangedFile>();
+                return Fail(result, "Changed files could not be loaded. Reopen the repository and try again.");
             }
 
-            State.CreatedCommit = result.Value;
-            InvalidatePushReview();
-            if (!await RefreshStatusCoreAsync(token))
-            {
-                return false;
-            }
-
-            return Succeed(result.Message);
+            State.ChangedFiles = result.Value;
+            State.CommitReviewLoaded = true;
+            State.LastRefreshSucceeded = true;
+            return Succeed(State.ChangedFiles.Count == 0
+                ? "No changed files are currently available for a local commit."
+                : "Review the changed files and enter commit details before confirming.");
         }, cancellationToken);
+
+    public void SetProposedCommit(CommitRequest? request)
+    {
+        State.ProposedCommit = request;
+        State.Error = null;
+        NotifyChanged();
+    }
+
+    public Task<bool> ConfirmLocalCommitAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.Commit, token =>
+        {
+            if (!State.CommitReviewLoaded || State.ProposedCommit is null)
+            {
+                return Task.FromResult(Fail("Review changed files and enter valid commit details before confirming."));
+            }
+
+            return CommitCoreAsync(State.ProposedCommit, token);
+        }, cancellationToken);
+
+    public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
+        CommitAsync(new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
+
+    public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.Commit, token => CommitCoreAsync(request, token), cancellationToken);
+
+    private async Task<bool> CommitCoreAsync(CommitRequest request, CancellationToken token)
+    {
+        if (!RequireRepository())
+        {
+            return false;
+        }
+
+        State.LastWriteSucceeded = null;
+        if (request is null || string.IsNullOrWhiteSpace(request.Message) || string.IsNullOrWhiteSpace(request.AuthorName) || string.IsNullOrWhiteSpace(request.AuthorEmail))
+        {
+            State.LastWriteSucceeded = false;
+            return Fail("Commit message, author name, and author email are required.");
+        }
+
+        var result = await gitAccessor.CommitAsync(request, token);
+        if (!result.Succeeded || result.Value is null)
+        {
+            State.CreatedCommit = null;
+            State.LastWriteSucceeded = false;
+            return Fail(result, "The local commit could not be created. Review the changed files and try again.");
+        }
+
+        State.CreatedCommit = result.Value;
+        State.ProposedCommit = null;
+        State.CommitReviewLoaded = false;
+        State.LastWriteSucceeded = true;
+        InvalidatePushReview();
+        if (!await RefreshStatusCoreAsync(token))
+        {
+            return false;
+        }
+
+        return Succeed(result.Message);
+    }
 
     public Task<bool> InspectPushAsync(CancellationToken cancellationToken = default) =>
         RunAsync(RepositoryWorkspaceOperation.InspectPush, async token =>

@@ -13,6 +13,7 @@ public enum RepositoryWorkspaceOperation
     RefreshStatus,
     LoadBranchHistory,
     SwitchBranch,
+    ReviewCommit,
     Commit,
     InspectPush,
     StoreCredential,
@@ -55,7 +56,13 @@ public sealed class RepositoryWorkspaceState
     public bool HasUnsavedChanges => SelectedFileContent is not null && EditableFileContent != SelectedFileContent;
 
     public IReadOnlyList<ChangedFile> ChangedFiles { get; internal set; } = Array.Empty<ChangedFile>();
+    public bool HasChangedFiles => ChangedFiles.Count > 0;
+    public bool CommitReviewLoaded { get; internal set; }
+    public CommitRequest? ProposedCommit { get; internal set; }
     public CommitInfo? CreatedCommit { get; internal set; }
+    public bool CanConfirmCommit => CommitReviewLoaded && ProposedCommit is not null && !IsBusy;
+    public bool? LastWriteSucceeded { get; internal set; }
+    public bool? LastRefreshSucceeded { get; internal set; }
 
     public CurrentBranch? CurrentBranch { get; internal set; }
     public IReadOnlyList<BranchChoice> AvailableBranches { get; internal set; } = Array.Empty<BranchChoice>();
