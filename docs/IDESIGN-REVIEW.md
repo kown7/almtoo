@@ -283,3 +283,21 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M013 S01 T01 central Git-Bug publication architecture review
+
+**Current review status:** PASS before T02 implementation. This is the authoritative pre-implementation review of the central write-ownership boundary; it explicitly separates the changed ownership from the retained platform interfaces and does not claim that the refactor itself is already implemented.
+
+**Ownership decision:** issue listing, detail, edit, comment, and issue refresh remain in `GitBugWorkspaceManager`; commit review, proposed commit, commit execution, credential state, push review, confirmation, retry, and cancellation move to `RepositoryWorkspaceManager`. The existing Browser Git Accessor boundary is retained; no Manager-to-Manager call is introduced. No intentional exception exists, so no exception decision is required.
+
+- [x] `Pages/GitBug.razor` and `Components/GitBugIssueDetail.razor` remain **Client** components. They compose passive issue state with passive repository write state and delegate issue, commit, credential, review, push, retry, and cancellation intents; they do not call Accessors, `IJSRuntime`, or browser Git Resources.
+- [x] `GitBugWorkspaceManager` remains the **Manager** for issue listing, detail loading, issue edits, comment creation, and issue refresh. It does not retain a second commit, credential, push, or remote-recovery lifecycle.
+- [x] `RepositoryWorkspaceManager` remains the single **Manager** for repository write orchestration: changed-file and changed-ref review, local commit, credential session, push confirmation, cancellation, retry, and safe failure mapping. The Git-Bug Client may invoke both Managers from the presentation composition point, but no Manager calls another Manager.
+- [x] `BrowserGitAccessor` remains the cohesive **Accessor** implementation for browser Git integration. A focused publication facet may be introduced only to protect the publication contract boundary; its justification is the distinct substitution and validation boundary for reviewed ref publication, not interface-per-method decomposition.
+- [x] `browserGitEngine.js` remains the browser Git **Resource** boundary. It will enumerate and validate only the allowed explicit publication namespaces, including `refs/bugs/` and required Git-Bug identity refs, and will not expose credentials or raw Git protocol diagnostics.
+- [x] `GitRefUpdate`, publication review, and push request records remain passive Accessor contract data. Ref allowlists, bounds, remote preconditions, and failure classification stay below the Client boundary.
+- [x] Existing file editing, branch/history, synchronization, local commit, and generic push flows remain compatible; Git-Bug refs become additional reviewed publication targets rather than an implicit side effect.
+- [x] Verification is layered: source-contract and architecture tests for boundaries, .NET tests for Manager state transitions, JavaScript tests for ref validation, and Chromium plus controlled-remote proof for actual remote ref advancement.
+- [x] No architectural exception is required. This is a current design review PASS for the boundary above; implementation remains subject to the slice verification gates and must preserve this ownership split.
+
+**Result:** PASS
