@@ -13,6 +13,7 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<BrowserGitAccessor>();
 builder.Services.AddScoped<IBrowserGitAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
+builder.Services.AddScoped<IGitPublicationAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
 builder.Services.AddScoped<IBrowserFileAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
 builder.Services.AddScoped<IGitBugAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
 builder.Services.AddScoped<RepositoryWorkspaceManager>();

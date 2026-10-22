@@ -301,3 +301,13 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required. This is a current design review PASS for the boundary above; implementation remains subject to the slice verification gates and must preserve this ownership split.
 
 **Result:** PASS
+
+## M013 S02 T01 focused Git publication contract review
+
+- [x] `BrowserGitAccessor` remains the cohesive **Accessor** implementation and `browserGitEngine.js` remains its browser Git integration Resource; the new `IGitPublicationAccessor` is a focused facet of the existing platform boundary, not a wrapper or pass-through service.
+- [x] `IGitPublicationAccessor` is retained because reviewed publication has a distinct validation and substitution boundary while preserving the existing `PushReview` and `PushRequest` workflow contracts for branch-only callers.
+- [x] `GitRefUpdate`, `GitPublicationRequest`, `GitPublicationReview`, and `GitPublicationReceipt` are passive **Accessor contract** records. Namespace allowlists, bounded update/precondition counts, object-id validation, and safe update-kind checks remain below the Client boundary.
+- [x] The concrete Accessor is registered under both `IBrowserGitAccessor` and `IGitPublicationAccessor` from the same scoped instance; no Manager, Client, Engine, or second implementation is introduced.
+- [x] Existing file, branch/history, synchronization, commit, and branch-only push workflows remain compatible. No architectural exception is required.
+
+**Result:** PASS
