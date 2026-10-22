@@ -170,6 +170,7 @@ export async function withGitBugAcceptance(page, testInfo, options = {}, action)
     phase = 'remote readiness';
     diagnosticsContext.setPhase(phase);
     await remote.waitUntilReady();
+    diagnostics.remoteBefore = await remote.snapshot();
     diagnostics.lifecycle.remoteReady = true;
 
     phase = 'proxy installation';
@@ -220,7 +221,8 @@ export async function withGitBugAcceptance(page, testInfo, options = {}, action)
     }
     if (remote) {
       try {
-        diagnostics.remote = await remote.snapshot();
+        diagnostics.remoteAfter = await remote.snapshot();
+        diagnostics.remote = diagnostics.remoteAfter;
       } catch (error) {
         cleanupErrors.push(acceptanceError(error, scenario, 'capture remote diagnostics'));
       }

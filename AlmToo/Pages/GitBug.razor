@@ -1,4 +1,5 @@
 @page "/git-bug"
+@* Client composition stays Manager-only; repository write inputs are Manager-owned. *@
 @using AlmToo.Components
 @using AlmToo.Managers.GitBug
 @using AlmToo.Managers.Repositories
@@ -46,29 +47,39 @@
         || State.Status == GitBugWorkspaceStatus.EditingIssue
         || State.Status == GitBugWorkspaceStatus.AddingComment
         || State.Status == GitBugWorkspaceStatus.RefreshingAfterWrite
-        || State.Status == GitBugWorkspaceStatus.LoadingCommitReview
-        || State.Status == GitBugWorkspaceStatus.CommitReviewReady
-        || State.Status == GitBugWorkspaceStatus.Committing
-        || State.Status == GitBugWorkspaceStatus.CommitSucceeded
-        || State.Status == GitBugWorkspaceStatus.LoadingPushReview
-        || State.Status == GitBugWorkspaceStatus.PushReviewReady
-        || State.Status == GitBugWorkspaceStatus.Pushing
-        || State.Status == GitBugWorkspaceStatus.PushSucceeded
-        || State.PushFailureKind is not null))
+        || RepositoryWorkspace.State.CommitReviewLoaded
+        || RepositoryWorkspace.State.CreatedCommit is not null
+        || RepositoryWorkspace.State.PushReview is not null
+        || RepositoryWorkspace.State.PublicationReview is not null
+        || (RepositoryWorkspace.State.Operation is RepositoryWorkspaceOperation.ReviewCommit
+            or RepositoryWorkspaceOperation.Commit
+            or RepositoryWorkspaceOperation.ReviewPublication
+            or RepositoryWorkspaceOperation.PublishPublication
+            or RepositoryWorkspaceOperation.InspectPush
+            or RepositoryWorkspaceOperation.StoreCredential
+            or RepositoryWorkspaceOperation.Push)
+        || RepositoryWorkspace.State.PushFailureKind is not null
+        || RepositoryWorkspace.State.PublicationFailureKind is not null))
     {
         <GitBugIssueDetail State="State"
+                           RepositoryState="RepositoryWorkspace.State"
                            OnBackRequested="ReturnToIssueList"
                            OnIssueEdited="EditIssueAsync"
                            OnCommentAdded="AddCommentAsync"
                            OnReviewCommitRequested="ReviewCommitAsync"
                            OnCommitConfirmed="ConfirmCommitAsync"
                            OnCommitDetailsChanged="SetCommitDetails"
+                           OnRepositoryRefreshRequested="RefreshRepositoryStatusAsync"
                            OnReviewPushRequested="ReviewPushAsync"
                            OnCredentialSubmitted="SubmitCredentialAsync"
                            OnPushConfirmed="ConfirmPushAsync"
                            OnPushRequested="PushAsync"
                            OnRetryPushRequested="RetryPushAsync"
-                           OnCredentialReplacement="ReplaceCredentialAsync" />
+                           OnCredentialReplacement="ReplaceCredentialAsync"
+                           OnPublicationReviewRequested="ReviewPublicationAsync"
+                           OnPublicationConfirmed="ConfirmPublicationAsync"
+                           OnPublicationRequested="PublishPublicationAsync"
+                           OnRetryPublicationRequested="RetryPublicationAsync" />
     }
     else if (State.Status is GitBugWorkspaceStatus.Unavailable or GitBugWorkspaceStatus.Unsupported or GitBugWorkspaceStatus.Failed)
     {
@@ -128,26 +139,44 @@
 
     private async Task LoadIssuesAsync() => await GitBugWorkspace.LoadIssuesAsync();
     private async Task OpenIssueAsync(string issueId) => await GitBugWorkspace.OpenIssueAsync(issueId);
-    private async Task EditIssueAsync((string Title, string Description) draft) =>
-        await GitBugWorkspace.EditSelectedIssueAsync(draft.Title, draft.Description);
-    private async Task AddCommentAsync(string body) =>
-        await GitBugWorkspace.AddCommentToSelectedIssueAsync(body);
-    private async Task ReviewCommitAsync() => await GitBugWorkspace.LoadCommitReviewAsync();
-    private async Task ConfirmCommitAsync() => await GitBugWorkspace.ConfirmLocalCommitAsync();
-    private void SetCommitDetails((string Message, string AuthorName, string AuthorEmail) details) =>
-        GitBugWorkspace.SetProposedCommit(details.Message, details.AuthorName, details.AuthorEmail);
-    private async Task ReviewPushAsync() => await GitBugWorkspace.LoadPushReviewAsync();
-    private async Task SubmitCredentialAsync(string credential) => await GitBugWorkspace.StorePushCredentialAsync(credential);
-    private void ConfirmPushAsync() => GitBugWorkspace.ConfirmPushReview(true);
-    private async Task PushAsync()
+    private async Task EditIssueAsync((string Title, string Description) draft)
     {
-        if (State.PushReview is { } review)
+        if (await GitBugWorkspace.EditSelectedIssueAsync(draft.Title, draft.Description))
         {
-            await GitBugWorkspace.PushReviewedCommitAsync(review);
+            await RepositoryWorkspace.RefreshStatusAsync();
         }
     }
-    private async Task RetryPushAsync() => await GitBugWorkspace.LoadPushReviewAsync();
-    private async Task ReplaceCredentialAsync(string credential) => await GitBugWorkspace.ReplacePushCredentialAsync(credential);
+    private async Task AddCommentAsync(string body)
+    {
+        if (await GitBugWorkspace.AddCommentToSelectedIssueAsync(body))
+        {
+            await RepositoryWorkspace.RefreshStatusAsync();
+        }
+    }
+    private async Task RefreshRepositoryStatusAsync() => await RepositoryWorkspace.RefreshStatusAsync();
+    private async Task ReviewCommitAsync() => await RepositoryWorkspace.ReviewCommitAsync();
+    private async Task ConfirmCommitAsync() => await RepositoryWorkspace.ConfirmLocalCommitAsync();
+    private void SetCommitDetails((string Message, string AuthorName, string Email) details) =>
+        RepositoryWorkspace.SetProposedCommit(new RepositoryCommitInput(details.Message, details.AuthorName, details.Email));
+    private async Task ReviewPushAsync() => await RepositoryWorkspace.InspectPushAsync();
+    private async Task SubmitCredentialAsync(string credential) => await RepositoryWorkspace.StoreCredentialAsync(credential);
+    private void ConfirmPushAsync() => RepositoryWorkspace.ConfirmPushReview(true);
+    private async Task PushAsync()
+    {
+        if (RepositoryWorkspace.State.PushReview is { } review)
+        {
+            await RepositoryWorkspace.PushReviewedCommitAsync(review);
+        }
+    }
+    private async Task RetryPushAsync() => await RepositoryWorkspace.InspectPushAsync();
+    private async Task ReviewPublicationAsync() => await RepositoryWorkspace.ReviewPublicationAsync();
+    private void ConfirmPublicationAsync() => RepositoryWorkspace.ConfirmPublicationReview(true);
+    private async Task PublishPublicationAsync()
+    {
+        await RepositoryWorkspace.PublishReviewedPublicationAsync();
+    }
+    private async Task RetryPublicationAsync() => await RepositoryWorkspace.ReviewPublicationAsync();
+    private async Task ReplaceCredentialAsync(string credential) => await RepositoryWorkspace.StoreCredentialAsync(credential);
     private void ReturnToIssueList() => GitBugWorkspace.ReturnToIssueList();
 
     private async Task RetryAsync()
@@ -184,5 +213,6 @@
         GitBugWorkspace.StateChanged -= HandleGitBugStateChanged;
         RepositoryWorkspace.StateChanged -= HandleRepositoryStateChanged;
         GitBugWorkspace.CancelCurrentOperation();
+        RepositoryWorkspace.CancelCurrentOperation();
     }
 }

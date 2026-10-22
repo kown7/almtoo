@@ -30,6 +30,38 @@ test('Git-Bug navigation and composition expose the concrete Manager Client', as
   assert.doesNotMatch(program, /IGitBugWorkspaceManager/);
 });
 
+test('central repository Manager owns commit and push lifecycle while Git-Bug owns issue workflows', async () => {
+  const [page, home, gitBugManager, gitBugState, repositoryManager, repositoryState] = await Promise.all([
+    source('Pages/GitBug.razor'),
+    source('Pages/Home.razor'),
+    source('Managers/GitBug/GitBugWorkspaceManager.cs'),
+    source('Managers/GitBug/GitBugWorkspaceState.cs'),
+    source('Managers/Repositories/RepositoryWorkspaceManager.cs'),
+    source('Managers/Repositories/RepositoryWorkspaceState.cs')
+  ]);
+
+  assert.doesNotMatch(page, /AlmToo\.Accessor|\bCommitRequest\b|IGitBugAccessor|BrowserGitAccessor/);
+  assert.match(page, /RepositoryWorkspace\.SetProposedCommit\(new RepositoryCommitInput\(/);
+  assert.match(page, /RepositoryState="RepositoryWorkspace\.State"/);
+  assert.match(page, /OnReviewCommitRequested="ReviewCommitAsync"/);
+  assert.match(page, /OnReviewPushRequested="ReviewPushAsync"/);
+  assert.match(page, /OnPushRequested="PushAsync"/);
+  assert.match(home, /RepositoryWorkspace\.State/);
+  assert.match(home, /RepositoryChangedFiles/);
+  assert.doesNotMatch(gitBugManager, /^\s*(?:public|private|protected)[^{\n]*(?:Commit|Push)[^{\n]*\(/m);
+  assert.doesNotMatch(gitBugState, /CommitReviewLoaded|ProposedCommit|CreatedCommit|PushReview|PushConfirmed|PushFailureKind|CredentialReplacementRequired/);
+
+  for (const lifecycleMethod of [
+    'ReviewCommitAsync', 'ReviewPublicationAsync', 'SetProposedCommit', 'ConfirmLocalCommitAsync', 'CommitAsync',
+    'InspectPushAsync', 'StoreCredentialAsync', 'PushReviewedCommitAsync', 'PublishReviewedPublicationAsync', 'CancelCurrentOperation'
+  ]) assert.match(repositoryManager, new RegExp(`\\b${lifecycleMethod}\\b`), `missing repository lifecycle owner: ${lifecycleMethod}`);
+  assert.match(repositoryState, /GitPublicationReview\? PublicationReview/);
+  assert.match(repositoryState, /GitRefUpdate> ChangedRefs/);
+  assert.match(repositoryState, /RepositoryCommitInput\? ProposedCommit/);
+  assert.match(repositoryState, /PushReview\? PushReview/);
+  assert.match(repositoryState, /CredentialReplacementRequired/);
+});
+
 test('Git-Bug page renders every Manager-owned state and delegates intent', async () => {
   const { page } = await gitBugClientSources();
 
@@ -51,6 +83,26 @@ test('Git-Bug page renders every Manager-owned state and delegates intent', asyn
   assert.match(page, /GitBugWorkspace\.StateChanged -= HandleGitBugStateChanged/);
   assert.match(page, /RepositoryWorkspace\.StateChanged \+= HandleRepositoryStateChanged/);
   assert.match(page, /RepositoryWorkspace\.StateChanged -= HandleRepositoryStateChanged/);
+});
+
+test('issue writes refresh the central repository state without a second publication lifecycle', async () => {
+  const [page, workflow] = await Promise.all([
+    source('Pages/GitBug.razor'),
+    source('e2e/gitBugWriteWorkflow.spec.mjs')
+  ]);
+
+  const editAndComment = page.slice(
+    page.indexOf('private async Task EditIssueAsync'),
+    page.indexOf('private async Task RefreshRepositoryStatusAsync'));
+  assert.match(editAndComment, /GitBugWorkspace\.EditSelectedIssueAsync\([\s\S]*RepositoryWorkspace\.RefreshStatusAsync\(\)/);
+  assert.match(editAndComment, /GitBugWorkspace\.AddCommentToSelectedIssueAsync\([\s\S]*RepositoryWorkspace\.RefreshStatusAsync\(\)/);
+  assert.doesNotMatch(editAndComment, /CommitAsync|PushAsync|InspectPushAsync|Publish/);
+
+  const editCheckpoint = workflow.indexOf("await expect(acceptancePage.getByRole('textbox', { name: 'Description' })).toHaveValue(editedDescription");
+  const reviewCheckpoint = workflow.indexOf("setPhase('review Git-Bug refs')");
+  assert.ok(editCheckpoint >= 0 && reviewCheckpoint > editCheckpoint, 'browser workflow must review only after issue writes');
+  assert.match(workflow.slice(editCheckpoint, reviewCheckpoint), /Confirm and create local commit[\s\S]*toHaveCount\(0\)/);
+  assert.match(workflow.slice(editCheckpoint, reviewCheckpoint), /Publish reviewed refs[\s\S]*toHaveCount\(0\)/);
 });
 
 test('Git-Bug children are passive accessible list and detail views', async () => {

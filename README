@@ -27,9 +27,11 @@ verified with the small public repository
 
 Current limitations:
 
-- repositories must be publicly readable over HTTPS;
-- repository data and commits remain in browser-local storage;
-- authenticated clone, remote authentication, and push are not included;
-- browser storage capacity is the practical repository-size limit, so small
-  repositories are recommended.
+- repositories must be publicly readable over HTTPS for clone/open;
+- repository data, local commits, and Git-Bug issue edits/comments remain in browser-local storage until explicitly published;
+- central publication is limited to the reviewed Git-Bug refs and required identity ref from the active repository, through the explicit review, credential, confirmation, and push flow;
+- credentials are tab-scoped, are not stored in repository configuration, and are cleared after publication or a rejected/failed publication attempt;
+- remote-ahead, credential rejection, network loss, unsupported refs, and stale reviews require explicit recovery and are never retried implicitly;
+- the M013 acceptance proof uses a disposable controlled smart-HTTP remote; arbitrary hosted remotes, issue closing, pull/reconciliation, bridge management, and hosted issue synchronization remain outside this product boundary;
+- browser storage capacity and Git object traversal are the practical repository-size limits, so small interactive repositories are recommended.
 

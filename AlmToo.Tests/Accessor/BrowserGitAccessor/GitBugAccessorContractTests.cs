@@ -355,6 +355,154 @@ public sealed class GitBugAccessorContractTests
         Assert.Empty(module.Invocations);
     }
 
+    [Fact]
+    public async Task Publication_accessor_maps_reviewed_branch_and_git_bug_refs_without_credentials()
+    {
+        var head = new string('a', 40);
+        var bugObject = new string('b', 40);
+        var identityObject = new string('c', 40);
+        var updates = new[]
+        {
+            new
+            {
+                refName = "refs/heads/main",
+                @namespace = "Branch",
+                kind = "Update",
+                newObjectId = head,
+                expectedOldObjectId = (string?)head
+            },
+            new
+            {
+                refName = "refs/bugs/issue-1",
+                @namespace = "GitBug",
+                kind = "Create",
+                newObjectId = bugObject,
+                expectedOldObjectId = (string?)null
+            },
+            new
+            {
+                refName = "refs/identities/author-1",
+                @namespace = "GitBug",
+                kind = "Update",
+                newObjectId = identityObject,
+                expectedOldObjectId = identityObject
+            }
+        };
+        var preconditions = new[]
+        {
+            new { refName = "refs/heads/main", expectedObjectId = (string?)head },
+            new { refName = "refs/bugs/issue-1", expectedObjectId = (string?)null },
+            new { refName = "refs/identities/author-1", expectedObjectId = identityObject }
+        };
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["inspectPublication"] = Success("inspectPublication", new
+            {
+                repositoryUrl = "https://github.com/example/project.git",
+                branch = "main",
+                outgoingCommitId = head,
+                destinationRef = "refs/heads/main",
+                updates,
+                remotePreconditions = preconditions,
+                boundedUpdateCount = updates.Length
+            }),
+            ["getCredentialForPush"] = JsonSerializer.Serialize("fixture-token"),
+            ["forgetCredential"] = Success("forgetCredential", true),
+            ["publish"] = Success("publish", new
+            {
+                repositoryUrl = "https://github.com/example/project.git",
+                branch = "main",
+                appliedUpdates = updates,
+                boundedUpdateCount = updates.Length
+            })
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+
+        var reviewResult = await accessor.InspectPublicationAsync();
+        Assert.True(reviewResult.Succeeded);
+        Assert.NotNull(reviewResult.Value);
+        var request = new GitPublicationRequest(
+            reviewResult.Value.RepositoryUrl,
+            reviewResult.Value.Branch,
+            reviewResult.Value.Updates,
+            reviewResult.Value.RemotePreconditions);
+        var publishResult = await accessor.PublishAsync(request);
+
+        Assert.True(reviewResult.Succeeded);
+        Assert.True(publishResult.Succeeded);
+        Assert.Equal(3, reviewResult.Value.Updates.Count);
+        Assert.Equal("refs/bugs/issue-1", reviewResult.Value.Updates[1].RefName);
+        Assert.Equal(3, publishResult.Value.BoundedUpdateCount);
+        Assert.Contains("initialize", module.Invocations);
+        Assert.Contains("inspectPublication", module.Invocations);
+        Assert.Contains("getCredentialForPush", module.Invocations);
+        Assert.Contains("publish", module.Invocations);
+    }
+
+    [Fact]
+    public async Task Publication_accessor_rejects_delete_and_malformed_remote_reviews_before_bridge()
+    {
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["publish"] = FakeModule.ThrowResponse,
+            ["inspectPublication"] = Success("inspectPublication", new
+            {
+                repositoryUrl = "https://github.com/example/project.git",
+                branch = "main",
+                outgoingCommitId = new string('a', 40),
+                destinationRef = "refs/heads/main",
+                updates = new[]
+                {
+                    new
+                    {
+                        refName = "refs/bugs/issue-1",
+                        @namespace = "GitBug",
+                        kind = "Delete",
+                        newObjectId = new string('b', 40),
+                        expectedOldObjectId = (string?)null
+                    }
+                },
+                remotePreconditions = Array.Empty<object>(),
+                boundedUpdateCount = 1
+            })
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+
+        var invalidRequest = new GitPublicationRequest(
+            "https://github.com/example/project.git",
+            "main",
+            [new GitRefUpdate("refs/bugs/issue-1", GitRefNamespace.GitBug, GitRefUpdateKind.Delete, new string('b', 40))],
+            [new GitRemotePrecondition("refs/bugs/issue-1", null)]);
+        var invalid = await accessor.PublishAsync(invalidRequest);
+        var malformedReview = await accessor.InspectPublicationAsync();
+
+        Assert.False(invalid.Succeeded);
+        Assert.Equal(GitOperationFailureKind.UnsupportedRef, invalid.FailureKind);
+        Assert.Null(invalid.Diagnostic);
+        Assert.False(malformedReview.Succeeded);
+        Assert.Equal(GitOperationFailureKind.GitBugDataMalformed, malformedReview.FailureKind);
+        Assert.Null(malformedReview.Diagnostic);
+        Assert.Equal(new[] { "initialize", "inspectPublication" }, module.Invocations);
+    }
+
+    [Fact]
+    public void Existing_branch_push_contract_remains_explicit_and_credential_free()
+    {
+        var request = new PushRequest(
+            "https://github.com/example/project",
+            "main",
+            new string('a', 40),
+            "refs/heads/main");
+        var pushMethod = typeof(IGitPublicationAccessor).GetMethod(nameof(IGitPublicationAccessor.PushAsync));
+
+        Assert.NotNull(pushMethod);
+        Assert.Equal("refs/heads/main", request.DestinationRef);
+        Assert.Equal(4, typeof(PushRequest).GetProperties().Length);
+        Assert.DoesNotContain(typeof(PushRequest).GetProperties(), property =>
+            property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void AssertSafeFailure<T>(
         GitOperationResult<T> result,
         GitOperationFailureKind expectedFailure,

@@ -143,7 +143,8 @@ export async function snapshotGitBugRepository(page, repositoryWorkspacePath = w
   return page.evaluate(async workspacePath => {
     const filesystem = globalThis.__almTooGitBugFixtureFs
       ?? new globalThis.LightningFS('almtoo-git', { wipe: false });
-    if (!filesystem) throw new Error('Git-Bug browser filesystem is not available.');
+    const browserGit = globalThis.git;
+    if (!filesystem || !browserGit) throw new Error('Git-Bug browser filesystem is not available.');
     const files = [];
     const visit = async (directory, relative = '') => {
       const names = [...await filesystem.promises.readdir(directory)].sort();
@@ -162,7 +163,86 @@ export async function snapshotGitBugRepository(page, repositoryWorkspacePath = w
       }
     };
     await visit(workspacePath);
-    return Object.fromEntries(files);
+
+    const gitdir = `${workspacePath}/.git`;
+    const refs = (await browserGit.listRefs({ fs: filesystem, gitdir, filepath: 'refs' })).sort();
+    const refOids = {};
+    for (const ref of refs) refOids[ref] = await browserGit.resolveRef({ fs: filesystem, gitdir, ref: `refs/${ref}` });
+    const bugs = refs.filter(ref => ref.startsWith('bugs/'));
+    const identities = refs.filter(ref => ref.startsWith('identities/'));
+    const collectIdentityIds = (value, ids) => {
+      if (Array.isArray(value)) {
+        for (const item of value) collectIdentityIds(item, ids);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      for (const [key, child] of Object.entries(value)) {
+        if (key === 'id' && typeof child === 'string' && /^[0-9a-f]{64}$/u.test(child)) ids.add(child);
+        collectIdentityIds(child, ids);
+      }
+    };
+    const requiredIds = new Set();
+    const pendingBugCommits = bugs.map(ref => refOids[ref]);
+    const seenBugCommits = new Set();
+    while (pendingBugCommits.length > 0) {
+      const oid = pendingBugCommits.pop();
+      if (!oid || seenBugCommits.has(oid)) continue;
+      seenBugCommits.add(oid);
+      const commit = await browserGit.readObject({ fs: filesystem, gitdir, oid });
+      if (commit.type !== 'commit') continue;
+      pendingBugCommits.push(...(commit.object.parent ?? []));
+      const tree = await browserGit.readObject({ fs: filesystem, gitdir, oid: commit.object.tree });
+      for (const entry of tree.object) {
+        if (entry.path !== 'ops' || entry.type !== 'blob') continue;
+        const blob = await browserGit.readObject({ fs: filesystem, gitdir, oid: entry.oid });
+        try {
+          collectIdentityIds(JSON.parse(new TextDecoder().decode(blob.object)), requiredIds);
+        } catch {
+          // Keep the repository snapshot useful when an ops blob is malformed.
+        }
+      }
+    }
+    const requiredIdentityRefs = [...requiredIds].map(id => `identities/${id}`).sort();
+
+    const pendingObjects = [...Object.values(refOids)];
+    const reachableOids = new Set();
+    const reachableByType = {};
+    while (pendingObjects.length > 0) {
+      const oid = pendingObjects.pop();
+      if (!oid || reachableOids.has(oid)) continue;
+      reachableOids.add(oid);
+      const object = await browserGit.readObject({ fs: filesystem, gitdir, oid });
+      reachableByType[object.type] = (reachableByType[object.type] ?? 0) + 1;
+      if (object.type === 'commit') {
+        pendingObjects.push(object.object.tree, ...(object.object.parent ?? []));
+      } else if (object.type === 'tree') {
+        pendingObjects.push(...object.object.map(entry => entry.oid));
+      } else if (object.type === 'tag' && object.object.object) {
+        pendingObjects.push(object.object.object);
+      }
+    }
+    const digestText = async value => {
+      const encoded = new TextEncoder().encode(JSON.stringify(value));
+      const digest = await crypto.subtle.digest('SHA-256', encoded);
+      return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    };
+    const fileMap = Object.fromEntries(files);
+    const reachableObjects = {
+      count: reachableOids.size,
+      byType: reachableByType,
+      digest: await digestText([...reachableOids].sort())
+    };
+    const state = {
+      files: fileMap,
+      refs,
+      refOids,
+      bugs,
+      identities,
+      requiredIdentityRefs,
+      missingIdentityRefs: requiredIdentityRefs.filter(ref => !identities.includes(ref)),
+      reachableObjects
+    };
+    return { ...fileMap, ...state, snapshotDigest: await digestText(state) };
   }, repositoryWorkspacePath);
 }
 

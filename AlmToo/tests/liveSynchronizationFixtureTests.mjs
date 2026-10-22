@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 import { readLiveConfiguration } from '../e2e/liveSynchronizationFixture.mjs';
+import { startControlledGitBugRemote } from '../e2e/controlledGitBugRemote.mjs';
 import {
   branchHistoryFixture,
   startBranchHistoryFixture
@@ -16,6 +17,12 @@ const safeConfiguration = Object.freeze({
   ALMTOO_LIVE_GITHUB_PAT: 'fixture-test-token',
   ALMTOO_LIVE_GITHUB_FILE: 'live-fixture.txt'
 });
+
+async function receivePackProbe(remote, authorization) {
+  return fetch(`${remote.url}/info/refs?service=git-receive-pack`, {
+    headers: { authorization }
+  });
+}
 
 test('live fixture accepts only complete, safe CI environment configuration', () => {
   const configuration = readLiveConfiguration(safeConfiguration);
@@ -73,6 +80,59 @@ test('the committed live-fixture environment template is value-free', async () =
     'ALMTOO_LIVE_GITHUB_PAT=',
     'ALMTOO_LIVE_GITHUB_FILE='
   ]);
+});
+
+test('controlled Git-Bug snapshots record refs, identities, reachability, and safe digests', async () => {
+  const remote = await startControlledGitBugRemote({ username: 'snapshot-user', password: 'snapshot-secret' });
+  try {
+    const snapshot = await remote.snapshot();
+    assert.ok(snapshot.bugs.length > 0);
+    assert.ok(snapshot.identities.length > 0);
+    assert.deepEqual(snapshot.requiredIdentityRefs, snapshot.identities);
+    assert.deepEqual(snapshot.missingIdentityRefs, []);
+    assert.ok(snapshot.reachableObjects.count > 0);
+    assert.equal(snapshot.reachableObjects.digest.length, 64);
+    assert.equal(snapshot.snapshotDigest.length, 64);
+    assert.doesNotMatch(JSON.stringify(snapshot), /snapshot-secret/);
+    assert.doesNotMatch(JSON.stringify(snapshot), /snapshot-user/);
+  } finally {
+    await remote.close();
+  }
+});
+
+test('controlled Git-Bug remote rejects credentials without changing the snapshot digest', async () => {
+  const remote = await startControlledGitBugRemote({ username: 'auth-user', password: 'auth-secret' });
+  try {
+    const before = await remote.snapshot();
+    const response = await receivePackProbe(remote, `Basic ${Buffer.from('auth-user:wrong-secret').toString('base64')}`);
+    const after = await remote.snapshot();
+    assert.equal(response.status, 401);
+    assert.equal(after.snapshotDigest, before.snapshotDigest);
+    assert.ok(after.requestCount > before.requestCount);
+    assert.doesNotMatch(JSON.stringify(after), /auth-secret|wrong-secret/);
+  } finally {
+    await remote.close();
+  }
+});
+
+test('controlled Git-Bug remote models remote-ahead rejection without mutating refs or objects', async () => {
+  const remote = await startControlledGitBugRemote({
+    username: 'ahead-user',
+    password: 'ahead-secret',
+    failureMode: 'non-fast-forward'
+  });
+  try {
+    const before = await remote.snapshot();
+    const response = await receivePackProbe(remote, `Basic ${Buffer.from('ahead-user:ahead-secret').toString('base64')}`);
+    const after = await remote.snapshot();
+    assert.equal(response.status, 403);
+    assert.equal(after.snapshotDigest, before.snapshotDigest);
+    assert.deepEqual(after.refOids, before.refOids);
+    assert.equal(after.reachableObjects.digest, before.reachableObjects.digest);
+    assert.doesNotMatch(JSON.stringify(after), /ahead-secret/);
+  } finally {
+    await remote.close();
+  }
 });
 
 test('branch-history fixture seeds bounded divergent branches with isolated tracked state', async () => {

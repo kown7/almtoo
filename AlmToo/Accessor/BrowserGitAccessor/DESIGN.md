@@ -7,13 +7,13 @@ This document is the durable architecture baseline for Browser Git. It describes
 | Field | Value |
 |---|---|
 | Architecture status | Implemented architecture |
-| Current implementation baseline | Browser Git workflow through Client, Manager, Accessor, and passive Accessor contract records is implemented |
+| Current implementation baseline | Browser Git workflow through Client, Manager, Accessor, and reviewed central publication of Git-Bug refs is implemented |
 | DTO contract co-location | Implemented beside the Accessor interfaces and enforced by source-path-specific architecture contracts |
-| Runtime behavior | Payload shapes, scoped composition, cancellation, credentials, and workflow behavior are unchanged |
+| Runtime behavior | Existing local repository flows remain intact; central publication adds an explicit review, credential, confirmation, and recovery boundary |
 | Review date | 2026-09-25 |
 | Governing policy | `docs/IDESIGN.md` and `docs/IDESIGN-REVIEW.md` |
 
-The operation signatures and behavioral invariants below are authoritative. “Current” describes the final source tree after T02. “Target” documents the same required topology so future changes can be compared against it. Compile, architecture, Manager, and browser verification jointly prove the implementation rather than relying on documentation claims.
+The operation signatures and behavioral invariants below are authoritative. “Current” describes the final source tree after M013 S04, including the central Git-Bug publication proof. “Target” documents the same required topology so future changes can be compared against it. Compile, architecture, Manager, and browser verification jointly prove the implementation rather than relying on documentation claims.
 
 ## Architecture overview
 
@@ -357,7 +357,7 @@ Cancellation publishes `WasCancelled`, a failed result, and credential-free text
 | 4 | Move only passive records/enums; remove `GitOperationResult` factory methods and use explicit construction | Implemented by S04 T02 |
 | 5 | Import Accessor contract records from Accessor interfaces/service, Manager/state, and tests; delete old Accessor DTO declarations | Implemented by S04 T02 |
 | 6 | Enforce singular placement, Resource purity, legal dependencies, and unchanged composition with negative fixtures | Implemented by S04 T02 |
-| 7 | Run Node, xUnit, warning-as-error build, and autonomous browser workflows | Node, xUnit, and build complete in S04 T02; autonomous browser re-proof remains S04 T03 |
+| 7 | Run Node, xUnit, warning-as-error build, and autonomous browser workflows | Node, xUnit, and build complete in S04 T02; autonomous browser re-proof remains S04 T03 and is covered by the controlled-remote acceptance |
 
 The migration was a source ownership change, not a payload redesign. It preserved record shapes, serialization, operation names, cancellation, credential handling, scoped composition, and browser behavior. Compiler errors and source-path architecture rules detect stale namespace consumers.
 
@@ -375,7 +375,7 @@ The migration was a source ownership change, not a payload redesign. It preserve
 - `AlmToo.Tests/Managers/Repositories/RepositoryWorkspaceManagerTests.cs` verifies complete operation sequencing, concurrency, cancellation, stale review, recovery, safe errors, and credential state.
 - `dotnet build AlmToo/AlmToo.csproj --no-restore --warnaserror` catches stale namespaces, signatures, nullability, and registration drift.
 - Playwright exercises the real localhost Blazor entrypoint for clone/open, browse, edit/save, status, commit, reviewed push, credential persistence/forget, authentication rejection, storage clearing, and redaction.
-- Credential-gated live remote mutation remains outside autonomous verification because it requires disposable credentials and remote mutation.
+- Live remote mutation with user-owned credentials remains outside autonomous verification. M013 S04 instead proves the reviewed publication workflow against a disposable controlled smart-HTTP remote without persisting or printing credentials.
 
 ### Operational signals
 
@@ -498,11 +498,11 @@ Repeat this review when an operation, payload, interface, dependency edge, compo
 
 ## Git-Bug S01 write contract: typed model, storage, and failure boundary
 
-This is the shared **Git-Bug S01 Write Contract** with `GIT-BUG-DESIGN.md`. Both documents intentionally use the same operation names, failure kinds, canonical storage invariants, redaction rules, layer assignments, and proof boundary. This section documents the contract for later write slices; **S01 does not implement production mutation**.
+This is the shared **Git-Bug S01 Write Contract** with `GIT-BUG-DESIGN.md`. Both documents intentionally use the same operation names, failure kinds, canonical storage invariants, redaction rules, layer assignments, and proof boundary. This section records the original S01 contract. M013 S04 is the implemented mutation and central-publication proof; its current boundary and evidence are documented below.
 
 ### Typed write vocabulary and operation names
 
-The future `IGitBugAccessor` write facet will accept immutable, credential-free records equivalent to `GitBugIssueEditRequest`, `GitBugCommentCreateRequest`, `GitBugWritePreconditions`, and `GitBugWriteReview`, and return immutable records equivalent to `GitBugIssueEditResult`, `GitBugCommentCreateResult`, and `GitBugWriteReceipt`. The operation names are fixed:
+The implemented `IGitBugAccessor` write facet accepts immutable, credential-free records equivalent to `GitBugIssueEditRequest`, `GitBugCommentCreateRequest`, `GitBugWritePreconditions`, and `GitBugWriteReview`, and returns immutable records equivalent to `GitBugIssueEditResult`, `GitBugCommentCreateResult`, and `GitBugWriteReceipt`. The operation names are fixed:
 
 | Operation | Manager intent | Accessor boundary |
 |---|---|---|
@@ -539,7 +539,7 @@ Each failure preserves the fixed operation name and exposes only a safe message,
 
 ### S01 proof boundary and later proof
 
-S01 proves the shared design vocabulary, storage/serialization invariants, bounded diagnostics, layer ownership, and fixture contract only. S02 will add compile-time-safe immutable C# request/result records and boundary tests; S03 will fixture-prove deterministic serialization and malformed/unsupported/unavailable/conflict classifications. A later mutation slice must separately prove actual browser writes, repository immutability on failure, conflict behavior, and browser acceptance. This document does not claim those production writes exist.
+S01 proved the shared design vocabulary, storage/serialization invariants, bounded diagnostics, layer ownership, and fixture contract. M013 S04 now proves browser-local Git-Bug edits/comments, reviewed central publication of approved refs, controlled-remote reachability, credential rejection, remote-ahead recovery, duplicate prevention, and browser diagnostics. The historical S01 boundary remains useful as the contract origin, but it no longer describes the current implementation state.
 
 ### S01 iDesign review checklist
 
@@ -547,7 +547,7 @@ S01 proves the shared design vocabulary, storage/serialization invariants, bound
 - [x] **Dependency direction:** runtime calls remain `Client -> Manager -> Accessor -> browser/platform`; passive records cross the boundary laterally. Client and Manager do not call JavaScript, parse Git-Bug storage, or serialize Git-Bug operations.
 - [x] **Interface justification:** `IGitBugAccessor` protects the external Git-Bug format/browser platform boundary, credible local/server substitutions, and fixture seam. No pass-through interface or interface-per-record is added.
 - [x] **Cohesion and decomposition:** Manager orchestration, Accessor integration/translation, and Resource encoding remain cohesive; no speculative Engine is introduced.
-- [x] **Verification placement:** .NET contract tests own typed boundary invariants; Node fixture tests own canonical serialization and safe failure scenarios; browser mutation proof is deferred to a later slice.
+- [x] **Verification placement:** .NET contract tests own typed boundary invariants; Node fixture tests own canonical serialization and safe failure scenarios; M013 S04 browser acceptance owns mutation, central publication, recovery, and credential-safety proof.
 - [x] **Exceptions:** none. Raw JS and Git-Bug serialization remain below Manager and Client, and no unexplained architectural exception is retained.
 
 The matching section in `GIT-BUG-DESIGN.md` is authoritative for the facet-specific detail. Any vocabulary or storage change must update both documents and repeat this review.

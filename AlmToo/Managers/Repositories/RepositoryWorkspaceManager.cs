@@ -6,6 +6,7 @@ namespace AlmToo.Managers.Repositories;
 public sealed class RepositoryWorkspaceManager : IDisposable
 {
     private readonly IBrowserGitAccessor gitAccessor;
+    private readonly IGitPublicationAccessor publicationAccessor;
     private readonly IBrowserFileAccessor fileAccessor;
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private CancellationTokenSource? activeOperation;
@@ -14,6 +15,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     public RepositoryWorkspaceManager(IBrowserGitAccessor gitAccessor, IBrowserFileAccessor fileAccessor)
     {
         this.gitAccessor = gitAccessor;
+        publicationAccessor = gitAccessor;
         this.fileAccessor = fileAccessor;
     }
 
@@ -312,38 +314,151 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             return Succeed("Repository synchronization was applied and workspace status was refreshed.");
         }, cancellationToken);
 
-    public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
-        CommitAsync(new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
-
-    public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.Commit, async token =>
+    public Task<bool> ReviewCommitAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.ReviewCommit, async token =>
         {
             if (!RequireRepository())
             {
                 return false;
             }
 
-            if (request is null || string.IsNullOrWhiteSpace(request.Message) || string.IsNullOrWhiteSpace(request.AuthorName) || string.IsNullOrWhiteSpace(request.AuthorEmail))
-            {
-                return Fail("Commit message, author name, and author email are required.");
-            }
-
-            var result = await gitAccessor.CommitAsync(request, token);
-            if (!result.Succeeded || result.Value is null)
-            {
-                State.CreatedCommit = null;
-                return Fail(result, "The local commit could not be created. Review the changed files and try again.");
-            }
-
-            State.CreatedCommit = result.Value;
-            InvalidatePushReview();
+            State.CommitReviewLoaded = false;
+            State.ProposedCommit = null;
+            State.CreatedCommit = null;
             if (!await RefreshStatusCoreAsync(token))
             {
                 return false;
             }
 
-            return Succeed(result.Message);
+            if (!await RefreshPublicationReviewCoreAsync(token))
+            {
+                return false;
+            }
+
+            State.CommitReviewLoaded = true;
+            State.LastRefreshSucceeded = true;
+            return Succeed(State.ChangedFiles.Count == 0 && !State.HasChangedRefs
+                ? "No changed files or refs are currently available for publication."
+                : "Review the changed files and refs before confirming publication.");
         }, cancellationToken);
+
+    /// <summary>Loads the reviewed branch and Git-Bug ref set without applying it.</summary>
+    public Task<bool> ReviewPublicationAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.ReviewPublication, async token =>
+        {
+            if (!RequireRepository())
+            {
+                return false;
+            }
+
+            if (!await RefreshPublicationReviewCoreAsync(token))
+            {
+                return false;
+            }
+
+            return Succeed(State.HasChangedRefs
+                ? "Review the changed refs before publishing."
+                : "No changed refs are currently available for publication.");
+        }, cancellationToken);
+
+    /// <summary>Compatibility alias for callers that use the Accessor operation name.</summary>
+    public Task<bool> InspectPublicationAsync(CancellationToken cancellationToken = default) =>
+        ReviewPublicationAsync(cancellationToken);
+
+    public void ConfirmPublicationReview(bool confirmed)
+    {
+        State.PublicationConfirmed = confirmed && State.PublicationReview is not null;
+        State.Error = null;
+        NotifyChanged();
+    }
+
+    public Task<bool> PublishReviewedPublicationAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.PublishPublication, async token =>
+        {
+            if (State.PublicationReview is not { } review)
+            {
+                return Fail("Review the changed refs before publishing.");
+            }
+
+            return await PublishPublicationCoreAsync(
+                new GitPublicationRequest(review.RepositoryUrl, review.Branch, review.Updates, review.RemotePreconditions),
+                token);
+        }, cancellationToken);
+
+    /// <summary>Publishes exactly the currently reviewed ref set after explicit confirmation.</summary>
+    public Task<bool> PublishPublicationAsync(
+        GitPublicationRequest request,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.PublishPublication,
+            token => PublishPublicationCoreAsync(request, token), cancellationToken);
+
+    public Task<bool> PublishReviewedAsync(CancellationToken cancellationToken = default) =>
+        PublishReviewedPublicationAsync(cancellationToken);
+
+    public Task<bool> PublishReviewedAsync(
+        GitPublicationRequest request,
+        CancellationToken cancellationToken = default) =>
+        PublishPublicationAsync(request, cancellationToken);
+
+    public void SetProposedCommit(RepositoryCommitInput? request)
+    {
+        State.ProposedCommit = request;
+        State.Error = null;
+        NotifyChanged();
+    }
+
+    public Task<bool> ConfirmLocalCommitAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.Commit, token =>
+        {
+            if (!State.CommitReviewLoaded || State.ProposedCommit is null)
+            {
+                return Task.FromResult(Fail("Review changed files and enter valid commit details before confirming."));
+            }
+
+            return CommitCoreAsync(State.ProposedCommit, token);
+        }, cancellationToken);
+
+    public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
+        RunAsync(RepositoryWorkspaceOperation.Commit, token => CommitCoreAsync(request, token), cancellationToken);
+
+    public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
+        CommitAsync(new RepositoryCommitInput(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
+
+    private async Task<bool> CommitCoreAsync(RepositoryCommitInput request, CancellationToken token)
+    {
+        if (!RequireRepository())
+        {
+            return false;
+        }
+
+        State.LastWriteSucceeded = null;
+        if (request is null || string.IsNullOrWhiteSpace(request.Message) || string.IsNullOrWhiteSpace(request.AuthorName) || string.IsNullOrWhiteSpace(request.AuthorEmail))
+        {
+            State.LastWriteSucceeded = false;
+            return Fail("Commit message, author name, and author email are required.");
+        }
+
+        var result = await gitAccessor.CommitAsync(
+            new CommitRequest(request.Message, request.AuthorName, request.AuthorEmail), token);
+        if (!result.Succeeded || result.Value is null)
+        {
+            State.CreatedCommit = null;
+            State.LastWriteSucceeded = false;
+            return Fail(result, "The local commit could not be created. Review the changed files and try again.");
+        }
+
+        State.CreatedCommit = result.Value;
+        State.ProposedCommit = null;
+        State.CommitReviewLoaded = false;
+        State.LastWriteSucceeded = true;
+        InvalidatePushReview();
+        if (!await RefreshStatusCoreAsync(token))
+        {
+            return false;
+        }
+
+        return Succeed(result.Message);
+    }
 
     public Task<bool> InspectPushAsync(CancellationToken cancellationToken = default) =>
         RunAsync(RepositoryWorkspaceOperation.InspectPush, async token =>
@@ -496,6 +611,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         if (!RequireRepository())
         {
             State.ChangedFiles = Array.Empty<ChangedFile>();
+            InvalidatePublicationReview();
             return false;
         }
 
@@ -503,12 +619,112 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         if (!result.Succeeded || result.Value is null)
         {
             State.ChangedFiles = Array.Empty<ChangedFile>();
+            InvalidatePublicationReview();
             return Fail(result, "Changed files could not be loaded. Reopen the repository and try again.");
         }
 
         State.ChangedFiles = result.Value;
+        InvalidatePublicationReview();
+        State.LastRefreshSucceeded = true;
         return Succeed(result.Message);
     }
+
+    private async Task<bool> RefreshPublicationReviewCoreAsync(CancellationToken token)
+    {
+        InvalidatePublicationReview();
+
+        GitOperationResult<GitPublicationReview> result;
+        try
+        {
+            result = await publicationAccessor.InspectPublicationAsync(token);
+        }
+        catch (NotSupportedException)
+        {
+            // Legacy test doubles and alternate Accessors may not expose ref-aware publication yet.
+            return true;
+        }
+
+        if (!result.Succeeded || result.Value is null)
+        {
+            State.PublicationFailureKind = result.FailureKind;
+            return Fail(result, "Changed refs could not be reviewed safely. Retry the repository refresh.");
+        }
+
+        if (!BrowserGitPublicationContract.IsValidReview(result.Value))
+        {
+            State.PublicationFailureKind = GitOperationFailureKind.UnsupportedRef;
+            return Fail("The reviewed refs were not safe to publish.", State.PublicationFailureKind);
+        }
+
+        State.PublicationReview = result.Value;
+        State.PublicationFailureKind = null;
+        return true;
+    }
+
+    private async Task<bool> PublishPublicationCoreAsync(
+        GitPublicationRequest request,
+        CancellationToken token)
+    {
+        if (!State.PublicationConfirmed || State.PublicationReview is not { } review)
+        {
+            return Fail("Review and explicitly confirm the changed refs before publishing.");
+        }
+
+        if (!State.HasCredential)
+        {
+            State.PublicationFailureKind = GitOperationFailureKind.CredentialRejected;
+            State.PushFailureKind = GitOperationFailureKind.CredentialRejected;
+            State.CredentialReplacementRequired = true;
+            State.LastWriteSucceeded = false;
+            return Fail("Enter a token before publishing the reviewed refs.", GitOperationFailureKind.CredentialRejected);
+        }
+
+        if (request is null
+            || !BrowserGitPublicationContract.IsValidRequest(request)
+            || !ReviewsMatch(review, request))
+        {
+            State.PublicationFailureKind = GitOperationFailureKind.UnsupportedRef;
+            return Fail("The publication review is stale or invalid. Review the changed refs again.", State.PublicationFailureKind);
+        }
+
+        State.LastWriteSucceeded = null;
+        State.PublicationConfirmed = false;
+        var result = await publicationAccessor.PublishAsync(request, token);
+        if (!result.Succeeded || result.Value is null)
+        {
+            State.PublicationFailureKind = result.FailureKind;
+            State.PushFailureKind = NormalizePushFailureKind(result.FailureKind);
+            await gitAccessor.ForgetCredentialAsync(token);
+            State.HasCredential = false;
+            State.CredentialReplacementRequired = true;
+            State.PublicationReview = null;
+            State.PublicationConfirmed = false;
+            State.LastWriteSucceeded = false;
+            return Fail(result, GetPublicationFailureGuidance(result.FailureKind));
+        }
+
+        var receipt = result.Value;
+        var forgotten = await gitAccessor.ForgetCredentialAsync(token);
+        State.HasCredential = false;
+        State.CredentialReplacementRequired = !forgotten.Succeeded || forgotten.Value is not true;
+        State.PublicationReceipt = receipt;
+        State.PublicationConfirmed = false;
+        State.LastWriteSucceeded = true;
+        if (!await RefreshStatusCoreAsync(token))
+        {
+            return false;
+        }
+
+        State.PublicationReceipt = receipt;
+        State.PublicationReview = review;
+        return Succeed(result.Message);
+    }
+
+    private static bool ReviewsMatch(GitPublicationReview review, GitPublicationRequest request) =>
+        string.Equals(review.RepositoryUrl, request.RepositoryUrl, StringComparison.Ordinal)
+        && string.Equals(review.Branch, request.Branch, StringComparison.Ordinal)
+        && review.Updates.SequenceEqual(request.Updates)
+        && review.RemotePreconditions.SequenceEqual(request.RemotePreconditions);
 
     private async Task<bool> LoadBranchHistoryCoreAsync(CancellationToken cancellationToken)
     {
@@ -714,6 +930,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         State.BranchHistoryFailure = null;
         ClearSelection();
         InvalidatePushReview();
+        InvalidatePublicationReview();
     }
 
     private void ClearSelection()
@@ -729,6 +946,17 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         State.PushConfirmed = false;
         State.PushFailureKind = null;
     }
+
+    private void InvalidatePublicationReview()
+    {
+        State.PublicationReview = null;
+        State.PublicationConfirmed = false;
+        State.PublicationReceipt = null;
+        State.PublicationFailureKind = null;
+    }
+
+    private static string GetPublicationFailureGuidance(GitOperationFailureKind? failureKind) =>
+        GetPushRecoveryGuidance(NormalizePushFailureKind(failureKind));
 
     private static string GetSynchronizationReviewMessage(SynchronizationDecisionState decision) => decision switch
     {

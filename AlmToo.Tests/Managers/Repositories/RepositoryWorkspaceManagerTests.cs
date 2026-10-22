@@ -13,6 +13,13 @@ public sealed class RepositoryWorkspaceManagerTests
         "/README.md", "README.md", RepositoryFileKind.File, 12, true);
     private static readonly PushReview Review = new(
         Repository.RepositoryUrl, "main", "abc123", "refs/heads/main");
+    private static readonly GitPublicationReview PublicationReview = new(
+        Repository.RepositoryUrl,
+        "main",
+        [new("refs/bugs/issue", GitRefNamespace.GitBug, GitRefUpdateKind.Update,
+            new string('b', 64), new string('a', 64))],
+        [new("refs/heads/main", new string('c', 40))],
+        1);
 
     [Fact]
     public async Task OpenRepository_sequences_open_directory_and_status_into_coherent_state()
@@ -104,6 +111,32 @@ public sealed class RepositoryWorkspaceManagerTests
     }
 
     [Fact]
+    public async Task Status_refresh_stays_local_and_publication_review_is_explicit()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Clean.", [])),
+            PublicationReviewAsync = _ => ValueTask.FromResult(new GitOperationResult<GitPublicationReview>(
+                "inspect-publication", true, "Refs reviewed.", PublicationReview))
+        };
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+
+        fake.Calls.Clear();
+        Assert.True(await manager.RefreshStatusAsync());
+        Assert.Equal(["status"], fake.Calls);
+        Assert.Null(manager.State.PublicationReview);
+
+        Assert.True(await manager.ReviewPublicationAsync());
+        Assert.Equal(["status", "publication-review"], fake.Calls);
+        Assert.Equal(PublicationReview, manager.State.PublicationReview);
+        Assert.True(manager.State.HasChangedRefs);
+        Assert.DoesNotContain("commit", fake.Calls);
+        Assert.DoesNotContain("push", fake.Calls);
+    }
+
+    [Fact]
     public async Task Commit_rejects_malformed_metadata_before_accessor_call()
     {
         var fake = new FakeBrowserAccessor();
@@ -115,6 +148,52 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.False(succeeded);
         Assert.DoesNotContain("commit", fake.Calls);
         Assert.Contains("required", manager.State.Error?.Message);
+    }
+
+    [Fact]
+    public async Task Commit_workflow_keeps_proposed_input_manager_owned_and_forwards_accessor_contract_only_at_the_boundary()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewCommitAsync());
+
+        var input = new RepositoryCommitInput("Review central ownership", "Ada", "ada@example.com");
+        manager.SetProposedCommit(input);
+
+        Assert.Same(input, manager.State.ProposedCommit);
+        Assert.True(await manager.ConfirmLocalCommitAsync());
+        Assert.Contains("commit", fake.Calls);
+        Assert.Null(manager.State.ProposedCommit);
+        Assert.True(manager.State.LastWriteSucceeded);
+    }
+
+    [Fact]
+    public async Task Commit_cancellation_preserves_bounded_cancelled_state_without_fabricating_a_commit()
+    {
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewCommitAsync());
+        manager.SetProposedCommit(new RepositoryCommitInput("Cancel safely", "Ada", "ada@example.com"));
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fake.CommitHandler = async (_, token) =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new GitOperationResult<CommitInfo>("commit", true, "never", new("unexpected", "never"));
+        };
+
+        var operation = manager.ConfirmLocalCommitAsync();
+        await entered.Task;
+        manager.CancelCurrentOperation();
+
+        Assert.False(await operation);
+        Assert.True(manager.State.Error?.WasCancelled);
+        Assert.Null(manager.State.CreatedCommit);
+        Assert.Null(manager.State.LastWriteSucceeded);
+        Assert.Equal(RepositoryWorkspaceOperation.None, manager.State.Operation);
     }
 
     [Fact]
@@ -401,12 +480,14 @@ public sealed class RepositoryWorkspaceManagerTests
         public Func<FilterFilesRequest, GitOperationResult<FilterFilesResult>> Filter { get; set; }
         public Func<FilterFilesRequest, CancellationToken, ValueTask<GitOperationResult<FilterFilesResult>>>? FilterAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<IReadOnlyList<ChangedFile>>>>? StatusAsync { get; set; }
+        public Func<CancellationToken, ValueTask<GitOperationResult<GitPublicationReview>>>? PublicationReviewAsync { get; set; }
         public Func<CancellationToken, ValueTask<GitOperationResult<BranchSnapshot>>>? BranchesAsync { get; set; }
         public Func<BranchHistoryRequest, CancellationToken, ValueTask<GitOperationResult<CommitHistory>>>? HistoryAsync { get; set; }
         public Func<CheckoutBranchRequest, CancellationToken, ValueTask<GitOperationResult>>? CheckoutAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<SynchronizationReview>>>? SynchronizeHandler { get; set; }
         public Func<string, GitOperationResult<bool>> StoreCredential { get; set; } = _ =>
             new GitOperationResult<bool>("store-credential", true, "Stored.", true);
+        public Func<CommitRequest, CancellationToken, ValueTask<GitOperationResult<CommitInfo>>>? CommitHandler { get; set; }
         public Func<PushRequest, GitOperationResult<PushResult>> Push { get; set; } = request =>
             new GitOperationResult<PushResult>("push", true, "Pushed.", new(request.RepositoryUrl, request.Branch, request.DestinationRef, request.OutgoingCommitId));
 
@@ -436,6 +517,17 @@ public sealed class RepositoryWorkspaceManagerTests
                 return await StatusAsync(cancellationToken);
             }
             return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Status refreshed.", [new("/README.md", GitChangeKind.Modified)]);
+        }
+
+        public async ValueTask<GitOperationResult<GitPublicationReview>> InspectPublicationAsync(CancellationToken cancellationToken = default)
+        {
+            if (PublicationReviewAsync is null)
+            {
+                throw new NotSupportedException("Publication review is not configured in this test double.");
+            }
+
+            Calls.Add("publication-review");
+            return await PublicationReviewAsync(cancellationToken);
         }
 
         public async ValueTask<GitOperationResult<BranchSnapshot>> GetBranchesAsync(CancellationToken cancellationToken = default) =>
@@ -472,10 +564,12 @@ public sealed class RepositoryWorkspaceManagerTests
                     new CommitHistory(request.BranchName, [], 0))
                 : await HistoryAsync(request, cancellationToken);
 
-        public ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default)
+        public async ValueTask<GitOperationResult<CommitInfo>> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default)
         {
             Calls.Add("commit");
-            return ValueTask.FromResult(new GitOperationResult<CommitInfo>("commit", true, "Committed.", new("abc123", request.Message)));
+            return CommitHandler is null
+                ? new GitOperationResult<CommitInfo>("commit", true, "Committed.", new("abc123", request.Message))
+                : await CommitHandler(request, cancellationToken);
         }
 
         public ValueTask<GitOperationResult<PushReview>> InspectPushAsync(CancellationToken cancellationToken = default)

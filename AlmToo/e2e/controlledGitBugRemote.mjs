@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -14,6 +15,94 @@ const projectName = 'git-bug-fixture.git';
 
 function headerValue(headers, name) {
   return headers[name.toLowerCase()] ?? headers[name] ?? '';
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function collectIdentityIds(value, ids) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectIdentityIds(item, ids);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'id' && typeof child === 'string' && /^[0-9a-f]{64}$/u.test(child)) ids.add(child);
+    collectIdentityIds(child, ids);
+  }
+}
+
+async function reachableObjects(repository, refOids) {
+  const pending = [...new Set(Object.values(refOids))];
+  const seen = new Set();
+  const byType = {};
+
+  while (pending.length > 0) {
+    const oid = pending.pop();
+    if (!oid || seen.has(oid)) continue;
+    seen.add(oid);
+    const object = await git.readObject({ fs, gitdir: repository, oid });
+    byType[object.type] = (byType[object.type] ?? 0) + 1;
+    if (object.type === 'commit') {
+      pending.push(object.object.tree, ...(object.object.parent ?? []));
+    } else if (object.type === 'tree') {
+      pending.push(...object.object.map(entry => entry.oid));
+    } else if (object.type === 'tag' && object.object.object) {
+      pending.push(object.object.object);
+    }
+  }
+
+  const objectDigest = sha256(JSON.stringify([...seen].sort()));
+  return { count: seen.size, byType, digest: objectDigest };
+}
+
+async function requiredIdentityRefs(repository, bugRefOids, identityRefs) {
+  const ids = new Set();
+  const pending = [...Object.values(bugRefOids)];
+  const seen = new Set();
+  while (pending.length > 0) {
+    const oid = pending.pop();
+    if (!oid || seen.has(oid)) continue;
+    seen.add(oid);
+    const object = await git.readObject({ fs, gitdir: repository, oid });
+    if (object.type !== 'commit') continue;
+    pending.push(...(object.object.parent ?? []));
+    const tree = await git.readObject({ fs, gitdir: repository, oid: object.object.tree });
+    for (const entry of tree.object) {
+      if (entry.path !== 'ops' || entry.type !== 'blob') continue;
+      const blob = await git.readObject({ fs, gitdir: repository, oid: entry.oid });
+      try {
+        collectIdentityIds(JSON.parse(Buffer.from(blob.object).toString('utf8')), ids);
+      } catch {
+        // Reachability remains useful even when a malformed ops blob is present.
+      }
+    }
+  }
+  return [...ids].map(id => `identities/${id}`).sort();
+}
+
+async function repositorySnapshot(repository, requestCount) {
+  const refs = (await git.listRefs({ fs, gitdir: repository, filepath: 'refs' }).catch(() => [])).sort();
+  const refOids = Object.fromEntries(await Promise.all(refs.map(async ref => [
+    ref,
+    await git.resolveRef({ fs, gitdir: repository, ref: `refs/${ref}` })
+  ])));
+  const bugs = refs.filter(ref => ref.startsWith('bugs/'));
+  const identities = refs.filter(ref => ref.startsWith('identities/'));
+  const required = await requiredIdentityRefs(repository, Object.fromEntries(bugs.map(ref => [ref, refOids[ref]])), identities);
+  const reachable = await reachableObjects(repository, refOids);
+  const state = {
+    refs,
+    refOids,
+    bugs,
+    identities,
+    requiredIdentityRefs: required,
+    missingIdentityRefs: required.filter(ref => !identities.includes(ref)),
+    reachableObjects: reachable
+  };
+  const digest = sha256(JSON.stringify(state));
+  return { ...state, snapshotDigest: digest, repository: path.basename(repository), requestCount };
 }
 
 function runHttpBackend({ root, pathInfo, method, query, contentType, body, authorization }) {
@@ -168,8 +257,7 @@ export async function startControlledGitBugRemote(options = {}) {
     setFailureMode(mode) { failureMode = parseFailure(mode); },
     clearFailureMode() { failureMode = null; },
     async snapshot() {
-      const refs = await git.listRefs({ fs, gitdir: repository, filepath: 'refs' }).catch(() => []);
-      return { refs: refs.sort(), repository: path.basename(repository), requestCount };
+      return repositorySnapshot(repository, requestCount);
     },
     async close() {
       if (closed) return;

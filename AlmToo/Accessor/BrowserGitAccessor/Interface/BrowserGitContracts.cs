@@ -310,6 +310,164 @@ public record PushResult(
     string DestinationRef,
     string PushedCommitId);
 
+/// <summary>Names the reviewed ref namespaces that may cross the publication boundary.</summary>
+public enum GitRefNamespace
+{
+    Branch,
+    GitBug
+}
+
+/// <summary>Describes a publication update; deletion is represented so the contract can reject it explicitly.</summary>
+public enum GitRefUpdateKind
+{
+    Create,
+    Update,
+    Delete
+}
+
+/// <summary>One bounded, explicit ref update selected for publication.</summary>
+public sealed record GitRefUpdate(
+    string RefName,
+    GitRefNamespace Namespace,
+    GitRefUpdateKind Kind,
+    string NewObjectId,
+    string? ExpectedOldObjectId = null);
+
+/// <summary>One optimistic remote ref precondition captured during review.</summary>
+public sealed record GitRemotePrecondition(
+    string RefName,
+    string? ExpectedObjectId);
+
+/// <summary>Credential-free publication input containing only the reviewed ref set.</summary>
+public sealed record GitPublicationRequest(
+    string RepositoryUrl,
+    string Branch,
+    IReadOnlyList<GitRefUpdate> Updates,
+    IReadOnlyList<GitRemotePrecondition> RemotePreconditions);
+
+/// <summary>Credential-free publication review shown before an explicit apply operation.</summary>
+public sealed record GitPublicationReview(
+    string RepositoryUrl,
+    string Branch,
+    IReadOnlyList<GitRefUpdate> Updates,
+    IReadOnlyList<GitRemotePrecondition> RemotePreconditions,
+    int BoundedUpdateCount);
+
+/// <summary>Credential-free result metadata for an applied reviewed publication.</summary>
+public sealed record GitPublicationReceipt(
+    string RepositoryUrl,
+    string Branch,
+    IReadOnlyList<GitRefUpdate> AppliedUpdates,
+    int BoundedUpdateCount);
+
+/// <summary>Pure bounds and allowlist checks for reviewed branch and Git-Bug publication.</summary>
+public static class BrowserGitPublicationContract
+{
+    public const int MaximumUpdates = 100;
+    public const int MaximumRemotePreconditions = 100;
+    public const int MaximumRefNameLength = 256;
+    public const int MaximumObjectIdLength = 64;
+    public const int MaximumRepositoryUrlLength = 2048;
+    public const int MaximumBranchLength = 256;
+
+    public static bool IsValidUpdate(GitRefUpdate? update) =>
+        update is not null
+        && Enum.IsDefined(update.Namespace)
+        && update.Kind is GitRefUpdateKind.Create or GitRefUpdateKind.Update
+        && IsAllowedRef(update.RefName, update.Namespace)
+        && IsObjectId(update.NewObjectId)
+        && (update.ExpectedOldObjectId is null || IsObjectId(update.ExpectedOldObjectId));
+
+    public static bool IsValidRemotePrecondition(GitRemotePrecondition? precondition) =>
+        precondition is not null
+        && IsAllowedRefName(precondition.RefName)
+        && (precondition.ExpectedObjectId is null || IsObjectId(precondition.ExpectedObjectId));
+
+    public static bool IsValidRequest(GitPublicationRequest? request) =>
+        request is not null
+        && IsAllowedRepositoryUri(request.RepositoryUrl)
+        && IsSafeBranch(request.Branch)
+        && request.Updates is not null
+        && request.Updates.Count is > 0 and <= MaximumUpdates
+        && request.Updates.All(IsValidUpdate)
+        && HasUniqueRefs(request.Updates.Select(update => update.RefName))
+        && request.RemotePreconditions is not null
+        && request.RemotePreconditions.Count <= MaximumRemotePreconditions
+        && request.RemotePreconditions.All(IsValidRemotePrecondition)
+        && HasUniqueRefs(request.RemotePreconditions.Select(precondition => precondition.RefName));
+
+    public static bool IsValidReview(GitPublicationReview? review) =>
+        review is not null
+        && IsAllowedRepositoryUri(review.RepositoryUrl)
+        && IsSafeBranch(review.Branch)
+        && review.Updates is not null
+        && review.BoundedUpdateCount is > 0 and <= MaximumUpdates
+        && review.BoundedUpdateCount == review.Updates.Count
+        && review.Updates.All(IsValidUpdate)
+        && HasUniqueRefs(review.Updates.Select(update => update.RefName))
+        && review.RemotePreconditions is not null
+        && review.RemotePreconditions.Count <= MaximumRemotePreconditions
+        && review.RemotePreconditions.All(IsValidRemotePrecondition)
+        && HasUniqueRefs(review.RemotePreconditions.Select(precondition => precondition.RefName));
+
+    public static bool IsValidReceipt(GitPublicationReceipt? receipt) =>
+        receipt is not null
+        && IsAllowedRepositoryUri(receipt.RepositoryUrl)
+        && IsSafeBranch(receipt.Branch)
+        && receipt.AppliedUpdates is not null
+        && receipt.BoundedUpdateCount is > 0 and <= MaximumUpdates
+        && receipt.BoundedUpdateCount == receipt.AppliedUpdates.Count
+        && receipt.AppliedUpdates.All(IsValidUpdate)
+        && HasUniqueRefs(receipt.AppliedUpdates.Select(update => update.RefName));
+
+    public static bool IsAllowedRef(string? refName, GitRefNamespace @namespace) =>
+        @namespace switch
+        {
+            GitRefNamespace.Branch => IsAllowedRefName(refName)
+                && refName!.StartsWith("refs/heads/", StringComparison.Ordinal),
+            GitRefNamespace.GitBug => IsAllowedRefName(refName)
+                && (refName!.StartsWith("refs/bugs/", StringComparison.Ordinal)
+                    || refName.StartsWith("refs/identities/", StringComparison.Ordinal)),
+            _ => false
+        };
+
+    private static bool IsAllowedRefName(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= MaximumRefNameLength
+        && value.IndexOfAny(['\\', '\0', '\r', '\n', ' ', '\t', '~', '^', ':', '?', '*', '[']) < 0
+        && !value.StartsWith("/", StringComparison.Ordinal)
+        && !value.EndsWith("/", StringComparison.Ordinal)
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.Contains("..", StringComparison.Ordinal)
+        && !value.Contains("@{", StringComparison.Ordinal);
+
+    private static bool IsSafeBranch(string? branch) =>
+        branch is not null
+        && branch.Length > 0
+        && branch.Length <= MaximumBranchLength
+        && branch.IndexOfAny(['\\', '\0', '\r', '\n', ' ', '\t', '~', '^', ':', '?', '*', '[']) < 0;
+
+    private static bool IsObjectId(string? value) =>
+        value is not null
+        && value.Length is 40 or 64
+        && value.Length <= MaximumObjectIdLength
+        && value.All(Uri.IsHexDigit);
+
+    private static bool HasUniqueRefs(IEnumerable<string> refs) =>
+        refs.Distinct(StringComparer.Ordinal).Count() == refs.Count();
+
+    private static bool IsAllowedRepositoryUri(string? value) =>
+        value is not null
+        && value.Length <= MaximumRepositoryUrlLength
+        && Uri.TryCreate(value, UriKind.Absolute, out var repository)
+        && string.IsNullOrWhiteSpace(repository.UserInfo)
+        && (repository.Scheme == Uri.UriSchemeHttps
+            || (repository.Scheme == Uri.UriSchemeHttp
+                && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                    || IPAddress.TryParse(repository.Host, out var address) && IPAddress.IsLoopback(address))));
+}
+
 /// <summary>Describes whether synchronization should only inspect or may apply an accepted review.</summary>
 public enum SynchronizationIntent
 {

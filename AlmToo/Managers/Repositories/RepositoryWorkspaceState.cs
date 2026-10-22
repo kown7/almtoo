@@ -13,7 +13,10 @@ public enum RepositoryWorkspaceOperation
     RefreshStatus,
     LoadBranchHistory,
     SwitchBranch,
+    ReviewCommit,
+    ReviewPublication,
     Commit,
+    PublishPublication,
     InspectPush,
     StoreCredential,
     ForgetCredential,
@@ -55,7 +58,21 @@ public sealed class RepositoryWorkspaceState
     public bool HasUnsavedChanges => SelectedFileContent is not null && EditableFileContent != SelectedFileContent;
 
     public IReadOnlyList<ChangedFile> ChangedFiles { get; internal set; } = Array.Empty<ChangedFile>();
+    public bool HasChangedFiles => ChangedFiles.Count > 0;
+    public GitPublicationReview? PublicationReview { get; internal set; }
+    public IReadOnlyList<GitRefUpdate> ChangedRefs => PublicationReview?.Updates ?? Array.Empty<GitRefUpdate>();
+    public bool HasChangedRefs => ChangedRefs.Count > 0;
+    public bool PublicationReviewLoaded => PublicationReview is not null;
+    public bool PublicationConfirmed { get; internal set; }
+    public GitPublicationReceipt? PublicationReceipt { get; internal set; }
+    public GitOperationFailureKind? PublicationFailureKind { get; internal set; }
+    public bool CanPublishPublication => PublicationReviewLoaded && PublicationConfirmed && !IsBusy;
+    public bool CommitReviewLoaded { get; internal set; }
+    public RepositoryCommitInput? ProposedCommit { get; internal set; }
     public CommitInfo? CreatedCommit { get; internal set; }
+    public bool CanConfirmCommit => CommitReviewLoaded && ProposedCommit is not null && !IsBusy;
+    public bool? LastWriteSucceeded { get; internal set; }
+    public bool? LastRefreshSucceeded { get; internal set; }
 
     public CurrentBranch? CurrentBranch { get; internal set; }
     public IReadOnlyList<BranchChoice> AvailableBranches { get; internal set; } = Array.Empty<BranchChoice>();

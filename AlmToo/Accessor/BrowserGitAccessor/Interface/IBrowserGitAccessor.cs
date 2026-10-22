@@ -1,7 +1,7 @@
 namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 /// <summary>Isolates the browser JavaScript and remote Git platform boundary.</summary>
-public interface IBrowserGitAccessor : IAsyncDisposable
+public interface IBrowserGitAccessor : IAsyncDisposable, IGitPublicationAccessor
 {
     ValueTask<GitOperationResult<RepositoryInfo>> CloneOrOpenAsync(RepositoryOpenRequest request, CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(CancellationToken cancellationToken = default);
