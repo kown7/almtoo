@@ -20,6 +20,18 @@ This file contains historical reviews below; those entries are evidence, not aut
 
 The agent must present the current section to the user and stop while it is `PENDING APPROVAL`. No architecture-affecting plan or source-code implementation may begin until the user explicitly approves it. If the scope or interface set changes materially, reset the status to `PENDING APPROVAL` and repeat the stop.
 
+## Next milestone: Git-Bug comment presentation de-duplication
+
+**Status:** APPROVED
+**Affected layers:** Client (`GitBugIssueDetail.razor`), Manager contract state (`GitBugIssueDetail` data), Accessor (`BrowserGitAccessor` and `browserGitEngine.js`), test fixtures and browser acceptance
+**Dependency direction:** Client -> Git-Bug Manager -> `IGitBugAccessor` -> `BrowserGitAccessor` -> browser Git integration
+**Interfaces added or retained:** Retain existing `IGitBugAccessor` and passive issue-detail contracts; no new interface proposed.
+**Interface justifications:** Existing Accessor interfaces isolate the browser Git and Git-Bug storage boundary and provide the required testing seam for deterministic fixture-backed reads and writes; this milestone does not add another abstraction.
+**Proposed contract behavior:** A Git-Bug creation message remains the issue description but is not returned as a second follow-up comment. Type-3 Git-Bug comment operations remain comments, including after a local comment write and refresh.
+**Proof required:** Fixture contract expectations, Accessor/Engine tests, and Chromium acceptance must prove the creation message renders once in the description, existing follow-up comments render once, and adding a new comment does not duplicate prior comments.
+**Exceptions or risks:** Existing fixture expectations currently count the creation message in `comments`; they must be deliberately updated with the contract rationale, not silently changed.
+**User approval:** Explicitly approved through the structured review gate in this session.
+
 ## S03 Git-Bug local commit proof
 
 **Result:** PASS

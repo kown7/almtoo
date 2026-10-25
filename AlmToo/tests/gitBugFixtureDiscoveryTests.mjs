@@ -99,7 +99,6 @@ async function readIssue(gitdir, id, identities) {
         title = operation.title;
         description = operation.message;
         authorDisplayName = identities.get(actorId);
-        comments.push({ authorDisplayName, body: operation.message, createdAt: operation.timestamp });
       } else if (operation.type === 3 && typeof operation.message === 'string') {
         comments.push({ authorDisplayName: identities.get(actorId), body: operation.message, createdAt: operation.timestamp });
       } else if (operation.type === 4 && operation.status === 2) {
@@ -196,8 +195,8 @@ test('browser-local Git stack discovers v0.11.0 metadata and fixture-proven read
       labels: expected.labels,
       authorDisplayName: expected.author.name,
       description: expected.comments[0].message,
-      comments: expected.comments.map(comment => comment.message)
-    });
+      comments: expected.comments.slice(1).map(comment => comment.message)
+    }, `${scenario} creation message must not be repeated as a follow-up comment`);
   }
   assert.deepEqual(after, before);
 });

@@ -110,17 +110,22 @@ async function checkScenarioContract(root, manifest) {
   assert.equal(issues.length, 3);
   assert.deepEqual(issues.map(issue => issue.status).sort(), ['closed', 'open', 'open']);
   assert.deepEqual(details.unicodeOpen.labels, ['defect', 'priority:high']);
-  assert.equal(details.unicodeOpen.comments.length, 2);
+  assert.ok(details.unicodeOpen.comments.length >= 1);
   assert.match(details.unicodeOpen.title, /café.*🐛/u);
   assert.match(details.unicodeOpen.comments[0].message, /日本語.*🚀/u);
+  assert.equal(details.unicodeOpen.comments.slice(1).length, 1,
+    'fixture creation message is description-only; exactly one follow-up comment is expected');
   assert.match(details.unicodeOpen.comments[1].message, /Ελληνικά/u);
   assert.equal(details.minimalOpen.status, 'open');
   assert.equal(details.minimalOpen.labels, null);
-  assert.equal(details.minimalOpen.comments.length, 1);
+  assert.ok(details.minimalOpen.comments.length >= 1);
+  assert.equal(details.minimalOpen.comments.slice(1).length, 0,
+    'minimal fixture creation message must not imply a follow-up comment');
   assert.equal(details.minimalOpen.author.login, '');
   assert.equal(details.closed.status, 'closed');
   assert.deepEqual(details.closed.labels, ['documentation', 'resolved']);
-  assert.equal(details.closed.comments.length, 2);
+  assert.equal(details.closed.comments.slice(1).length, 1,
+    'closed fixture creation message is description-only; exactly one follow-up comment is expected');
 
   for (const [name, detail] of Object.entries(details)) {
     assert.equal(detail.human_id, scenarioIds[name]);

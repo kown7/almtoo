@@ -1240,10 +1240,7 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
         title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
         description = requireBoundedGitBugBody(operation.message ?? '', 'description', true);
         authorDisplayName = actor;
-        detailBytes += textEncoder.encode(description).byteLength * 2;
-        if (description.length > 0) {
-          comments.push({ authorDisplayName: actor, body: description });
-        }
+        detailBytes += textEncoder.encode(description).byteLength;
       } else if (operation.type === 1) {
         // Cumulative Git-Bug operation envelopes repeat the creation record.
         // The first creation record wins; later copies are historical data.
