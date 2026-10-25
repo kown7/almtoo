@@ -7,6 +7,19 @@ const credential = 'fixture-push-secret';
 const editedTitle = 'Unicode café regression fixed 🐛';
 const editedDescription = 'Updated description with deterministic UTF-8 text.';
 const comment = 'Browser acceptance comment with deterministic UTF-8 text.';
+const existingType3Comments = [
+  'Confirmed on the browser fixture.\nSecond line with Ελληνικά.'
+];
+
+async function assertIssueContentExactlyOnce(page, description, comments) {
+  const descriptionSurface = page.locator('section.gitbug-detail__description');
+  await expect(descriptionSurface.getByText(description, { exact: true })).toHaveCount(1);
+
+  const commentsSurface = page.locator('section.gitbug-comments');
+  for (const body of comments) {
+    await expect(commentsSurface.getByText(body, { exact: true })).toHaveCount(1);
+  }
+}
 
 test('edits an existing Git-Bug issue with an empty description', async ({ page }, testInfo) => {
   test.setTimeout(120_000);
@@ -49,12 +62,14 @@ test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', 
     await acceptancePage.getByRole('button', { name: 'Save issue locally' }).click();
     await expect(acceptancePage.getByRole('heading', { name: editedTitle, level: 2 })).toBeVisible({ timeout: 30_000 });
     await expect(acceptancePage.getByRole('textbox', { name: 'Description' })).toHaveValue(editedDescription, { timeout: 30_000 });
+    await assertIssueContentExactlyOnce(acceptancePage, editedDescription, existingType3Comments);
     await expect(acceptancePage.getByRole('button', { name: 'Confirm and create local commit' })).toHaveCount(0);
     await expect(acceptancePage.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
 
     await acceptancePage.getByRole('textbox', { name: 'Comment' }).fill(comment);
     await acceptancePage.getByRole('button', { name: 'Add comment locally' }).click();
     await expect(acceptancePage.getByText(comment, { exact: true })).toBeVisible({ timeout: 30_000 });
+    await assertIssueContentExactlyOnce(acceptancePage, editedDescription, [...existingType3Comments, comment]);
     await expect(acceptancePage.getByRole('button', { name: 'Confirm and create local commit' })).toHaveCount(0);
     await expect(acceptancePage.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
 
@@ -67,6 +82,7 @@ test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', 
     await expect(changedRefList).toContainText('refs/bugs/');
     await expect(changedRefList).toContainText('refs/identities/');
     await expect(acceptancePage.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
+    await assertIssueContentExactlyOnce(acceptancePage, editedDescription, [...existingType3Comments, comment]);
     const afterLocalWrite = fixtureSnapshotDigest(await snapshotGitBugRepository(acceptancePage));
     expect(afterLocalWrite).not.toBe(before);
 

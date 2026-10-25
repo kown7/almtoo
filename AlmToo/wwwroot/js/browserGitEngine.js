@@ -1199,6 +1199,7 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
   let labels = null;
   let detailBytes = 0;
   const comments = [];
+  const seenCommentOperations = new Set();
 
   for (const [commitIndex, commit] of commits.entries()) {
     const { tree } = await git.readTree({ fs, dir, oid: commit.tree });
@@ -1248,8 +1249,12 @@ async function readGitBugIssue(git, fs, dir, id, identities, historyBudget) {
         title = requireBoundedGitBugText(operation.title, 'title', gitBugLimits.title);
       } else if (operation.type === 3) {
         const body = requireBoundedGitBugBody(operation.message, 'comment');
-        detailBytes += textEncoder.encode(body).byteLength;
-        comments.push({ authorDisplayName: actor, body });
+        const commentKey = `${actorId}:${JSON.stringify(operation)}`;
+        if (!seenCommentOperations.has(commentKey)) {
+          seenCommentOperations.add(commentKey);
+          detailBytes += textEncoder.encode(body).byteLength;
+          comments.push({ authorDisplayName: actor, body });
+        }
       } else if (operation.type === 6) {
         // Git-Bug v4 uses type 6 for an issue description edit. The history
         // is normalized oldest-first, so apply each edit as it is encountered.
