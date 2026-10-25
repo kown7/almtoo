@@ -4,6 +4,19 @@ import { withGitBugAcceptance } from './gitBugAcceptanceHarness.mjs';
 import { fixtureSnapshotDigest, snapshotGitBugRepository } from './gitBugFixture.mjs';
 
 const credential = 'fixture-push-secret';
+const existingType3Comments = [
+  'Confirmed on the browser fixture.\nSecond line with Ελληνικά.'
+];
+
+async function assertIssueContentExactlyOnce(page, description) {
+  const descriptionSurface = page.locator('section.gitbug-detail__description');
+  await expect(descriptionSurface.getByText(description, { exact: true })).toHaveCount(1);
+
+  const commentsSurface = page.locator('section.gitbug-comments');
+  for (const body of existingType3Comments) {
+    await expect(commentsSurface.getByText(body, { exact: true })).toHaveCount(1);
+  }
+}
 
 function stableFixtureDigest(snapshot) {
   const transportIndependentSnapshot = Object.fromEntries(
@@ -23,6 +36,7 @@ async function prepareRepeatabilityCommit(page, round, setPhase) {
   await page.getByRole('textbox', { name: 'Description' }).fill(`Deterministic repeatability round ${round}.`);
   await page.getByRole('button', { name: 'Save issue locally' }).click();
   await expect(page.getByRole('heading', { name: `Repeatability round ${round}`, level: 2 })).toBeVisible({ timeout: 30_000 });
+  await assertIssueContentExactlyOnce(page, `Deterministic repeatability round ${round}.`);
 
   setPhase('review Git-Bug refs');
   await page.getByRole('button', { name: 'Review changed files' }).click();
@@ -31,6 +45,7 @@ async function prepareRepeatabilityCommit(page, round, setPhase) {
   await expect(changedRefList).toContainText('refs/bugs/');
   await expect(changedRefList).toContainText('refs/identities/');
   await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
+  await assertIssueContentExactlyOnce(page, `Deterministic repeatability round ${round}.`);
 }
 
 async function assertCredentialAbsent(page, credential) {

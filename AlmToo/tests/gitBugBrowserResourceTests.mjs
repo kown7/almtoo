@@ -199,11 +199,11 @@ test('Resource exports decode fixture-proven list and detail DTOs without networ
     assert.deepEqual(detailWithoutRevision, {
       summary,
       description: expected.comments[0].message,
-      comments: expected.comments.map(comment => ({
+      comments: expected.comments.slice(1).map(comment => ({
         authorDisplayName: expected.author.name,
         body: comment.message
       }))
-    });
+    }, `${scenario} creation message must not be repeated as a follow-up comment`);
   }
 
   const filtered = await runtime.engine.listGitBugIssues({ state: 'closed', searchText: null, cursor: null, pageSize: 1 });
