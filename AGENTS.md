@@ -20,7 +20,9 @@ Treat it as required project policy, not optional background material.
 
 Every architecture-affecting plan and review must complete [`docs/IDESIGN-REVIEW.md`](docs/IDESIGN-REVIEW.md). A change is not complete while that review has an unexplained failure.
 
-**Interface review stop:** At the start of every slice, and again whenever execution reveals a materially changed service, contract, Accessor, Resource, or retained interface, pause before implementation continues or any commit/merge is made. Complete the relevant `docs/IDESIGN-REVIEW.md` checklist and record an explicit PASS or a user-visible blocker. This stop applies even when no new interface is added.
+**Hard approval gate:** Before architecture research, slice planning, refactoring, implementation, or review work begins, the agent must create or update a **current, scoped** iDesign review for that unit of work. The review must identify affected layers, dependency direction, retained or proposed interfaces, and one-sentence justification for each interface. The agent must then stop and present the review to the user. No plan or source-code implementation may begin until the user explicitly approves the review. A historical PASS for another slice or feature never satisfies the current gate.
+
+**Re-review stop:** At the start of every slice, and again whenever execution reveals a materially changed service, contract, Accessor, Resource, or retained interface, invalidate the prior approval, update the scoped review, and stop for approval again. This stop applies even when no new interface is added and before any commit or merge.
 
 When adding or retaining an interface, include a one-sentence justification naming the boundary, substitution need, or platform dependency it protects.
 

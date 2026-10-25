@@ -2,6 +2,24 @@
 
 Use this checklist for every architecture-affecting plan, implementation, refactor, and review. Copy the result into the relevant plan, summary, pull request, or review artifact.
 
+## Current review gate
+
+This file contains historical reviews below; those entries are evidence, not automatic approval for new work. Every new architecture-affecting unit must add or update a clearly scoped current section before planning or implementation:
+
+```markdown
+## <unit or slice> <scope>
+
+**Status:** PENDING APPROVAL | APPROVED | BLOCKED
+**Affected layers:** Client, Manager, Engine, Accessor, Resource
+**Dependency direction:** <caller> -> <callee>
+**Interfaces added or retained:** <list, or none>
+**Interface justifications:** <one sentence per interface>
+**Exceptions or risks:** <list, or none>
+**User approval:** <pending, or date and explicit approval reference>
+```
+
+The agent must present the current section to the user and stop while it is `PENDING APPROVAL`. No architecture-affecting plan or source-code implementation may begin until the user explicitly approves it. If the scope or interface set changes materially, reset the status to `PENDING APPROVAL` and repeat the stop.
+
 ## S03 Git-Bug local commit proof
 
 **Result:** PASS

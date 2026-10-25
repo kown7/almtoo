@@ -7,6 +7,8 @@ description: Enforce this project's iDesign layering, dependency direction, cohe
 Apply the architecture policy in `../../docs/IDESIGN.md` to every architecture-affecting unit of work. Prevent accidental layer inversion, orchestration leakage, pass-through abstractions, and interface-per-class decomposition.
 
 This skill is mandatory project policy. Read `../../docs/IDESIGN.md` before making or approving architecture decisions. Use `../../docs/IDESIGN-REVIEW.md` as the completion gate.
+
+**Blocking rule:** For every architecture-affecting unit, create a current scoped review, present it to the user, and stop. Do not plan or modify source code until the user explicitly approves that review. Re-open the gate whenever the affected service, contract, Accessor, Resource, or interface set materially changes. Never reuse a historical PASS as approval for new work.
 </objective>
 
 <quick_start>
@@ -18,8 +20,11 @@ This skill is mandatory project policy. Read `../../docs/IDESIGN.md` before maki
    - the external or platform boundary it isolates;
    - the credible alternate implementation it supports; or
    - the necessary testing seam that cannot be achieved more simply.
-6. Complete `../../docs/IDESIGN-REVIEW.md` during planning and again during final review.
-7. Record any intentional exception as a decision; do not silently waive the policy.
+6. Create or update a **current scoped** section in `../../docs/IDESIGN-REVIEW.md` with status `PENDING APPROVAL`; include the layer map, dependency direction, interface decisions, and explicit interface justifications.
+7. Present that review to the user and wait for explicit approval before planning or implementation. Record the approval and scope in the review before proceeding.
+8. If execution materially changes the design, change the review back to `PENDING APPROVAL`, stop, and obtain approval again.
+9. Complete the approved review again during final review.
+10. Record any intentional exception as a decision; do not silently waive the policy.
 </quick_start>
 
 <interface_policy>
