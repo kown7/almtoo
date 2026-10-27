@@ -74,9 +74,9 @@ The agent must present the current section to the user and stop while it is `PEN
 **Dependency direction:** WorkspaceManager -> `IBrowserGitAccessor` and `IGitBugAccessor` -> `BrowserGitAccessor`
 **Interfaces added or retained:** Retain `IBrowserGitAccessor` and `IGitBugAccessor`; remove `IGitPublicationAccessor` and `IBrowserFileAccessor` as separate contracts.
 **Interface justifications:** `IBrowserGitAccessor` protects the browser Git platform boundary; `IGitBugAccessor` protects the distinct Git-Bug format and fixture-backed substitution seam. The publication and file facets currently resolve to the same concrete Accessor and have no independent consumer or implementation.
-**Exceptions or risks:** Removing the two redundant facets changes Accessor contracts and test seams; all Manager, DI, architecture-test, and fixture references must migrate together. `Services/Git` remains a separate legacy classification task.
+**Exceptions or risks:** Removing the two redundant facets changes Accessor contracts and test seams; all Manager, DI, architecture-test, and fixture references must migrate together. The former `AlmToo/Services/Git` layer is absent, and the architecture gate forbids recreating its service names or redundant facet contracts.
 **User approval:** Explicitly approved by user response on 2026-10-25
-**Review result:** PASS. The approved reduction removes nominal Accessor facets without adding concrete services or weakening the browser Git or Git-Bug platform boundaries. Final verification passed: .NET build, 78 .NET tests, 124 Node tests, stale production-reference scan, and `git diff --check`.
+**Review result:** PASS. The approved reduction removes nominal Accessor facets without adding concrete services or weakening the browser Git or Git-Bug platform boundaries. Final verification passed: .NET build, 78 .NET tests, 124 Node tests, stale production-reference scan, and modified-file whitespace audit.
 
 **Approved scope:** Reduce interface proliferation without creating new Accessor services: fold file and publication operations into `IBrowserGitAccessor`, retain `IGitBugAccessor`, remove the redundant facet registrations and files, classify or remove `AlmToo/Services/Git`, and verify the final Client -> WorkspaceManager -> Accessor boundary.
 

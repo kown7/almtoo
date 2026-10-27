@@ -86,7 +86,7 @@ export function inspectArchitecture(snapshot) {
   }
 
   failures.push(...matchingSources(snapshot.accessors, /AlmToo\.(?:Managers|Pages|Components)\b|\b(?:NavigationManager|RenderFragment|EventCallback|RepositoryWorkspaceState|StateChanged|CredentialReplacementRequired|ConfirmPush|AutoRetry)\b/, 'ACCESSOR_WORKFLOW_OR_UI', 'Accessor must not own Manager workflow policy or Client presentation state'));
-  failures.push(...matchingSources(production, /\b(?:IVersionControlAccessor|VersionControlAccessor|IBrowserGitService|BrowserGitService)\b|AlmToo\.(?:Accessors\.Git|Services\.Git)\b/, 'LEGACY_GIT_ARCHITECTURE', 'legacy Browser Git service name or namespace is forbidden'));
+  failures.push(...matchingSources(production, /\b(?:IVersionControlAccessor|VersionControlAccessor|IBrowserGitService|BrowserGitService|IGitPublicationAccessor|IBrowserFileAccessor)\b|AlmToo\.(?:Accessors\.Git|Services\.Git)\b/, 'LEGACY_GIT_ARCHITECTURE', 'legacy Browser Git service or redundant Accessor facet name is forbidden'));
 
   const contract = snapshot.contracts.get(contractPath);
   if (contract === undefined) {
@@ -178,7 +178,7 @@ function fixture(overrides = {}) {
   const validReview = [
     '### 1. Layer assignments\n| Pages/Home.razor | Client | Render | Manager | Accessor |\n| WorkspaceManager | Manager | Coordinate | Accessor | Manager |\n| browserGitEngine.js | Accessor | Integrate | Platform | Client |\n| IBrowserGitAccessor | Accessor | Integrate | Platform | Client |\n| Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs | Accessor contract | Transfer | Accessor interfaces and data | Behavior |\n**Result:** PASS',
     '### 2. Dependency direction\nOne way.\n**Result:** PASS',
-    '### 3. Interface justification\n| IBrowserGitAccessor | browser Git platform boundary and substitution seam |\n| IBrowserFileAccessor | browser filesystem platform boundary and substitution seam |\nThe concrete WorkspaceManager remains interface-free.\n**Result:** PASS',
+    '### 3. Interface justification\n| IBrowserGitAccessor | browser Git platform boundary and substitution seam |\n| IGitBugAccessor | Git-Bug format/storage boundary and fixture-backed substitution seam |\nThe concrete WorkspaceManager remains interface-free.\n**Result:** PASS',
     '### 4. Cohesion and decomposition\nCohesive.\n**Result:** PASS',
     '### 5. Verification placement\nCovered.\n**Result:** PASS',
     '### 6. Exceptions\nNone.\n**Result:** NOT APPLICABLE',
@@ -196,7 +196,7 @@ function fixture(overrides = {}) {
       [contractPath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record GitOperationResult(string Operation, bool Succeeded, string Message);'],
       [gitBugInterfacePath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public interface IGitBugAccessor { ValueTask ListIssuesAsync(); ValueTask GetIssueAsync(); }']
     ]),
-    composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>(); services.AddScoped<IBrowserGitAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IBrowserFileAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IGitBugAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<WorkspaceManager>(); services.AddScoped<GitBugWorkspaceManager>();']]),
+    composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>(); services.AddScoped<IBrowserGitAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IGitBugAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<WorkspaceManager>();']]),
     design: validReview,
     gitBugDesign: '### T03 iDesign review\nClient to Manager to Accessor to Resource. IGitBugAccessor protects the external-format and platform boundary. No architectural exception is required.\n**Result:** PASS\n## Manager and Client behavior'
   };
