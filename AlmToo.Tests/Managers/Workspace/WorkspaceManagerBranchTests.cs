@@ -1,5 +1,6 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 using AlmToo.Managers.Workspace;
+using AlmToo.Managers.Workspace.Interface;
 using AlmToo.Tests.Managers.Workspace;
 using Xunit;
 
@@ -87,7 +88,6 @@ public sealed class WorkspaceManagerBranchTests
         Assert.Equal(GitOperationFailureKind.BranchSwitchUnavailable, manager.State.Error?.FailureKind);
         Assert.Equal("The repository state is unavailable; no branch switch was completed.", manager.State.Error?.Message);
         Assert.DoesNotContain("token=secret", manager.State.Error?.Message ?? string.Empty, StringComparison.Ordinal);
-        Assert.Null(manager.State.Error?.Diagnostic);
     }
 
     [Fact]

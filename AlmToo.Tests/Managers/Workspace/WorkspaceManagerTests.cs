@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 using AlmToo.Managers.Workspace;
+using AlmToo.Managers.Workspace.Interface;
 using AlmToo.Tests.Managers.Workspace;
 using Xunit;
 
@@ -71,7 +72,7 @@ public sealed class WorkspaceManagerTests
         Assert.False(succeeded);
         Assert.Equal("/../secrets", fake.FilterRequests.Last().Path);
         Assert.Equal("Repository paths cannot traverse the workspace.", manager.State.Error?.Message);
-        Assert.Equal("path-containment", manager.State.Error?.Diagnostic);
+        Assert.DoesNotContain("path-containment", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
         Assert.Equal(GitOperationFailureKind.Unknown, manager.State.Error?.FailureKind);
         Assert.Empty(manager.State.Entries);
     }
@@ -429,13 +430,12 @@ public sealed class WorkspaceManagerTests
         Assert.False(succeeded);
         Assert.DoesNotContain(secret, serializedState, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, manager.State.Error?.Message ?? string.Empty, StringComparison.Ordinal);
-        Assert.DoesNotContain(secret, manager.State.Error?.Diagnostic ?? string.Empty, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, managerStringFields);
         Assert.True(manager.State.CredentialReplacementRequired);
     }
 
     [Fact]
-    public async Task Accessor_exception_is_translated_to_safe_type_only_diagnostic()
+    public async Task Accessor_exception_is_translated_to_safe_failure_state()
     {
         var fake = new FakeBrowserAccessor
         {
@@ -447,7 +447,7 @@ public sealed class WorkspaceManagerTests
 
         Assert.False(succeeded);
         Assert.Equal("The repository operation could not be completed safely.", manager.State.Error?.Message);
-        Assert.Equal(nameof(InvalidOperationException), manager.State.Error?.Diagnostic);
+        Assert.Equal(GitOperationFailureKind.Unknown, manager.State.Error?.FailureKind);
         Assert.DoesNotContain("secret=abc", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
     }
 

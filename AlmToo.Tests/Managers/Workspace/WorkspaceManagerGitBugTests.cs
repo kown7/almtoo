@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 using AlmToo.Managers.Workspace;
+using AlmToo.Managers.Workspace.Interface;
 using Xunit;
 
 namespace AlmToo.Tests.Managers.Workspace;
