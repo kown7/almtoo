@@ -1,4 +1,5 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Managers.Workspace.Interface;
 
 namespace AlmToo.Managers.Workspace;
 

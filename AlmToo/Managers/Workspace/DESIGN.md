@@ -88,6 +88,12 @@ The root repository is authoritative. The Git-Bug facet's private `RepositoryIde
 
 The Manager serializes repository operations through `operationGate` and uses cancellation sources for active work. Git-Bug operations use their own generation/cancellation fence because issue list/detail requests can be superseded independently. Failures are translated to `WorkspaceError`, `WorkspaceResult`, or safe Accessor failure categories; raw browser, HTTP, filesystem, Git, and credential diagnostics are not exposed through Client state.
 
+## Manager-owned contract and state shape
+
+`WorkspaceContracts.cs` and `WorkspaceState.cs` are Manager-owned boundary contracts in the folder-mirroring namespace `AlmToo.Managers.Workspace.Interface`. They define the stable `WorkspaceOperation` use-case identifiers, Client-safe `WorkspaceError` and `WorkspaceResult` records, bounded `WorkspaceCommitInput`, the passive `WorkspaceState` root, and the passive nested `GitBugState` feature section. Existing Accessor request/result records remain owned by `AlmToo.Accessor.BrowserGitAccessor.Interface`; the Manager contracts do not duplicate those DTOs.
+
+`WorkspaceError` intentionally carries only a safe message, operation identifier, stable failure category, and cancellation flag. Accessor diagnostics remain below the Manager boundary, including exception type names and `GitOperationResult.Diagnostic` values. The concrete `WorkspaceManager` remains the only Client-facing orchestration surface; no `IWorkspaceManager`, Git-Bug Engine, or Client-to-Accessor dependency was added.
+
 ## Accessor contract audit
 
 The current production boundary is:

@@ -1,7 +1,8 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 
-namespace AlmToo.Managers.Workspace;
+namespace AlmToo.Managers.Workspace.Interface;
 
+/// <summary>Application-safe Git-Bug lifecycle states exposed by the WorkspaceManager.</summary>
 public enum GitBugWorkspaceStatus
 {
     Idle,
@@ -17,6 +18,7 @@ public enum GitBugWorkspaceStatus
     Failed
 }
 
+/// <summary>Stable application use-case identifiers. These names are safe for Client state and diagnostics.</summary>
 public enum WorkspaceOperation
 {
     None,
@@ -44,19 +46,23 @@ public enum WorkspaceOperation
     AddGitBugComment
 }
 
+/// <summary>
+/// A Client-safe failed or cancelled Manager outcome. Accessor diagnostics are intentionally not part of this contract.
+/// </summary>
 public sealed record WorkspaceError(
     WorkspaceOperation Operation,
     string Message,
-    string? Diagnostic = null,
     GitOperationFailureKind? FailureKind = null,
     bool WasCancelled = false);
 
+/// <summary>A Client-safe outcome for a complete WorkspaceManager use-case.</summary>
 public sealed record WorkspaceResult(
     WorkspaceOperation Operation,
     bool Succeeded,
     string Message,
     GitOperationFailureKind? FailureKind = null);
 
+/// <summary>Bounded application input for the reviewed local commit use-case.</summary>
 public sealed record WorkspaceCommitInput(
     string Message,
     string AuthorName,

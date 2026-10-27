@@ -1,4 +1,5 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Managers.Workspace.Interface;
 
 namespace AlmToo.Managers.Workspace;
 
@@ -34,7 +35,7 @@ public sealed partial class WorkspaceManager : IDisposable
             State.HasCredential = result.Value;
             State.CredentialReplacementRequired = false;
             return Succeed(result.Value ? "A token is available for an explicit push in this tab." : "No token is stored for this tab.");
-        }, cancellationToken, exposeAccessorException: false);
+        }, cancellationToken);
 
     public Task<bool> OpenRepositoryAsync(string repositoryUrl, CancellationToken cancellationToken = default) =>
         RunAsync(WorkspaceOperation.OpenRepository, async token =>
@@ -510,7 +511,7 @@ public sealed partial class WorkspaceManager : IDisposable
             {
                 credentialForAttempt = string.Empty;
             }
-        }, cancellationToken, exposeAccessorException: false);
+        }, cancellationToken);
 
     public Task<bool> ForgetCredentialAsync(CancellationToken cancellationToken = default) =>
         RunAsync(WorkspaceOperation.ForgetCredential, async token =>
@@ -521,7 +522,7 @@ public sealed partial class WorkspaceManager : IDisposable
             return !State.CredentialReplacementRequired
                 ? Succeed("Token forgotten for this tab.")
                 : Fail("The token could not be removed from tab storage. Close this tab before continuing.", result.FailureKind);
-        }, cancellationToken, exposeAccessorException: false);
+        }, cancellationToken);
 
     public Task<bool> PushReviewedCommitAsync(PushReview reviewedPush, CancellationToken cancellationToken = default) =>
         RunAsync(WorkspaceOperation.Push, async token =>
@@ -814,8 +815,7 @@ public sealed partial class WorkspaceManager : IDisposable
     private async Task<bool> RunAsync(
         WorkspaceOperation operation,
         Func<CancellationToken, Task<bool>> action,
-        CancellationToken cancellationToken,
-        bool exposeAccessorException = true)
+        CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (!await operationGate.WaitAsync(0, CancellationToken.None))
@@ -848,10 +848,9 @@ public sealed partial class WorkspaceManager : IDisposable
             State.Result = new(operation, false, State.Error.Message);
             return false;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            var diagnostic = exposeAccessorException ? exception.GetType().Name : null;
-            State.Error = new(operation, "The repository operation could not be completed safely.", diagnostic, GitOperationFailureKind.Unknown);
+            State.Error = new(operation, "The repository operation could not be completed safely.", GitOperationFailureKind.Unknown);
             State.Result = new(operation, false, State.Error.Message, State.Error.FailureKind);
             return false;
         }
@@ -885,7 +884,7 @@ public sealed partial class WorkspaceManager : IDisposable
     private bool Fail<T>(GitOperationResult<T> result, string fallbackMessage)
     {
         var message = string.IsNullOrWhiteSpace(result.Message) ? fallbackMessage : result.Message;
-        State.Error = new(State.Operation, message, result.Diagnostic, result.FailureKind);
+        State.Error = new(State.Operation, message, result.FailureKind);
         State.Result = new(State.Operation, false, message, result.FailureKind);
         NotifyChanged();
         return false;

@@ -1,8 +1,9 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 
-namespace AlmToo.Managers.Workspace;
+namespace AlmToo.Managers.Workspace.Interface;
 
-public sealed class WorkspaceState
+/// <summary>Passive Manager-owned state for the complete WorkspaceManager use-case boundary.</summary>
+public sealed record WorkspaceState
 {
     public WorkspaceOperation Operation { get; internal set; }
     public bool IsBusy => Operation != WorkspaceOperation.None;
@@ -86,7 +87,8 @@ public sealed class WorkspaceState
     public GitBugState GitBug { get; } = new();
 }
 
-public sealed class GitBugState
+/// <summary>Passive feature state for the Git-Bug use-case section of <see cref="WorkspaceState"/>.</summary>
+public sealed record GitBugState
 {
     public GitBugWorkspaceStatus Status { get; internal set; }
     public bool RepositoryAvailable { get; internal set; }
