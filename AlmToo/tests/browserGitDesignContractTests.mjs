@@ -101,21 +101,21 @@ export function inspectDesign(document) {
     [currentTopology, /Client[\s\S]*Manager[\s\S]*Accessor[\s\S]*(?:JavaScript|browser)/i, 'current layer and platform call path'],
     [targetTopology, /Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs/, 'Accessor contract canonical path'],
     [targetTopology, /AlmToo\.Accessor\.BrowserGitAccessor\.Interface/, 'Accessor contract canonical namespace'],
-    [targetTopology, /RepositoryWorkspaceState[\s\S]*(?:does \*\*not\*\* move|does not move)[\s\S]*Manager-owned/i, 'Manager-state and Accessor-contract distinction'],
+    [targetTopology, /WorkspaceState[\s\S]*(?:does \*\*not\*\* move|does not move)[\s\S]*Manager-owned/i, 'Manager-state and Accessor-contract distinction'],
     [dependencies, /### Allowed edges[\s\S]*### Forbidden edges/, 'allowed and forbidden dependency edges'],
     [dependencies, /Client -> Manager -> Accessor -> platform/, 'one-way runtime call direction'],
     [ownership, /`IBrowserGitAccessor` is retained because it protects[^.]*platform boundary[^.]*substitution seam[^.]*\./i, 'IBrowserGitAccessor platform-boundary justification'],
-    [ownership, /`IBrowserFileAccessor` is retained because it protects[^.]*platform boundary[^.]*substitution seam[^.]*\./i, 'IBrowserFileAccessor platform-boundary justification'],
-    [ownership, /RepositoryWorkspaceManager`?\s+needs no interface[\s\S]*no (?:external or )?platform boundary/i, 'concrete Manager interface decision'],
+    [ownership, /`IGitBugAccessor` is retained because it protects[^.]*distinct Git-Bug[^.]*substitution seam[^.]*\./i, 'IGitBugAccessor platform-boundary justification'],
+    [ownership, /WorkspaceManager`?\s+needs no interface[\s\S]*no (?:external or )?platform boundary/i, 'concrete Manager interface decision'],
     [composition, /scoped[\s\S]*same concrete scoped instance[\s\S]*dispose/i, 'shared scoped composition and disposal'],
     [operations, /CloneOrOpenAsync[\s\S]*FilterFilesAsync[\s\S]*UpdateFilesAsync[\s\S]*GetStatusAsync[\s\S]*CommitAsync[\s\S]*InspectPushAsync[\s\S]*HasCredentialAsync[\s\S]*StoreCredentialAsync[\s\S]*ForgetCredentialAsync[\s\S]*PushAsync[\s\S]*SynchronizeAsync[\s\S]*DisposeAsync/, 'complete Accessor operation surface'],
     [contract, /records and enums[\s\S]*no methods or executable bodies/i, 'passive Resource constraint'],
     [contract, /No credential field exists/i, 'credential-free Accessor contract'],
     [failuresSection, /JavaScript module import[\s\S]*Browser filesystem[\s\S]*GitHub clone[\s\S]*GitHub push[\s\S]*sessionStorage[\s\S]*Cancellation/i, 'external dependency failure paths'],
     [failuresSection, /Node architecture tests report rule and source path[\s\S]*Playwright retains failure-only trace\/screenshots/i, 'failure localization surfaces'],
-    [migration, /Implemented by S04 T02[\s\S]*autonomous browser re-proof remains S04 T03/, 'truthful staged implementation status'],
+    [migration, /Node, xUnit, build, and browser re-proof are complete in M015 S03/, 'truthful staged implementation status'],
     [migration, /source ownership change[\s\S]*preserved record shapes[\s\S]*source-path architecture rules detect stale namespace consumers/i, 'completed Resource migration contract'],
-    [testing, /browserGitDesignContractTests\.mjs[\s\S]*browserGitArchitectureGateTests\.mjs[\s\S]*RepositoryWorkspaceManagerTests\.cs[\s\S]*Playwright/i, 'layered verification strategy'],
+    [testing, /browserGitDesignContractTests\.mjs[\s\S]*browserGitArchitectureGateTests\.mjs[\s\S]*WorkspaceManagerTests\.cs[\s\S]*Playwright/i, 'layered verification strategy'],
     [load, /10x[\s\S]*SemaphoreSlim[\s\S]*fail fast/i, '10x breakpoint and protection'],
     [risks, /storage quotas[\s\S]*CORS[\s\S]*Large repositories[\s\S]*credential leak/i, 'known operational and security risks'],
     [extensions, /binary file[\s\S]*pagination[\s\S]*credential stores[\s\S]*remote hosts/i, 'bounded extension points'],
@@ -201,8 +201,8 @@ test('negative fixtures reject the former Resource DTO ownership', async () => {
 test('negative fixtures require a platform-boundary justification for both retained interfaces', async () => {
   const design = await readDesign();
   const unjustified = design.replace(
-    /`IBrowserFileAccessor` is retained because[^.]+\./,
-    '`IBrowserFileAccessor` is retained for dependency injection and mocking convenience.'
+    /`IGitBugAccessor` is retained because[^.]+\./,
+    '`IGitBugAccessor` is retained for dependency injection and mocking convenience.'
   );
   assertRule(inspectDesign(unjustified), 'DESIGN_CONTENT_MISSING');
 });
@@ -215,8 +215,7 @@ test('the document is truthful about Accessor contract co-location and remaining
 
   assert.match(status, /DTO contract co-location[\s\S]*Implemented beside the Accessor interfaces/i);
   assert.match(current, /current source keeps[\s\S]*Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs[\s\S]*AlmToo\.Accessor\.BrowserGitAccessor\.Interface/i);
-  assert.match(migration, /Import Accessor contract records[\s\S]*Implemented by S04 T02/);
-  assert.match(migration, /autonomous browser re-proof remains S04 T03/);
+  assert.match(migration, /Node, xUnit, build, and browser re-proof are complete in M015 S03/);
 });
 
 test('package test script includes design, architecture, Accessor, engine, credential, and Client contracts', async () => {
