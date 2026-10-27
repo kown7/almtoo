@@ -2,7 +2,7 @@ using AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 namespace AlmToo.Managers.Workspace.Interface;
 
-/// <summary>Passive Manager-owned state for the complete WorkspaceManager use-case boundary.</summary>
+/// <summary>Passive state owned by the application Manager for the complete workspace use-case boundary.</summary>
 public sealed record WorkspaceState
 {
     public WorkspaceOperation Operation { get; internal set; }

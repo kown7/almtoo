@@ -2,7 +2,7 @@ using AlmToo.Accessor.BrowserGitAccessor.Interface;
 
 namespace AlmToo.Managers.Workspace.Interface;
 
-/// <summary>Application-safe Git-Bug lifecycle states exposed by the WorkspaceManager.</summary>
+/// <summary>Application-safe Git-Bug lifecycle states exposed by the application Manager.</summary>
 public enum GitBugWorkspaceStatus
 {
     Idle,
@@ -55,7 +55,7 @@ public sealed record WorkspaceError(
     GitOperationFailureKind? FailureKind = null,
     bool WasCancelled = false);
 
-/// <summary>A Client-safe outcome for a complete WorkspaceManager use-case.</summary>
+/// <summary>A Client-safe outcome for a complete workspace use-case.</summary>
 public sealed record WorkspaceResult(
     WorkspaceOperation Operation,
     bool Succeeded,
