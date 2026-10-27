@@ -493,7 +493,7 @@ public sealed class GitBugAccessorContractTests
             "main",
             new string('a', 40),
             "refs/heads/main");
-        var pushMethod = typeof(IGitPublicationAccessor).GetMethod(nameof(IGitPublicationAccessor.PushAsync));
+        var pushMethod = typeof(IBrowserGitAccessor).GetMethod(nameof(IBrowserGitAccessor.PushAsync));
 
         Assert.NotNull(pushMethod);
         Assert.Equal("refs/heads/main", request.DestinationRef);

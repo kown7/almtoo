@@ -1,4 +1,4 @@
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
 
 <section class="changed-files" aria-labelledby="changed-files-heading">
     <div class="changed-files__header">
@@ -80,16 +80,16 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter, EditorRequired] public WorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback OnRefreshRequested { get; set; }
     [Parameter] public bool ReviewMode { get; set; }
     [Parameter] public EventCallback OnReviewRequested { get; set; }
 
     private bool IsLoading => ReviewMode
-        ? State.Operation == RepositoryWorkspaceOperation.ReviewCommit
-        : State.Operation == RepositoryWorkspaceOperation.RefreshStatus;
-    private RepositoryWorkspaceResult? StatusResult => ReviewMode
-        ? State.Result?.Operation == RepositoryWorkspaceOperation.ReviewCommit ? State.Result : null
-        : State.Result?.Operation == RepositoryWorkspaceOperation.RefreshStatus ? State.Result : null;
+        ? State.Operation == WorkspaceOperation.ReviewCommit
+        : State.Operation == WorkspaceOperation.RefreshStatus;
+    private WorkspaceResult? StatusResult => ReviewMode
+        ? State.Result?.Operation == WorkspaceOperation.ReviewCommit ? State.Result : null
+        : State.Result?.Operation == WorkspaceOperation.RefreshStatus ? State.Result : null;
     private string MessageCssClass => $"status-message {(StatusResult?.Succeeded == true ? "success" : "error")}";
 }

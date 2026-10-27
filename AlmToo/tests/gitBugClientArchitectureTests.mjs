@@ -18,38 +18,38 @@ test('Git-Bug navigation and composition expose the concrete Manager Client', as
   const [nav, program, manager] = await Promise.all([
     source('Layout/NavMenu.razor'),
     source('Program.cs'),
-    source('Managers/GitBug/GitBugWorkspaceManager.cs')
+    source('Managers/Workspace/Service/WorkspaceGitBugFacet.cs')
   ]);
 
   assert.match(nav, /href="git-bug"[\s\S]*Git-Bug Issues/);
-  assert.match(program, /AddScoped<GitBugWorkspaceManager>\(\)/);
+  assert.match(program, /AddScoped<WorkspaceManager>\(\)/);
   assert.match(manager, /LoadIssuesAsync\(\)/);
   assert.match(manager, /LoadIssuesAsync\([\s\S]*GitBugIssueQuery query,[\s\S]*CancellationToken cancellationToken = default\)/);
   assert.match(manager, /OpenIssueAsync\(string issueId\)/);
   assert.match(manager, /OpenIssueAsync\([\s\S]*GitBugIssueId issueId,[\s\S]*CancellationToken cancellationToken = default\)/);
-  assert.doesNotMatch(program, /IGitBugWorkspaceManager/);
+  assert.doesNotMatch(program, /IWorkspaceManager/);
 });
 
-test('central repository Manager owns commit and push lifecycle while Git-Bug owns issue workflows', async () => {
+test('WorkspaceManager owns repository, publication, and Git-Bug use-cases', async () => {
   const [page, home, gitBugManager, gitBugState, repositoryManager, repositoryState] = await Promise.all([
     source('Pages/GitBug.razor'),
     source('Pages/Home.razor'),
-    source('Managers/GitBug/GitBugWorkspaceManager.cs'),
-    source('Managers/GitBug/GitBugWorkspaceState.cs'),
-    source('Managers/Repositories/RepositoryWorkspaceManager.cs'),
-    source('Managers/Repositories/RepositoryWorkspaceState.cs')
+    source('Managers/Workspace/Service/WorkspaceGitBugFacet.cs'),
+    source('Managers/Workspace/Interface/WorkspaceState.cs'),
+    source('Managers/Workspace/Service/WorkspaceManager.cs'),
+    source('Managers/Workspace/Interface/WorkspaceState.cs')
   ]);
 
   assert.doesNotMatch(page, /AlmToo\.Accessor|\bCommitRequest\b|IGitBugAccessor|BrowserGitAccessor/);
-  assert.match(page, /RepositoryWorkspace\.SetProposedCommit\(new RepositoryCommitInput\(/);
-  assert.match(page, /RepositoryState="RepositoryWorkspace\.State"/);
+  assert.match(page, /Workspace\.SetProposedCommit\(new WorkspaceCommitInput\(/);
+  assert.match(page, /RepositoryState="Workspace\.State"/);
   assert.match(page, /OnReviewCommitRequested="ReviewCommitAsync"/);
   assert.match(page, /OnReviewPushRequested="ReviewPushAsync"/);
   assert.match(page, /OnPushRequested="PushAsync"/);
-  assert.match(home, /RepositoryWorkspace\.State/);
+  assert.match(home, /Workspace\.State/);
   assert.match(home, /RepositoryChangedFiles/);
   assert.doesNotMatch(gitBugManager, /^\s*(?:public|private|protected)[^{\n]*(?:Commit|Push)[^{\n]*\(/m);
-  assert.doesNotMatch(gitBugState, /CommitReviewLoaded|ProposedCommit|CreatedCommit|PushReview|PushConfirmed|PushFailureKind|CredentialReplacementRequired/);
+  assert.match(gitBugState, /public GitBugState GitBug/);
 
   for (const lifecycleMethod of [
     'ReviewCommitAsync', 'ReviewPublicationAsync', 'SetProposedCommit', 'ConfirmLocalCommitAsync', 'CommitAsync',
@@ -57,7 +57,7 @@ test('central repository Manager owns commit and push lifecycle while Git-Bug ow
   ]) assert.match(repositoryManager, new RegExp(`\\b${lifecycleMethod}\\b`), `missing repository lifecycle owner: ${lifecycleMethod}`);
   assert.match(repositoryState, /GitPublicationReview\? PublicationReview/);
   assert.match(repositoryState, /GitRefUpdate> ChangedRefs/);
-  assert.match(repositoryState, /RepositoryCommitInput\? ProposedCommit/);
+  assert.match(repositoryState, /WorkspaceCommitInput\? ProposedCommit/);
   assert.match(repositoryState, /PushReview\? PushReview/);
   assert.match(repositoryState, /CredentialReplacementRequired/);
 });
@@ -65,24 +65,21 @@ test('central repository Manager owns commit and push lifecycle while Git-Bug ow
 test('Git-Bug page renders every Manager-owned state and delegates intent', async () => {
   const { page } = await gitBugClientSources();
 
-  assert.match(page, /@inject GitBugWorkspaceManager GitBugWorkspace/);
-  assert.match(page, /private GitBugWorkspaceState State => GitBugWorkspace\.State/);
+  assert.match(page, /@inject WorkspaceManager Workspace/);
+  assert.match(page, /private GitBugState State => Workspace\.State\.GitBug/);
   for (const status of [
     'LoadingList', 'LoadingDetail', 'ListReady', 'DetailReady', 'Unavailable', 'Unsupported', 'Failed'
   ]) assert.match(page, new RegExp(`GitBugWorkspaceStatus\\.${status}`), `missing state: ${status}`);
 
   for (const delegation of [
-    'GitBugWorkspace.SetRepository(RepositoryWorkspace.State.Repository)',
-    'GitBugWorkspace.LoadIssuesAsync()',
-    'GitBugWorkspace.OpenIssueAsync(issueId)',
-    'GitBugWorkspace.ReturnToIssueList()',
-    'GitBugWorkspace.CancelCurrentOperation()'
+    'Workspace.LoadIssuesAsync()',
+    'Workspace.OpenIssueAsync(issueId)',
+    'Workspace.ReturnToIssueList()',
+    'Workspace.CancelCurrentOperation()'
   ]) assert.ok(page.includes(delegation), `missing Manager delegation: ${delegation}`);
 
-  assert.match(page, /GitBugWorkspace\.StateChanged \+= HandleGitBugStateChanged/);
-  assert.match(page, /GitBugWorkspace\.StateChanged -= HandleGitBugStateChanged/);
-  assert.match(page, /RepositoryWorkspace\.StateChanged \+= HandleRepositoryStateChanged/);
-  assert.match(page, /RepositoryWorkspace\.StateChanged -= HandleRepositoryStateChanged/);
+  assert.match(page, /Workspace\.StateChanged \+= HandleStateChanged/);
+  assert.match(page, /Workspace\.StateChanged -= HandleStateChanged/);
 });
 
 test('issue writes refresh the central repository state without a second publication lifecycle', async () => {
@@ -94,8 +91,8 @@ test('issue writes refresh the central repository state without a second publica
   const editAndComment = page.slice(
     page.indexOf('private async Task EditIssueAsync'),
     page.indexOf('private async Task RefreshRepositoryStatusAsync'));
-  assert.match(editAndComment, /GitBugWorkspace\.EditSelectedIssueAsync\([\s\S]*RepositoryWorkspace\.RefreshStatusAsync\(\)/);
-  assert.match(editAndComment, /GitBugWorkspace\.AddCommentToSelectedIssueAsync\([\s\S]*RepositoryWorkspace\.RefreshStatusAsync\(\)/);
+  assert.match(editAndComment, /Workspace\.EditSelectedIssueAsync\([\s\S]*Workspace\.RefreshStatusAsync\(\)/);
+  assert.match(editAndComment, /Workspace\.AddCommentToSelectedIssueAsync\([\s\S]*Workspace\.RefreshStatusAsync\(\)/);
   assert.doesNotMatch(editAndComment, /CommitAsync|PushAsync|InspectPushAsync|Publish/);
 
   const editCheckpoint = workflow.indexOf("await expect(acceptancePage.getByRole('textbox', { name: 'Description' })).toHaveValue(editedDescription");
@@ -109,7 +106,7 @@ test('Git-Bug children are passive accessible list and detail views', async () =
   const { list, detail } = await gitBugClientSources();
 
   for (const child of [list, detail]) {
-    assert.match(child, /GitBugWorkspaceState State/);
+    assert.match(child, /GitBugState State/);
     assert.doesNotMatch(child, /@inject|WorkspaceManager|Accessor|IJSRuntime|NavigationManager/);
   }
 
@@ -147,7 +144,7 @@ test('loading and failure states use accessible live semantics and safe recovery
   assert.match(page, /role="@\(State\.Status == GitBugWorkspaceStatus\.Failed \? "alert" : "status"\)"/);
   assert.match(page, /State\.SelectedIssueId is not null[\s\S]*Back to issues/);
   assert.match(page, /State\.CanRetry[\s\S]*Try again/);
-  assert.match(page, /GitBugWorkspace\.OpenIssueAsync\(selectedIssueId\.Value\)/);
+  assert.match(page, /Workspace\.OpenIssueAsync\(selectedIssueId\.Value\)/);
 });
 
 test('Git-Bug styles preserve focus, long text, and responsive controls', async () => {

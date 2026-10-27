@@ -1,4 +1,4 @@
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
 
 @if (!EnablePublicationWorkflow && (!ReviewBeforeCommit || State.CommitReviewLoaded))
 {
@@ -71,7 +71,7 @@
             <p>Review the remote target and credential requirement before pushing the local commit.</p>
         </div>
 
-        @if (State.PushReview is null && State.Operation != RepositoryWorkspaceOperation.InspectPush)
+        @if (State.PushReview is null && State.Operation != WorkspaceOperation.InspectPush)
         {
             <button class="gitbug-action" type="button" @onclick="ReviewPushAsync" disabled="@State.IsBusy">Review push target</button>
         }
@@ -113,7 +113,7 @@
                 else
                 {
                     <button class="gitbug-action" type="button" @onclick="PushAsync" disabled="@State.IsBusy">
-                        @(State.Operation == RepositoryWorkspaceOperation.Push ? "Pushing…" : "Push reviewed commit")
+                        @(State.Operation == WorkspaceOperation.Push ? "Pushing…" : "Push reviewed commit")
                     </button>
                 }
             }
@@ -125,7 +125,7 @@
                     <button class="gitbug-secondary-action" type="button" @onclick="RetryPushAsync" disabled="@State.IsBusy">Retry push</button>
                 </div>
             }
-            @if (State.Operation == RepositoryWorkspaceOperation.Push && State.Result?.Succeeded == true)
+            @if (State.Operation == WorkspaceOperation.Push && State.Result?.Succeeded == true)
             {
                 <p class="gitbug-push-success" role="status" aria-live="polite">Push completed successfully.</p>
             }
@@ -139,7 +139,7 @@
         <p class="helper-text">Central publication</p>
         <h3 id="gitbug-publication-heading">Publish reviewed Git-Bug refs</h3>
         <p>Review the branch, Git-Bug refs, and remote preconditions before publishing.</p>
-        @if (State.PublicationReview is null && State.Operation != RepositoryWorkspaceOperation.ReviewPublication)
+        @if (State.PublicationReview is null && State.Operation != WorkspaceOperation.ReviewPublication)
         {
             @if (State.PublicationFailureKind is not null)
             {
@@ -200,8 +200,8 @@
 }
 
 @code {
-    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
-    [Parameter] public EventCallback<RepositoryCommitInput> OnCommitRequested { get; set; }
+    [Parameter, EditorRequired] public WorkspaceState State { get; set; } = null!;
+    [Parameter] public EventCallback<WorkspaceCommitInput> OnCommitRequested { get; set; }
     [Parameter] public EventCallback OnCommitConfirmed { get; set; }
     [Parameter] public bool ReviewBeforeCommit { get; set; }
     [Parameter] public bool EnablePushWorkflow { get; set; }
@@ -225,8 +225,8 @@
     private string AuthorEmail { get; set; } = string.Empty;
     private string Credential { get; set; } = string.Empty;
     private string? ValidationError { get; set; }
-    private bool IsCommitting => State.Operation is RepositoryWorkspaceOperation.ReviewCommit or RepositoryWorkspaceOperation.Commit;
-    private string? CommitErrorMessage => ValidationError ?? (State.Error?.Operation is RepositoryWorkspaceOperation.ReviewCommit or RepositoryWorkspaceOperation.Commit
+    private bool IsCommitting => State.Operation is WorkspaceOperation.ReviewCommit or WorkspaceOperation.Commit;
+    private string? CommitErrorMessage => ValidationError ?? (State.Error?.Operation is WorkspaceOperation.ReviewCommit or WorkspaceOperation.Commit
         ? State.Error.Message
         : null);
 
@@ -241,7 +241,7 @@
         var message = CommitMessage.Trim();
         var authorName = AuthorName.Trim();
         var authorEmail = AuthorEmail.Trim();
-        await OnCommitRequested.InvokeAsync(new RepositoryCommitInput(message, authorName, authorEmail));
+        await OnCommitRequested.InvokeAsync(new WorkspaceCommitInput(message, authorName, authorEmail));
     }
 
     private Task ConfirmCommitAsync() => OnCommitConfirmed.InvokeAsync();

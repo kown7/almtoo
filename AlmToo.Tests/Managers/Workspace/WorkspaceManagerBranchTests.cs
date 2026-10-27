@@ -1,10 +1,11 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
-using AlmToo.Managers.Repositories;
+using AlmToo.Managers.Workspace;
+using AlmToo.Tests.Managers.Workspace;
 using Xunit;
 
-namespace AlmToo.Tests.Managers.Repositories;
+namespace AlmToo.Tests.Managers.Workspace;
 
-public sealed class RepositoryWorkspaceManagerBranchTests
+public sealed class WorkspaceManagerBranchTests
 {
     private static readonly RepositoryInfo Repository = new(
         "https://github.com/example/project.git", "project", "/workspaces/project", true);
@@ -26,7 +27,7 @@ public sealed class RepositoryWorkspaceManagerBranchTests
             BrowserGitBranchHistoryOperations.ListBranches, true, "Branches refreshed.", FeatureBranches));
         fake.HistoryAsync = (request, _) => ValueTask.FromResult(new GitOperationResult<CommitHistory>(
             BrowserGitBranchHistoryOperations.ReadHistory, true, "History refreshed.", FeatureHistory));
-        using var manager = new RepositoryWorkspaceManager(fake, fake);
+        using var manager = new WorkspaceManager(fake, new NoOpGitBugAccessor());
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
 
         var callsBeforeSwitch = fake.Calls.Count;
@@ -51,7 +52,7 @@ public sealed class RepositoryWorkspaceManagerBranchTests
     public async Task SwitchBranch_rejects_dirty_worktree_without_checkout_or_workspace_mutation()
     {
         var fake = CreateCleanFake();
-        using var manager = new RepositoryWorkspaceManager(fake, fake);
+        using var manager = new WorkspaceManager(fake, new NoOpGitBugAccessor());
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         var beforeCalls = fake.Calls.Count;
         var beforeFilters = fake.FilterRequests.Count;
@@ -74,7 +75,7 @@ public sealed class RepositoryWorkspaceManagerBranchTests
     public async Task SwitchBranch_stops_before_checkout_when_status_is_unavailable_and_hides_diagnostics()
     {
         var fake = CreateCleanFake();
-        using var manager = new RepositoryWorkspaceManager(fake, fake);
+        using var manager = new WorkspaceManager(fake, new NoOpGitBugAccessor());
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         fake.StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
             "status", false, "raw host response", Value: default, Diagnostic: "token=secret", FailureKind: GitOperationFailureKind.BranchSwitchUnavailable));
@@ -93,7 +94,7 @@ public sealed class RepositoryWorkspaceManagerBranchTests
     public async Task SwitchBranch_cancellation_is_recorded_and_does_not_checkout()
     {
         var fake = CreateCleanFake();
-        using var manager = new RepositoryWorkspaceManager(fake, fake);
+        using var manager = new WorkspaceManager(fake, new NoOpGitBugAccessor());
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fake.StatusAsync = async token =>
@@ -118,7 +119,7 @@ public sealed class RepositoryWorkspaceManagerBranchTests
     public async Task SwitchBranch_discards_stale_clean_status_after_cancellation_before_checkout()
     {
         var fake = CreateCleanFake();
-        using var manager = new RepositoryWorkspaceManager(fake, fake);
+        using var manager = new WorkspaceManager(fake, new NoOpGitBugAccessor());
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -141,9 +142,9 @@ public sealed class RepositoryWorkspaceManagerBranchTests
         Assert.False(manager.State.IsBranchSwitching);
     }
 
-    private static RepositoryWorkspaceManagerTests.FakeBrowserAccessor CreateCleanFake()
+    private static WorkspaceManagerTests.FakeBrowserAccessor CreateCleanFake()
     {
-        var fake = new RepositoryWorkspaceManagerTests.FakeBrowserAccessor
+        var fake = new WorkspaceManagerTests.FakeBrowserAccessor
         {
             StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "Clean.", CleanStatus))
         };

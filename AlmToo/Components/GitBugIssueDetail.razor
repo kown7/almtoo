@@ -1,6 +1,5 @@
 @using AlmToo.Components
-@using AlmToo.Managers.GitBug
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
 
 @if (State.SelectedIssue is { } issue)
 {
@@ -151,8 +150,8 @@
     private string commentBody = string.Empty;
     private string? draftIssueId;
 
-    [Parameter, EditorRequired] public GitBugWorkspaceState State { get; set; } = null!;
-    [Parameter, EditorRequired] public RepositoryWorkspaceState RepositoryState { get; set; } = null!;
+    [Parameter, EditorRequired] public GitBugState State { get; set; } = null!;
+    [Parameter, EditorRequired] public WorkspaceState RepositoryState { get; set; } = null!;
     [Parameter] public EventCallback OnBackRequested { get; set; }
     [Parameter] public EventCallback<(string Title, string Description)> OnIssueEdited { get; set; }
     [Parameter] public EventCallback<string> OnCommentAdded { get; set; }
@@ -182,7 +181,7 @@
         }
     }
 
-    private Task PrepareCommitAsync(RepositoryCommitInput input) =>
+    private Task PrepareCommitAsync(WorkspaceCommitInput input) =>
         OnCommitDetailsChanged.InvokeAsync((input.Message, input.AuthorName, input.AuthorEmail));
 
     private async Task SubmitEditAsync()

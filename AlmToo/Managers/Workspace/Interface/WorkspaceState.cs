@@ -1,55 +1,16 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 
-namespace AlmToo.Managers.Repositories;
+namespace AlmToo.Managers.Workspace;
 
-public enum RepositoryWorkspaceOperation
+public sealed class WorkspaceState
 {
-    None,
-    InitializeCredential,
-    OpenRepository,
-    LoadDirectory,
-    LoadFile,
-    SaveFile,
-    RefreshStatus,
-    LoadBranchHistory,
-    SwitchBranch,
-    ReviewCommit,
-    ReviewPublication,
-    Commit,
-    PublishPublication,
-    InspectPush,
-    StoreCredential,
-    ForgetCredential,
-    Push,
-    ReviewSynchronization,
-    ApplySynchronization
-}
-
-public sealed record RepositoryWorkspaceError(
-    RepositoryWorkspaceOperation Operation,
-    string Message,
-    string? Diagnostic = null,
-    GitOperationFailureKind? FailureKind = null,
-    bool WasCancelled = false);
-
-public sealed record RepositoryWorkspaceResult(
-    RepositoryWorkspaceOperation Operation,
-    bool Succeeded,
-    string Message,
-    GitOperationFailureKind? FailureKind = null);
-
-/// <summary>Presentation input for the create-commit workflow.</summary>
-public sealed record RepositoryCommitInput(string Message, string AuthorName, string AuthorEmail);
-
-/// <summary>Manager-owned, credential-free state for one browser repository workspace.</summary>
-public sealed class RepositoryWorkspaceState
-{
-    public RepositoryWorkspaceOperation Operation { get; internal set; }
-    public bool IsBusy => Operation != RepositoryWorkspaceOperation.None;
-    public RepositoryWorkspaceError? Error { get; internal set; }
-    public RepositoryWorkspaceResult? Result { get; internal set; }
+    public WorkspaceOperation Operation { get; internal set; }
+    public bool IsBusy => Operation != WorkspaceOperation.None;
+    public WorkspaceError? Error { get; internal set; }
+    public WorkspaceResult? Result { get; internal set; }
 
     public RepositoryInfo? Repository { get; internal set; }
+    public bool RepositoryAvailable => Repository is not null;
     public IReadOnlyList<RepositoryFileEntry> Entries { get; internal set; } = Array.Empty<RepositoryFileEntry>();
     public string CurrentPath { get; internal set; } = "/";
     public string? SelectedFilePath { get; internal set; }
@@ -68,7 +29,7 @@ public sealed class RepositoryWorkspaceState
     public GitOperationFailureKind? PublicationFailureKind { get; internal set; }
     public bool CanPublishPublication => PublicationReviewLoaded && PublicationConfirmed && !IsBusy;
     public bool CommitReviewLoaded { get; internal set; }
-    public RepositoryCommitInput? ProposedCommit { get; internal set; }
+    public WorkspaceCommitInput? ProposedCommit { get; internal set; }
     public CommitInfo? CreatedCommit { get; internal set; }
     public bool CanConfirmCommit => CommitReviewLoaded && ProposedCommit is not null && !IsBusy;
     public bool? LastWriteSucceeded { get; internal set; }
@@ -122,4 +83,30 @@ public sealed class RepositoryWorkspaceState
         GitOperationFailureKind.Unknown => "unknown",
         _ => null
     };
+    public GitBugState GitBug { get; } = new();
+}
+
+public sealed class GitBugState
+{
+    public GitBugWorkspaceStatus Status { get; internal set; }
+    public bool RepositoryAvailable { get; internal set; }
+    public bool IsBusy => Status is GitBugWorkspaceStatus.LoadingList
+        or GitBugWorkspaceStatus.LoadingDetail
+        or GitBugWorkspaceStatus.EditingIssue
+        or GitBugWorkspaceStatus.AddingComment
+        or GitBugWorkspaceStatus.RefreshingAfterWrite;
+    public bool IsWriteBusy => Status is GitBugWorkspaceStatus.EditingIssue
+        or GitBugWorkspaceStatus.AddingComment
+        or GitBugWorkspaceStatus.RefreshingAfterWrite;
+    public string? WriteOperation { get; internal set; }
+    public bool? LastWriteSucceeded { get; internal set; }
+    public bool? LastRefreshSucceeded { get; internal set; }
+    public IReadOnlyList<GitBugIssueSummary> Issues { get; internal set; } = Array.Empty<GitBugIssueSummary>();
+    public int TotalCount { get; internal set; }
+    public string? NextCursor { get; internal set; }
+    public GitBugIssueId? SelectedIssueId { get; internal set; }
+    public GitBugIssueDetail? SelectedIssue { get; internal set; }
+    public string? Message { get; internal set; }
+    public GitOperationFailureKind? FailureKind { get; internal set; }
+    public bool CanRetry => Status == GitBugWorkspaceStatus.Failed;
 }

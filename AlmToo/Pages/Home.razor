@@ -1,9 +1,9 @@
 @page "/"
 @using AlmToo.Components
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
 @implements IDisposable
-@inject RepositoryWorkspaceManager Workspace
-@* RepositoryWorkspace.State is the central write state rendered by this page; Workspace is its single concrete Manager instance. *@
+@inject WorkspaceManager Workspace
+@* Workspace.State is the central write state rendered by this page; Workspace is the single concrete Manager instance. *@
 
 <PageTitle>Repository Browser</PageTitle>
 
@@ -24,11 +24,11 @@
                 <p class="field-help">Public HTTPS Git URLs work best in browser-local storage.</p>
             </div>
             <button class="primary-action" type="submit" disabled="@State.IsBusy">
-                @(IsOperation(RepositoryWorkspaceOperation.OpenRepository) ? "Opening..." : "Open repository")
+                @(IsOperation(WorkspaceOperation.OpenRepository) ? "Opening..." : "Open repository")
             </button>
         </form>
 
-        @if (IsOperation(RepositoryWorkspaceOperation.OpenRepository))
+        @if (IsOperation(WorkspaceOperation.OpenRepository))
         {
             <p class="status-message info" role="status" aria-live="polite">Contacting the Git host and preparing browser storage...</p>
         }
@@ -53,9 +53,9 @@
                 <p data-credential-state="present">A token is available for an explicit push in this tab.</p>
                 <button class="secondary-action" type="button" @onclick="ForgetCredentialAsync" disabled="@State.IsBusy">Forget token</button>
             }
-            @if (State.Result?.Operation is RepositoryWorkspaceOperation.InitializeCredential
-                or RepositoryWorkspaceOperation.StoreCredential
-                or RepositoryWorkspaceOperation.ForgetCredential)
+            @if (State.Result?.Operation is WorkspaceOperation.InitializeCredential
+                or WorkspaceOperation.StoreCredential
+                or WorkspaceOperation.ForgetCredential)
             {
                 <p class="@ResultCssClass" data-credential-state="@CredentialState" role="status" aria-live="polite">@State.Result.Message</p>
             }
@@ -95,7 +95,7 @@
             <div class="push-panel__heading">
                 <div><p class="helper-text">Remote write</p><h2 id="push-heading">Push local commit to GitHub</h2></div>
                 <button class="secondary-action" type="button" @onclick="InspectPushAsync" disabled="@State.IsBusy">
-                    @(IsOperation(RepositoryWorkspaceOperation.InspectPush) ? "Reviewing..." : "Review push")
+                    @(IsOperation(WorkspaceOperation.InspectPush) ? "Reviewing..." : "Review push")
                 </button>
             </div>
 
@@ -122,11 +122,11 @@
                     @if (!State.HasCredential)
                     {
                         <button class="secondary-action" type="submit" disabled="@(State.IsBusy || string.IsNullOrWhiteSpace(credentialInput))">
-                            @(IsOperation(RepositoryWorkspaceOperation.StoreCredential) ? "Saving..." : "Use token in this tab")
+                            @(IsOperation(WorkspaceOperation.StoreCredential) ? "Saving..." : "Use token in this tab")
                         </button>
                     }
                 </form>
-                @if (State.Result?.Operation is RepositoryWorkspaceOperation.StoreCredential or RepositoryWorkspaceOperation.ForgetCredential)
+                @if (State.Result?.Operation is WorkspaceOperation.StoreCredential or WorkspaceOperation.ForgetCredential)
                 {
                     <p class="@ResultCssClass" data-credential-state="@CredentialState" role="status" aria-live="polite">@State.Result.Message</p>
                 }
@@ -146,7 +146,7 @@
                         <span>I confirm this exact commit may be pushed to the reviewed origin and branch.</span>
                     </label>
                     <button class="primary-action" type="submit" disabled="@(!CanPush)">
-                        @(IsOperation(RepositoryWorkspaceOperation.Push) ? "Pushing..." : "Push reviewed commit")
+                        @(IsOperation(WorkspaceOperation.Push) ? "Pushing..." : "Push reviewed commit")
                     </button>
                 </form>
             }
@@ -155,7 +155,7 @@
                 <p class="push-panel__placeholder">Review the active origin, branch, destination ref, and commit before confirmation can be entered.</p>
             }
 
-            @if (State.Result?.Operation is RepositoryWorkspaceOperation.InspectPush or RepositoryWorkspaceOperation.Push)
+            @if (State.Result?.Operation is WorkspaceOperation.InspectPush or WorkspaceOperation.Push)
             {
                 <p class="@ResultCssClass" data-push-failure="@State.PushFailureCategory"
                    role="@(State.PushFailureCategory is null ? "status" : "alert")"
@@ -167,13 +167,13 @@
             <div class="synchronization-panel__heading">
                 <div><p class="helper-text">Remote update</p><h2 id="synchronization-heading">Review repository synchronization</h2></div>
                 <button class="secondary-action" type="button" @onclick="ReviewSynchronizationAsync" disabled="@State.IsBusy">
-                    @(IsOperation(RepositoryWorkspaceOperation.ReviewSynchronization) ? "Reviewing..." : "Review synchronization")
+                    @(IsOperation(WorkspaceOperation.ReviewSynchronization) ? "Reviewing..." : "Review synchronization")
                 </button>
             </div>
 
-            @if (IsOperation(RepositoryWorkspaceOperation.ReviewSynchronization) || IsOperation(RepositoryWorkspaceOperation.ApplySynchronization))
+            @if (IsOperation(WorkspaceOperation.ReviewSynchronization) || IsOperation(WorkspaceOperation.ApplySynchronization))
             {
-                <p class="status-message info" data-synchronization-progress="@State.Operation" role="status" aria-live="polite">@(IsOperation(RepositoryWorkspaceOperation.ApplySynchronization) ? "Applying the accepted repository synchronization..." : "Checking the remote branch for incoming changes...")</p>
+                <p class="status-message info" data-synchronization-progress="@State.Operation" role="status" aria-live="polite">@(IsOperation(WorkspaceOperation.ApplySynchronization) ? "Applying the accepted repository synchronization..." : "Checking the remote branch for incoming changes...")</p>
             }
 
             @if (State.SynchronizationReview is { } review)
@@ -213,7 +213,7 @@
                                 <span>I reviewed this exact incoming update and accept applying it to this browser-local workspace.</span>
                             </label>
                             <button class="primary-action" type="submit" disabled="@(!CanApplySynchronization)">
-                                @(IsOperation(RepositoryWorkspaceOperation.ApplySynchronization) ? "Applying..." : "Apply reviewed synchronization")
+                                @(IsOperation(WorkspaceOperation.ApplySynchronization) ? "Applying..." : "Apply reviewed synchronization")
                             </button>
                         </form>
                     </div>
@@ -239,11 +239,11 @@
 
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div><p class="helper-text">Selected file path</p><h2 id="file-editor-heading">@(State.SelectedFilePath ?? "No file selected")</h2></div>
-            @if (IsOperation(RepositoryWorkspaceOperation.LoadFile))
+            @if (IsOperation(WorkspaceOperation.LoadFile))
             {
                 <p class="status-message info" role="status" aria-live="polite">Loading selected text file...</p>
             }
-            @if (State.Result?.Operation is RepositoryWorkspaceOperation.LoadFile or RepositoryWorkspaceOperation.SaveFile)
+            @if (State.Result?.Operation is WorkspaceOperation.LoadFile or WorkspaceOperation.SaveFile)
             {
                 <p class="@ResultCssClass" role="status" aria-live="polite">@State.Result.Message</p>
             }
@@ -256,12 +256,12 @@
                 </div>
                 <div class="file-editor__actions">
                     <button class="primary-action" type="button" @onclick="SaveSelectedFileAsync" disabled="@(State.IsBusy || !State.HasUnsavedChanges)">
-                        @(IsOperation(RepositoryWorkspaceOperation.SaveFile) ? "Saving..." : "Save changes")
+                        @(IsOperation(WorkspaceOperation.SaveFile) ? "Saving..." : "Save changes")
                     </button>
                     <p class="file-editor__dirty-state">@(State.HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits")</p>
                 </div>
             }
-            else if (State.SelectedFilePath is null && !IsOperation(RepositoryWorkspaceOperation.LoadFile))
+            else if (State.SelectedFilePath is null && !IsOperation(WorkspaceOperation.LoadFile))
             {
                 <p class="file-preview__placeholder">Choose a text file from the browser to load the editor. Binary or oversized files stay disabled.</p>
             }
@@ -273,8 +273,8 @@
     private string repositoryUrl = string.Empty;
     private string credentialInput = string.Empty;
     private bool synchronizationConfirmed;
-    private RepositoryWorkspaceState State => Workspace.State;
-    private bool IsOperation(RepositoryWorkspaceOperation operation) => State.Operation == operation;
+    private WorkspaceState State => Workspace.State;
+    private bool IsOperation(WorkspaceOperation operation) => State.Operation == operation;
     private bool CanPush => State.PushReview is not null && State.PushConfirmed && State.HasCredential && !State.IsBusy;
     private bool CanApplySynchronization => State.SynchronizationReview is not null && IsSynchronizationDecision("ReadyToApply") && synchronizationConfirmed && !State.IsBusy;
     private string? SynchronizationDecisionCode => State.SynchronizationDecision?.ToString();
@@ -303,7 +303,7 @@
     };
     private string ResultCssClass => $"status-message {(State.Result?.Succeeded == true ? "success" : "error")}";
     private string CredentialState => State.CredentialReplacementRequired ? "replacement-required" : State.HasCredential ? "present" : "forgotten";
-    private string SaveStatusText => IsOperation(RepositoryWorkspaceOperation.SaveFile) ? "Saving changes" : State.HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits";
+    private string SaveStatusText => IsOperation(WorkspaceOperation.SaveFile) ? "Saving changes" : State.HasUnsavedChanges ? "Unsaved edits" : "No unsaved edits";
 
     protected override void OnInitialized() => Workspace.StateChanged += HandleStateChanged;
 
@@ -322,7 +322,7 @@
     private async Task RefreshStatusAsync() => await Workspace.RefreshStatusAsync();
     private async Task LoadBranchHistoryAsync() => await Workspace.LoadBranchHistoryAsync();
     private async Task SwitchBranchAsync(string branchName) => await Workspace.SwitchBranchAsync(branchName);
-    private async Task CommitAsync(RepositoryCommitInput input) => await Workspace.CommitAsync(input);
+    private async Task CommitAsync(WorkspaceCommitInput input) => await Workspace.CommitAsync(input);
     private async Task InspectPushAsync() => await Workspace.InspectPushAsync();
     private async Task ForgetCredentialAsync() => await Workspace.ForgetCredentialAsync();
     private void EditSelectedFile(ChangeEventArgs args) => Workspace.EditSelectedFile(args.Value?.ToString() ?? string.Empty);

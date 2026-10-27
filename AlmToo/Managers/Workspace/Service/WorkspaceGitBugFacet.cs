@@ -1,29 +1,19 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 
-namespace AlmToo.Managers.GitBug;
+namespace AlmToo.Managers.Workspace;
 
 /// <summary>Coordinates read-only Git-Bug list and detail intent for one active repository.</summary>
-public sealed class GitBugWorkspaceManager : IDisposable
+public sealed partial class WorkspaceManager
 {
     private const int MaximumQueryLength = 256;
     private const int MaximumPageSize = 100;
-    private readonly IGitBugAccessor accessor;
-    private readonly object operationSync = new();
-    private CancellationTokenSource? activeOperation;
-    private RepositoryIdentity? repositoryIdentity;
-    private string repositoryWorkspaceName = string.Empty;
-    private long operationGeneration;
-    private bool hasListContext;
-    private GitBugIssueQuery lastQuery = new(PageSize: 50);
-    private bool disposed;
-
-    public GitBugWorkspaceManager(IGitBugAccessor accessor)
-    {
-        this.accessor = accessor;
-    }
-
-    public GitBugWorkspaceState State { get; } = new();
-    public event Action? StateChanged;
+    private readonly object gitBugOperationSync = new();
+    private CancellationTokenSource? gitBugActiveOperation;
+    private RepositoryIdentity? gitBugRepositoryIdentity;
+    private string gitBugRepositoryWorkspaceName = string.Empty;
+    private long gitBugOperationGeneration;
+    private bool gitBugHasListContext;
+    private GitBugIssueQuery gitBugLastQuery = new(PageSize: 50);
 
     /// <summary>Synchronizes the repository lifecycle without depending on another Manager.</summary>
     public void SetRepository(RepositoryInfo? repository)
@@ -34,15 +24,15 @@ public sealed class GitBugWorkspaceManager : IDisposable
             : new RepositoryIdentity(repository.RepositoryUrl, repository.RootPath);
 
         CancellationTokenSource? supersededOperation;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
-            if (identity == repositoryIdentity)
+            if (identity == gitBugRepositoryIdentity)
             {
                 return;
             }
 
-            repositoryIdentity = identity;
-            repositoryWorkspaceName = repository?.WorkspaceName ?? string.Empty;
+            gitBugRepositoryIdentity = identity;
+            gitBugRepositoryWorkspaceName = repository?.WorkspaceName ?? string.Empty;
             supersededOperation = InvalidateActiveOperation();
             ResetState(identity is not null);
         }
@@ -60,7 +50,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (!State.RepositoryAvailable)
+        if (!State.GitBug.RepositoryAvailable)
         {
             return Reject("Open a repository before browsing Git-Bug issues.", GitBugWorkspaceStatus.Idle);
         }
@@ -71,16 +61,16 @@ public sealed class GitBugWorkspaceManager : IDisposable
         }
 
         var normalizedQuery = query with { PageSize = Math.Clamp(query.PageSize, 1, MaximumPageSize) };
-        lastQuery = normalizedQuery;
+        gitBugLastQuery = normalizedQuery;
         var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.LoadingList, () =>
         {
-            State.SelectedIssueId = null;
-            State.SelectedIssue = null;
+            State.GitBug.SelectedIssueId = null;
+            State.GitBug.SelectedIssue = null;
         });
 
         try
         {
-            var result = await accessor.ListIssuesAsync(normalizedQuery, operation.Token);
+            var result = await gitBugAccessor.ListIssuesAsync(normalizedQuery, operation.Token);
             return Complete(operation, () => operation.Token.IsCancellationRequested
                 ? ApplyCancellation()
                 : ApplyListResult(result));
@@ -108,25 +98,25 @@ public sealed class GitBugWorkspaceManager : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (!State.RepositoryAvailable)
+        if (!State.GitBug.RepositoryAvailable)
         {
             return Reject("Open a repository before browsing Git-Bug issues.", GitBugWorkspaceStatus.Idle);
         }
 
-        if (!IsValidIssueId(issueId) || !State.Issues.Any(issue => issue.Id == issueId))
+        if (!IsValidIssueId(issueId) || !State.GitBug.Issues.Any(issue => issue.Id == issueId))
         {
             return Reject("Choose an issue from the current issue list.");
         }
 
         var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.LoadingDetail, () =>
         {
-            State.SelectedIssueId = issueId;
-            State.SelectedIssue = null;
+            State.GitBug.SelectedIssueId = issueId;
+            State.GitBug.SelectedIssue = null;
         });
 
         try
         {
-            var result = await accessor.GetIssueAsync(issueId, operation.Token);
+            var result = await gitBugAccessor.GetIssueAsync(issueId, operation.Token);
             return Complete(operation, () => operation.Token.IsCancellationRequested
                 ? ApplyCancellation()
                 : ApplyDetailResult(issueId, result));
@@ -160,17 +150,17 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
         var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.EditingIssue, () =>
         {
-            State.WriteOperation = GitBugWriteOperations.IssueEdit;
-            State.LastWriteSucceeded = null;
-            State.LastRefreshSucceeded = null;
+            State.GitBug.WriteOperation = GitBugWriteOperations.IssueEdit;
+            State.GitBug.LastWriteSucceeded = null;
+            State.GitBug.LastRefreshSucceeded = null;
         });
         var request = new GitBugIssueEditRequest(issueId, title!, description!,
-            new(repository, issueId, State.SelectedIssue!.Revision, GitBugWriteOperations.IssueEdit),
+            new(repository, issueId, State.GitBug.SelectedIssue!.Revision, GitBugWriteOperations.IssueEdit),
             new(GitBugWriteContract.SupportedStorageVersion, GitBugWriteContract.Utf8Encoding, true));
 
         try
         {
-            var result = await accessor.EditIssueAsync(request, operation.Token);
+            var result = await gitBugAccessor.EditIssueAsync(request, operation.Token);
             if (!result.Succeeded || result.Value is null)
             {
                 return Complete(operation, () => ApplyWriteFailure(result.FailureKind));
@@ -206,17 +196,17 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
         var operation = BeginOperation(cancellationToken, GitBugWorkspaceStatus.AddingComment, () =>
         {
-            State.WriteOperation = GitBugWriteOperations.CommentCreate;
-            State.LastWriteSucceeded = null;
-            State.LastRefreshSucceeded = null;
+            State.GitBug.WriteOperation = GitBugWriteOperations.CommentCreate;
+            State.GitBug.LastWriteSucceeded = null;
+            State.GitBug.LastRefreshSucceeded = null;
         });
         var request = new GitBugCommentCreateRequest(issueId, body!,
-            new(repository, issueId, State.SelectedIssue!.Revision, GitBugWriteOperations.CommentCreate),
+            new(repository, issueId, State.GitBug.SelectedIssue!.Revision, GitBugWriteOperations.CommentCreate),
             new(GitBugWriteContract.SupportedStorageVersion, GitBugWriteContract.Utf8Encoding, true));
 
         try
         {
-            var result = await accessor.CreateCommentAsync(request, operation.Token);
+            var result = await gitBugAccessor.CreateCommentAsync(request, operation.Token);
             if (!result.Succeeded || result.Value is null)
             {
                 return Complete(operation, () => ApplyWriteFailure(result.FailureKind));
@@ -244,13 +234,13 @@ public sealed class GitBugWorkspaceManager : IDisposable
         issueId = default;
         repository = default!;
         message = null;
-        if (!State.RepositoryAvailable || repositoryIdentity is null)
+        if (!State.GitBug.RepositoryAvailable || gitBugRepositoryIdentity is null)
         {
             message = "Open a repository before editing Git-Bug issues.";
             return false;
         }
 
-        if (State.SelectedIssueId is not { } selected || State.SelectedIssue is null || selected != State.SelectedIssue.Summary.Id)
+        if (State.GitBug.SelectedIssueId is not { } selected || State.GitBug.SelectedIssue is null || selected != State.GitBug.SelectedIssue.Summary.Id)
         {
             message = "Choose an issue before changing Git-Bug data.";
             return false;
@@ -297,14 +287,14 @@ public sealed class GitBugWorkspaceManager : IDisposable
         }
 
         issueId = selected;
-        repository = new(repositoryIdentity.RepositoryUrl, repositoryWorkspaceName);
+        repository = new(gitBugRepositoryIdentity.RepositoryUrl, gitBugRepositoryWorkspaceName);
         return true;
     }
 
     private async Task<bool> RefreshAfterWriteAsync(OperationContext operation, GitBugIssueId issueId)
     {
-        var detail = await accessor.GetIssueAsync(issueId, operation.Token);
-        var list = hasListContext ? await accessor.ListIssuesAsync(lastQuery, operation.Token) : null;
+        var detail = await gitBugAccessor.GetIssueAsync(issueId, operation.Token);
+        var list = gitBugHasListContext ? await gitBugAccessor.ListIssuesAsync(gitBugLastQuery, operation.Token) : null;
         return Complete(operation, () =>
         {
             if (operation.Token.IsCancellationRequested)
@@ -312,53 +302,53 @@ public sealed class GitBugWorkspaceManager : IDisposable
                 return ApplyWriteCancellation();
             }
 
-            State.Status = GitBugWorkspaceStatus.RefreshingAfterWrite;
+            State.GitBug.Status = GitBugWorkspaceStatus.RefreshingAfterWrite;
             if (!detail.Succeeded || detail.Value is null || detail.Value.Summary.Id != issueId)
             {
-                State.LastWriteSucceeded = true;
-                State.LastRefreshSucceeded = false;
+                State.GitBug.LastWriteSucceeded = true;
+                State.GitBug.LastRefreshSucceeded = false;
                 ApplyFailure(detail.FailureKind ?? GitOperationFailureKind.GitBugDataMalformed, false);
                 return false;
             }
 
             if (list is not null && (!list.Succeeded || list.Value is null))
             {
-                State.LastWriteSucceeded = true;
-                State.LastRefreshSucceeded = false;
+                State.GitBug.LastWriteSucceeded = true;
+                State.GitBug.LastRefreshSucceeded = false;
                 ApplyFailure(list.FailureKind, true);
                 return false;
             }
 
             if (list?.Value is { } page)
             {
-                State.Issues = page.Issues;
-                State.TotalCount = page.TotalCount;
-                State.NextCursor = page.NextCursor;
-                hasListContext = true;
+                State.GitBug.Issues = page.Issues;
+                State.GitBug.TotalCount = page.TotalCount;
+                State.GitBug.NextCursor = page.NextCursor;
+                gitBugHasListContext = true;
             }
-            State.SelectedIssueId = issueId;
-            State.SelectedIssue = detail.Value;
-                State.Status = GitBugWorkspaceStatus.DetailReady;
-            State.Message = "Local Git-Bug changes saved. No commit or push was performed.";
-            State.FailureKind = null;
-            State.LastWriteSucceeded = true;
-            State.LastRefreshSucceeded = true;
+            State.GitBug.SelectedIssueId = issueId;
+            State.GitBug.SelectedIssue = detail.Value;
+                State.GitBug.Status = GitBugWorkspaceStatus.DetailReady;
+            State.GitBug.Message = "Local Git-Bug changes saved. No commit or push was performed.";
+            State.GitBug.FailureKind = null;
+            State.GitBug.LastWriteSucceeded = true;
+            State.GitBug.LastRefreshSucceeded = true;
             return true;
         });
     }
 
     private bool ApplyWriteFailure(GitOperationFailureKind? kind)
     {
-        State.LastWriteSucceeded = false;
-        State.LastRefreshSucceeded = null;
-        State.FailureKind = kind ?? GitOperationFailureKind.GitBugWriteUnknown;
-        State.Status = State.FailureKind switch
+        State.GitBug.LastWriteSucceeded = false;
+        State.GitBug.LastRefreshSucceeded = null;
+        State.GitBug.FailureKind = kind ?? GitOperationFailureKind.GitBugWriteUnknown;
+        State.GitBug.Status = State.GitBug.FailureKind switch
         {
             GitOperationFailureKind.GitBugWriteUnsupportedFormat => GitBugWorkspaceStatus.Unsupported,
             GitOperationFailureKind.GitBugWriteUnavailable => GitBugWorkspaceStatus.Unavailable,
             _ => GitBugWorkspaceStatus.Failed
         };
-        State.Message = State.FailureKind switch
+        State.GitBug.Message = State.GitBug.FailureKind switch
         {
             GitOperationFailureKind.GitBugWriteUnsupportedFormat => "Git-Bug editing is not supported for this data version.",
             GitOperationFailureKind.GitBugWriteUnavailable => "Git-Bug editing is unavailable for this repository.",
@@ -370,21 +360,21 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
     private bool ApplyWriteCancellation()
     {
-        State.LastWriteSucceeded = false;
-        State.Status = GitBugWorkspaceStatus.Failed;
-        State.Message = "The local Git-Bug change was cancelled.";
-        State.FailureKind = GitOperationFailureKind.Unknown;
-        State.LastRefreshSucceeded = false;
+        State.GitBug.LastWriteSucceeded = false;
+        State.GitBug.Status = GitBugWorkspaceStatus.Failed;
+        State.GitBug.Message = "The local Git-Bug change was cancelled.";
+        State.GitBug.FailureKind = GitOperationFailureKind.Unknown;
+        State.GitBug.LastRefreshSucceeded = false;
         return false;
     }
 
     private bool ApplyWriteException()
     {
-        State.LastWriteSucceeded = false;
-        State.Status = GitBugWorkspaceStatus.Failed;
-        State.Message = "The local Git-Bug change could not be saved safely.";
-        State.FailureKind = GitOperationFailureKind.GitBugWriteUnknown;
-        State.LastRefreshSucceeded = false;
+        State.GitBug.LastWriteSucceeded = false;
+        State.GitBug.Status = GitBugWorkspaceStatus.Failed;
+        State.GitBug.Message = "The local Git-Bug change could not be saved safely.";
+        State.GitBug.FailureKind = GitOperationFailureKind.GitBugWriteUnknown;
+        State.GitBug.LastRefreshSucceeded = false;
         return false;
     }
 
@@ -392,17 +382,17 @@ public sealed class GitBugWorkspaceManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         CancellationTokenSource? supersededOperation;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
             supersededOperation = InvalidateActiveOperation();
-            State.SelectedIssueId = null;
-            State.SelectedIssue = null;
-            State.Message = null;
-            State.FailureKind = null;
-            State.WriteOperation = null;
-            State.LastWriteSucceeded = null;
-            State.LastRefreshSucceeded = null;
-            State.Status = State.RepositoryAvailable && hasListContext
+            State.GitBug.SelectedIssueId = null;
+            State.GitBug.SelectedIssue = null;
+            State.GitBug.Message = null;
+            State.GitBug.FailureKind = null;
+            State.GitBug.WriteOperation = null;
+            State.GitBug.LastWriteSucceeded = null;
+            State.GitBug.LastRefreshSucceeded = null;
+            State.GitBug.Status = State.GitBug.RepositoryAvailable && gitBugHasListContext
                 ? GitBugWorkspaceStatus.ListReady
                 : GitBugWorkspaceStatus.Idle;
         }
@@ -415,22 +405,22 @@ public sealed class GitBugWorkspaceManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         CancellationTokenSource? supersededOperation;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
             supersededOperation = InvalidateActiveOperation();
-            ResetState(State.RepositoryAvailable);
+            ResetState(State.GitBug.RepositoryAvailable);
         }
 
         CancelSafely(supersededOperation);
         NotifyChanged();
     }
 
-    public void CancelCurrentOperation()
+    private void CancelGitBugOperation()
     {
         CancellationTokenSource? operation;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
-            operation = activeOperation;
+            operation = gitBugActiveOperation;
         }
 
         CancelSafely(operation);
@@ -443,16 +433,16 @@ public sealed class GitBugWorkspaceManager : IDisposable
     {
         OperationContext operation;
         CancellationTokenSource? supersededOperation;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
             supersededOperation = InvalidateActiveOperation();
             var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            activeOperation = cancellation;
-            operation = new(operationGeneration, cancellation);
+            gitBugActiveOperation = cancellation;
+            operation = new(gitBugOperationGeneration, cancellation);
             prepareState();
-            State.Status = loadingStatus;
-            State.Message = null;
-            State.FailureKind = null;
+            State.GitBug.Status = loadingStatus;
+            State.GitBug.Message = null;
+            State.GitBug.FailureKind = null;
         }
 
         CancelSafely(supersededOperation);
@@ -463,9 +453,9 @@ public sealed class GitBugWorkspaceManager : IDisposable
     private bool Complete(OperationContext operation, Func<bool> apply)
     {
         bool result;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
-            if (operation.Generation != operationGeneration || activeOperation != operation.Cancellation)
+            if (operation.Generation != gitBugOperationGeneration || gitBugActiveOperation != operation.Cancellation)
             {
                 return false;
             }
@@ -479,11 +469,11 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
     private void EndOperation(OperationContext operation)
     {
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
-            if (activeOperation == operation.Cancellation)
+            if (gitBugActiveOperation == operation.Cancellation)
             {
-                activeOperation = null;
+                gitBugActiveOperation = null;
             }
         }
 
@@ -497,13 +487,13 @@ public sealed class GitBugWorkspaceManager : IDisposable
             return ApplyFailure(result.FailureKind, listOperation: true);
         }
 
-        State.Issues = result.Value.Issues;
-        State.TotalCount = result.Value.TotalCount;
-        State.NextCursor = result.Value.NextCursor;
-        hasListContext = true;
-        State.Status = GitBugWorkspaceStatus.ListReady;
-        State.Message = null;
-        State.FailureKind = null;
+        State.GitBug.Issues = result.Value.Issues;
+        State.GitBug.TotalCount = result.Value.TotalCount;
+        State.GitBug.NextCursor = result.Value.NextCursor;
+        gitBugHasListContext = true;
+        State.GitBug.Status = GitBugWorkspaceStatus.ListReady;
+        State.GitBug.Message = null;
+        State.GitBug.FailureKind = null;
         return true;
     }
 
@@ -519,42 +509,42 @@ public sealed class GitBugWorkspaceManager : IDisposable
             return ApplyFailure(GitOperationFailureKind.GitBugDataMalformed, listOperation: false);
         }
 
-        State.SelectedIssueId = result.Value.Summary.Id;
-        State.SelectedIssue = result.Value;
-        State.Status = GitBugWorkspaceStatus.DetailReady;
-        State.Message = null;
-        State.FailureKind = null;
+        State.GitBug.SelectedIssueId = result.Value.Summary.Id;
+        State.GitBug.SelectedIssue = result.Value;
+        State.GitBug.Status = GitBugWorkspaceStatus.DetailReady;
+        State.GitBug.Message = null;
+        State.GitBug.FailureKind = null;
         return true;
     }
 
     private bool ApplyFailure(GitOperationFailureKind? failureKind, bool listOperation)
     {
-        State.FailureKind = failureKind ?? GitOperationFailureKind.Unknown;
-        switch (State.FailureKind)
+        State.GitBug.FailureKind = failureKind ?? GitOperationFailureKind.Unknown;
+        switch (State.GitBug.FailureKind)
         {
             case GitOperationFailureKind.GitBugDataUnavailable:
-                State.Status = GitBugWorkspaceStatus.Unavailable;
-                State.Message = "This repository has no supported Git-Bug issue data.";
+                State.GitBug.Status = GitBugWorkspaceStatus.Unavailable;
+                State.GitBug.Message = "This repository has no supported Git-Bug issue data.";
                 if (listOperation)
                 {
-                    State.Issues = Array.Empty<GitBugIssueSummary>();
-                    State.TotalCount = 0;
-                    State.NextCursor = null;
-                    hasListContext = false;
+                    State.GitBug.Issues = Array.Empty<GitBugIssueSummary>();
+                    State.GitBug.TotalCount = 0;
+                    State.GitBug.NextCursor = null;
+                    gitBugHasListContext = false;
                 }
                 break;
             case GitOperationFailureKind.GitBugFormatUnsupported:
-                State.Status = GitBugWorkspaceStatus.Unsupported;
-                State.Message = "This Git-Bug data version is not supported yet.";
+                State.GitBug.Status = GitBugWorkspaceStatus.Unsupported;
+                State.GitBug.Message = "This Git-Bug data version is not supported yet.";
                 break;
             case GitOperationFailureKind.GitBugDataMalformed:
-                State.Status = GitBugWorkspaceStatus.Failed;
-                State.Message = "Git-Bug issue data could not be read safely.";
+                State.GitBug.Status = GitBugWorkspaceStatus.Failed;
+                State.GitBug.Message = "Git-Bug issue data could not be read safely.";
                 break;
             default:
-                State.Status = GitBugWorkspaceStatus.Failed;
-                State.Message = "Git-Bug issues could not be loaded.";
-                State.FailureKind = GitOperationFailureKind.Unknown;
+                State.GitBug.Status = GitBugWorkspaceStatus.Failed;
+                State.GitBug.Message = "Git-Bug issues could not be loaded.";
+                State.GitBug.FailureKind = GitOperationFailureKind.Unknown;
                 break;
         }
 
@@ -563,31 +553,31 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
     private bool ApplyCancellation()
     {
-        State.Status = GitBugWorkspaceStatus.Failed;
-        State.Message = "The Git-Bug issue operation was cancelled.";
-        State.FailureKind = GitOperationFailureKind.Unknown;
+        State.GitBug.Status = GitBugWorkspaceStatus.Failed;
+        State.GitBug.Message = "The Git-Bug issue operation was cancelled.";
+        State.GitBug.FailureKind = GitOperationFailureKind.Unknown;
         return false;
     }
 
     private bool ApplySafeException()
     {
-        State.Status = GitBugWorkspaceStatus.Failed;
-        State.Message = "Git-Bug issues could not be loaded safely.";
-        State.FailureKind = GitOperationFailureKind.Unknown;
+        State.GitBug.Status = GitBugWorkspaceStatus.Failed;
+        State.GitBug.Message = "Git-Bug issues could not be loaded safely.";
+        State.GitBug.FailureKind = GitOperationFailureKind.Unknown;
         return false;
     }
 
     private bool Reject(string message, GitBugWorkspaceStatus status = GitBugWorkspaceStatus.Failed)
     {
         CancellationTokenSource? supersededOperation;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
             supersededOperation = InvalidateActiveOperation();
-            State.Status = status;
-            State.Message = message;
-            State.FailureKind = GitOperationFailureKind.Unknown;
-            State.LastWriteSucceeded = null;
-            State.LastRefreshSucceeded = null;
+            State.GitBug.Status = status;
+            State.GitBug.Message = message;
+            State.GitBug.FailureKind = GitOperationFailureKind.Unknown;
+            State.GitBug.LastWriteSucceeded = null;
+            State.GitBug.LastRefreshSucceeded = null;
         }
 
         CancelSafely(supersededOperation);
@@ -597,9 +587,9 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
     private CancellationTokenSource? InvalidateActiveOperation()
     {
-        var operation = activeOperation;
-        activeOperation = null;
-        operationGeneration++;
+        var operation = gitBugActiveOperation;
+        gitBugActiveOperation = null;
+        gitBugOperationGeneration++;
         return operation;
     }
 
@@ -617,19 +607,19 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
     private void ResetState(bool repositoryAvailable)
     {
-        State.RepositoryAvailable = repositoryAvailable;
-        State.Status = GitBugWorkspaceStatus.Idle;
-        State.Issues = Array.Empty<GitBugIssueSummary>();
-        State.TotalCount = 0;
-        State.NextCursor = null;
-        hasListContext = false;
-        State.SelectedIssueId = null;
-        State.SelectedIssue = null;
-        State.Message = null;
-        State.FailureKind = null;
-        State.WriteOperation = null;
-        State.LastWriteSucceeded = null;
-        State.LastRefreshSucceeded = null;
+        State.GitBug.RepositoryAvailable = repositoryAvailable;
+        State.GitBug.Status = GitBugWorkspaceStatus.Idle;
+        State.GitBug.Issues = Array.Empty<GitBugIssueSummary>();
+        State.GitBug.TotalCount = 0;
+        State.GitBug.NextCursor = null;
+        gitBugHasListContext = false;
+        State.GitBug.SelectedIssueId = null;
+        State.GitBug.SelectedIssue = null;
+        State.GitBug.Message = null;
+        State.GitBug.FailureKind = null;
+        State.GitBug.WriteOperation = null;
+        State.GitBug.LastWriteSucceeded = null;
+        State.GitBug.LastRefreshSucceeded = null;
     }
 
     private static bool IsValidQuery(GitBugIssueQuery? query) =>
@@ -649,9 +639,8 @@ public sealed class GitBugWorkspaceManager : IDisposable
     private static bool IsValidIssueId(GitBugIssueId issueId) =>
         issueId.Value is { Length: 64 } && issueId.Value.All(Uri.IsHexDigit);
 
-    private void NotifyChanged() => StateChanged?.Invoke();
 
-    public void Dispose()
+    private void DisposeGitBugResources()
     {
         if (disposed)
         {
@@ -660,7 +649,7 @@ public sealed class GitBugWorkspaceManager : IDisposable
 
         disposed = true;
         CancellationTokenSource? active;
-        lock (operationSync)
+        lock (gitBugOperationSync)
         {
             active = InvalidateActiveOperation();
         }

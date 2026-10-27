@@ -3,9 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 const moduleUrl = new URL('../wwwroot/js/browserGitEngine.js', import.meta.url);
-const serviceUrl = new URL('../Services/Git/BrowserGitService.cs', import.meta.url);
-const serviceContractUrl = new URL('../Services/Git/IBrowserGitService.cs', import.meta.url);
-const resultContractUrl = new URL('../Services/Git/GitOperationResult.cs', import.meta.url);
+const serviceUrl = new URL('../Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs', import.meta.url);
+const serviceContractUrl = new URL('../Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs', import.meta.url);
+const resultContractUrl = new URL('../Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs', import.meta.url);
 const vendorAssetUrls = [
   new URL('../wwwroot/js/vendor/buffer/buffer.min.js', import.meta.url),
   new URL('../wwwroot/js/vendor/isomorphic-git/index.umd.min.js', import.meta.url),
@@ -1181,8 +1181,8 @@ test('Blazor Git service invokes operations exported by the browser Git module',
   assert.match(serviceSource, /catch \(OperationCanceledException\)/);
   assert.match(serviceSource, /catch \(JSException\)/);
   assert.doesNotMatch(serviceSource, /exception\.ToString\(\)/);
-  assert.match(serviceSource, /GitOperationResult<RepositoryInfo>\.Failure/);
-  assert.match(serviceSource, /GitOperationResult<CommitInfo>\.Failure/);
+  assert.match(serviceSource, /GitOperationResult<RepositoryInfo>\(/);
+  assert.match(serviceSource, /GitOperationResult<CommitInfo>\(/);
 });
 
 test('Blazor push boundary keeps credentials input-only and preserves reviewed and pushed identity', async () => {
@@ -1193,7 +1193,8 @@ test('Blazor push boundary keeps credentials input-only and preserves reviewed a
   ]);
 
   assert.match(interfaceSource, /GitOperationResult<PushReview>> InspectPushAsync/);
-  assert.match(interfaceSource, /GitOperationResult<PushResult>> PushAsync\([\s\S]*?PushRequest request,[\s\S]*?string personalAccessToken/);
+  assert.match(interfaceSource, /GitOperationResult<PushResult>> PushAsync\([\s\S]*?PushRequest request/);
+  assert.doesNotMatch(interfaceSource, /personalAccessToken/);
 
   assert.match(resultContractSource, /public record PushReview\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string OutgoingCommitId,[\s\S]*?string DestinationRef\);/);
   assert.match(resultContractSource, /public record PushRequest\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string OutgoingCommitId,[\s\S]*?string DestinationRef\);/);

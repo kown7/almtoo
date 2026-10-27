@@ -80,19 +80,47 @@ Utilities (lateral): logging, guards, retry/backoff, shared pure helpers, consta
 
 ---
 
-## 3.2 Managers (Application Orchestration)
-**Role:** Coordinate use-cases end-to-end.
+## 3.2 Managers (Application Use-Case Coordination)
+**Role:** Implement application-layer use-cases and coordinate their execution.
+
+A **use-case** is a complete application intent with explicit inputs, flow-level preconditions, side effects, result, and application failure contract. A use-case is the architectural boundary exposed by a Manager operation.
+
+A **workflow** is the internal sequence used to implement a use-case. It may contain validation, Engine calls, Accessor calls, retries, refreshes, and compensation. A workflow is not, by itself, a reason to create a Manager. Managers are organized around application use-cases, not around implementation workflows, pages, workspaces, domain nouns, DTOs, or individual integration operations.
 
 **Must:**
-- Orchestrate workflow steps
-- Validate sequence/flow-level preconditions
-- Compose calls to Engines and Accessors
-- Handle application-level failures and compensations
+- Expose one or more complete, intent-oriented use-case operations.
+- Define and enforce flow-level preconditions before side effects occur.
+- Orchestrate the required calls to Engines and Accessors.
+- Translate technical results and failures into an application-level result contract.
+- Handle application-level failures, cancellation, and compensation where the use-case requires them.
+- Keep the use-case boundary independently understandable and testable.
+- Retain scoped execution state only when it supports use-case continuity, concurrency safety, cancellation, or application-level result state.
 
 **Must not:**
-- Call other Managers (avoid Manager-to-Manager graph)
-- Hold domain algorithm complexity that belongs in Engines
-- Perform direct transport formatting concerns (UI/API shaping)
+- Call other Managers; avoid a Manager-to-Manager dependency graph.
+- Hold domain algorithm complexity that belongs in Engines.
+- Perform external I/O or contain vendor/platform integration details that belong in Accessors.
+- Perform direct transport or presentation formatting concerns such as UI/API shaping.
+- Expose internal workflow steps as public operations unless each step is itself a complete use-case.
+- Become an arbitrary UI state container unrelated to the use-cases it coordinates.
+
+### 3.2.1 Manager class granularity
+
+A Manager class may represent one use-case or group several closely related use-cases. Grouping is a packaging decision, not a relaxation of the use-case boundary: every public operation must still represent a complete use-case.
+
+Group use-cases in one Manager only when they share a cohesive application boundary, meaningful dependencies, state, and lifecycle. Do not introduce a new Manager solely for a page, component, domain noun, DTO, Accessor, or individual operation. Before adding a Manager, first consider extracting deterministic policy to an Engine, integration details to an Accessor, or a cohesive private helper within the existing Manager.
+
+### 3.2.2 Manager evaluation questions
+
+Use these questions when reviewing an existing or proposed Manager:
+
+1. Does every public operation represent a complete application use-case rather than an internal workflow step?
+2. Are the use-case inputs, preconditions, side effects, result, and failure behavior explicit?
+3. Is the Manager coordinating Engines and Accessors rather than owning domain algorithms or external I/O?
+4. If the Manager is stateful, does each retained state value support use-case continuity, concurrency safety, cancellation, or application-level result state?
+5. If several use-cases share a class, do they share a cohesive application boundary, dependencies, state, and lifecycle?
+6. Could the proposed new Manager instead be an Engine, an Accessor, or a cohesive private helper?
+7. Does the design preserve the prohibition on Manager-to-Manager calls?
 
 ---
 
@@ -245,6 +273,10 @@ Use this in PR/design review:
 
 - [ ] Every new class has an explicit layer assignment.
 - [ ] Presentation depends only on Managers/Utilities.
+- [ ] Every public Manager operation maps to a complete application use-case.
+- [ ] Manager class grouping is justified by a cohesive use-case boundary, dependencies, state, and lifecycle.
+- [ ] No Manager was introduced only for a page, workspace, domain noun, DTO, Accessor, or internal operation.
+- [ ] Stateful Manager data is limited to use-case continuity, concurrency safety, cancellation, or application-level result state.
 - [ ] No Manager calls another Manager.
 - [ ] Engines are stateless and testable in isolation.
 - [ ] Accessors contain all external I/O details.
@@ -260,6 +292,9 @@ Use this in PR/design review:
 - “God service” combining orchestration + I/O + logic
 - Direct controller/UI access to DB/API client
 - Manager chaining (`ManagerA -> ManagerB`)
+- Manager created for a page, workspace, DTO, Accessor, or internal workflow step without a use-case boundary
+- Public Manager methods that expose internal workflow steps rather than complete use-cases
+- Stateful Manager used as an unrelated UI state container
 - Accessor containing business policy decisions
 - Utility namespace used as a business-logic landfill
 - Shared global model folder with unclear ownership
