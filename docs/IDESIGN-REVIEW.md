@@ -20,6 +20,66 @@ This file contains historical reviews below; those entries are evidence, not aut
 
 The agent must present the current section to the user and stop while it is `PENDING APPROVAL`. No architecture-affecting plan or source-code implementation may begin until the user explicitly approves it. If the scope or interface set changes materially, reset the status to `PENDING APPROVAL` and repeat the stop.
 
+## Manager policy expansion
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Engine, Accessor
+**Dependency direction:** Client -> Manager -> Engine and/or Accessor
+**Interfaces added or retained:** None
+**Interface justifications:** None; this change expands written Manager rules only.
+**Exceptions or risks:** Stateful Managers are an intentional application-specific adaptation for scoped use-case continuity and client-facing execution state; they must not become arbitrary UI state containers.
+**User approval:** Explicitly approved by user request on 2026-10-25
+
+**Approved policy direction:** Managers own application use-cases, not pages, workspaces, or implementation workflows. A use-case is a complete application intent with defined inputs, preconditions, side effects, result, and failure contract. A Manager class may represent one use-case or a tightly cohesive group of use-cases sharing an application boundary, dependencies, state, and lifecycle. Pass-through wrappers are rejected; Managers do not call other Managers; and an oversized Manager should first be reduced through Engines, Accessors, and cohesive private helpers before being split into additional Managers.
+
+## Manager and Engine structure and redesign
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Engine, Accessor
+**Dependency direction:** Client -> Manager -> Engine and/or Accessor
+**Interfaces added or retained:** No new Manager interface is approved by default; existing Accessor interfaces remain subject to boundary review.
+**Interface justifications:** Any retained or new interface must justify a platform boundary, alternate implementation, or necessary testing seam.
+**Exceptions or risks:** Existing Managers are stateful and broad; the legacy `Services/Git` area may overlap with Accessor responsibilities; structural moves must avoid creating pass-through interfaces or splitting Managers by page or technical noun.
+**User approval:** Explicitly approved by user request on 2026-10-25
+
+**Approved scope:** Normalize Manager and Engine packaging to the Accessor pattern where appropriate (`<Layer>/<ServiceName>/Interface` and `Service`), classify the legacy Git services, inventory current public Manager operations as use-cases, verify whether any deterministic policy actually justifies an Engine, and redesign Manager boundaries around cohesive use-case families before changing behavior. The consolidated public Manager is named `WorkspaceManager`. No Engine is presumed for Git-Bug: its Accessor owns the integration and DTO contracts, while `WorkspaceManager` coordinates the use-cases. Structural moves and behavioral redesign should be separable so each can be verified independently.
+
+## M015 S01 Workspace use-case inventory and boundary review
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Accessor, Resource
+**Dependency direction:** Client -> WorkspaceManager -> `IBrowserGitAccessor` / `IGitBugAccessor` -> `BrowserGitAccessor` -> browser Git Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor` and `IGitBugAccessor`; no `IWorkspaceManager`, Git-Bug Engine, or new Accessor facet
+**Interface justifications:** `IBrowserGitAccessor` protects the browser JavaScript/Git/transport and credential platform boundary; `IGitBugAccessor` protects the distinct Git-Bug format/storage boundary and fixture-backed substitution seam.
+**Exceptions or risks:** The former `RepositoryWorkspaceManager`, `GitBugWorkspaceManager`, duplicate state paths, and `AlmToo/Services/Git` are absent in the current checkout; the design artifact records them as historical migration inputs and forbids recreating pass-through services.
+**User approval:** Explicitly approved by user request on 2026-10-25
+
+**Review result:** PASS. The current normalized `WorkspaceManager` owns complete application use-cases and safe state transitions, Clients remain above the Manager boundary, browser/Git integration remains below the Accessor boundary, and no deterministic policy or alternate implementation justifies a new Engine or Manager interface.
+
+## M015 S02 WorkspaceManager consolidation
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Accessor
+**Dependency direction:** Client -> WorkspaceManager -> BrowserGitAccessor contracts -> BrowserGitAccessor
+**Interfaces added or retained:** `IBrowserGitAccessor`, `IGitBugAccessor`, `IGitPublicationAccessor`, `IBrowserFileAccessor`; no new Manager interface
+**Interface justifications:** Existing Accessor contracts protect the browser Git platform boundary and focused Git-Bug/publication/file seams; no `IWorkspaceManager` is introduced because no alternate implementation or required testing seam has been established.
+**Exceptions or risks:** One concrete Accessor currently implements all retained facets; S03 must verify whether publication and file facets remain independently justified. WorkspaceManager is stateful by design for active workspace continuity, cancellation, and safe failure state.
+**User approval:** Explicitly approved by user request to continue on 2026-10-25
+**Review result:** PASS. The consolidation preserves Client -> Manager -> Accessor direction, removes duplicate workspace context ownership, and introduces no Engine or pass-through Manager interface.
+
+## M015 S03 Accessor facet consolidation
+
+**Status:** APPROVED
+**Affected layers:** Manager, Accessor, Client tests
+**Dependency direction:** WorkspaceManager -> `IBrowserGitAccessor` and `IGitBugAccessor` -> `BrowserGitAccessor`
+**Interfaces added or retained:** Retain `IBrowserGitAccessor` and `IGitBugAccessor`; remove `IGitPublicationAccessor` and `IBrowserFileAccessor` as separate contracts.
+**Interface justifications:** `IBrowserGitAccessor` protects the browser Git platform boundary; `IGitBugAccessor` protects the distinct Git-Bug format and fixture-backed substitution seam. The publication and file facets currently resolve to the same concrete Accessor and have no independent consumer or implementation.
+**Exceptions or risks:** Removing the two redundant facets changes Accessor contracts and test seams; all Manager, DI, architecture-test, and fixture references must migrate together. The former `AlmToo/Services/Git` layer is absent, and the architecture gate forbids recreating its service names or redundant facet contracts.
+**User approval:** Explicitly approved by user response on 2026-10-25
+**Review result:** PASS. The approved reduction removes nominal Accessor facets without adding concrete services or weakening the browser Git or Git-Bug platform boundaries. Final verification passed: .NET build, 78 .NET tests, 124 Node tests, stale production-reference scan, and modified-file whitespace audit.
+
+**Approved scope:** Reduce interface proliferation without creating new Accessor services: fold file and publication operations into `IBrowserGitAccessor`, retain `IGitBugAccessor`, remove the redundant facet registrations and files, classify or remove `AlmToo/Services/Git`, and verify the final Client -> WorkspaceManager -> Accessor boundary.
+
 ## Next milestone: Git-Bug comment presentation de-duplication
 
 **Status:** APPROVED
@@ -339,6 +399,25 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] `GitRefUpdate`, `GitPublicationRequest`, `GitPublicationReview`, and `GitPublicationReceipt` are passive **Accessor contract** records. Namespace allowlists, bounded update/precondition counts, object-id validation, and safe update-kind checks remain below the Client boundary.
 - [x] The concrete Accessor is registered under both `IBrowserGitAccessor` and `IGitPublicationAccessor` from the same scoped instance; no Manager, Client, Engine, or second implementation is introduced.
 - [x] Existing file, branch/history, synchronization, commit, and branch-only push workflows remain compatible. No architectural exception is required.
+
+**Result:** PASS
+
+## M015 cross-slice integration review
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Accessor, Resource (browser Git integration)
+**Dependency direction:** Client -> WorkspaceManager -> Browser Git Accessor contracts -> BrowserGitAccessor -> browser Git integration
+**Interfaces added or retained:** `IBrowserGitAccessor` and `IGitBugAccessor` retained as Accessor seams; no Engine interface or Git-Bug Engine proposed.
+**Interface justifications:** `IBrowserGitAccessor` isolates the browser Git platform dependency and supplies a Manager testing seam; `IGitBugAccessor` preserves the distinct Git-Bug integration contract within the same Accessor boundary.
+**Declared review scope:** Evaluate only the M015 boundary map and the supplied S01, S02, and S03 evidence for cross-slice integration. Do not require redundant direct dependencies or invent boundaries; transitive dependency chains are valid.
+**Ownership assertions:** WorkspaceManager owns application use-cases, workspace state, cancellation, and safe failures; BrowserGitAccessor owns Git and Git-Bug integration and DTO contracts; no Git-Bug Engine exists without separate deterministic policy justification.
+
+- [x] **Client:** Home, Git-Bug, Program, imports, and repository child components consume Manager-owned, Client-safe contracts and do not depend directly on Accessor types or coordinate overlapping Managers.
+- [x] **Manager:** one sealed partial WorkspaceManager owns repository, VCS, synchronization, and Git-Bug use-cases, shared WorkspaceState, cancellation, and bounded safe failures.
+- [x] **Accessor:** IBrowserGitAccessor and IGitBugAccessor remain the justified integration seams; BrowserGitAccessor owns Git/Git-Bug integration and DTO contracts, with no unjustified Engine or legacy Services/Git wrapper.
+- [x] **Dependency direction:** Client -> WorkspaceManager -> Browser Git Accessor contracts -> BrowserGitAccessor -> browser Git integration is enforced by the focused architecture and design tests.
+- [x] **Verification:** `npm test --prefix AlmToo` (124 passed), `dotnet test AlmToo.sln --no-restore` (78 passed), repository browser acceptance (4 passed), and Git-Bug write/recovery/repeatability acceptance (5 passed).
+- [x] No architectural exception is required.
 
 **Result:** PASS
 

@@ -9,7 +9,7 @@ namespace AlmToo.Accessor.BrowserGitAccessor.Service;
 /// <summary>
 /// Cohesive browser-platform Accessor for the active Git workspace and its text files.
 /// </summary>
-public sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccessor, IGitPublicationAccessor, IGitBugAccessor
+public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
 {
     private const string ModulePath = "./js/browserGitEngine.js";
     private const string CredentialModulePath = "./js/pushCredentialSession.js";

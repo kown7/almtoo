@@ -1,4 +1,4 @@
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
 
 <section class="repository-commit-history" aria-labelledby="repository-history-heading">
     <div class="repository-commit-history__header">
@@ -56,10 +56,10 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter, EditorRequired] public WorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback OnRetryRequested { get; set; }
 
-    private bool IsLoading => State.IsBranchHistoryLoading || State.Operation == RepositoryWorkspaceOperation.LoadBranchHistory;
+    private bool IsLoading => State.IsBranchHistoryLoading || State.Operation == WorkspaceOperation.LoadBranchHistory;
     private bool IsBusy => State.IsBusy || State.IsBranchHistoryLoading || State.IsBranchSwitching;
 
     private static string ShortCommitId(string commitId) =>

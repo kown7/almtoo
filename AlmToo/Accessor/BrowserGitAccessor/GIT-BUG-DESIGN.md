@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented and browser-verified Accessor, Resource, Manager, and Client boundary.** The fixture-proven `IGitBugAccessor` read/write facet, browser decoder and Git-Bug writer, concrete `GitBugWorkspaceManager`, central `IGitPublicationAccessor` publication path, and accessible list/detail/edit Client are implemented and contract-locked. Chromium verification covers the supplied public repository, the supported fixture, controlled smart-HTTP publication, and safe unavailable/unsupported states.
+**Implemented and browser-verified Accessor, Resource, Manager, and Client boundary.** The fixture-proven `IGitBugAccessor` read/write facet, browser decoder and Git-Bug writer, consolidated `WorkspaceManager` Git-Bug use-case facet, the `IBrowserGitAccessor` publication path, and accessible list/detail/edit Client are implemented and contract-locked. Chromium verification covers the supplied public repository, the supported fixture, controlled smart-HTTP publication, and safe unavailable/unsupported states.
 
 | Field | Decision |
 | --- | --- |
@@ -203,7 +203,7 @@ Pass. The `browserGitEngine.js` list/detail decoder is a **Resource** beneath th
 ### T03 iDesign review
 
 - **Client:** `Pages/GitBug.razor`, `GitBugIssueList.razor`, and `GitBugIssueDetail.razor` render passive `GitBugWorkspaceState`, emit accessible intent callbacks, and are source-gated against `IGitBugAccessor`, Git-Bug Accessor request DTO construction, `BrowserGitAccessor`, `browserGitEngine`, Accessor namespaces, raw HTML, and JS interop. The page observes repository lifecycle state only to call `SetRepository`; it renders no repository Manager state and performs no Git-Bug policy.
-- **Manager:** the concrete `GitBugWorkspaceManager` is the sole Git-Bug Client dependency. Client-safe default-list and string-ID overloads translate UI intent into bounded Accessor records while preserving the existing cancellation/stale-completion lifecycle; no Manager-to-Manager or Manager-to-JS edge is introduced.
+- **Manager:** the consolidated `WorkspaceManager` Git-Bug use-case facet is the sole Git-Bug Client dependency. Client-safe default-list and string-ID overloads translate UI intent into bounded Accessor records while preserving the existing cancellation/stale-completion lifecycle; no Manager-to-Manager or Manager-to-JS edge is introduced.
 - **Accessor:** `IGitBugAccessor` and passive contracts remain co-located at the genuine external-format and browser-platform boundary. The existing concrete `BrowserGitAccessor` implements the facet directly and all three Accessor facets resolve to that shared scoped instance.
 - **Resource:** `browserGitEngine.js` owns deterministic supported-format decoding and bounded local Git reads. Node tests prove list, detail, missing, malformed, unsupported, and invalid-request paths use no transport or write-capable Git operation and preserve repository snapshots.
 - **Cohesion and interfaces:** no wrapper, pass-through service, speculative Engine, or Manager interface was added. `IGitBugAccessor` remains necessary for credible local-decoder/server substitution and fixture-backed testing.
@@ -392,7 +392,7 @@ S01 proved the design boundary, canonical names, bounded/redacted failure rules,
 
 Git-Bug issue edits and comments are local browser-repository mutations first. `GitBugWorkspaceManager` owns issue selection, bounded input, local write sequencing, and refresh; it does not push. `RepositoryWorkspaceManager` owns the repository-wide publication transaction and is the only Manager that can publish the reviewed ref set.
 
-The publication review explicitly lists changed Git-Bug refs and the required identity ref, repository and branch coordinates, and remote preconditions. The Client must render that review, require explicit confirmation, collect a tab-scoped credential, and invoke publication only after confirmation. `IGitPublicationAccessor` validates the reviewed request and performs the smart-HTTP push; it never accepts an unreviewed Git-Bug operation or a credential-bearing DTO.
+The publication review explicitly lists changed Git-Bug refs and the required identity ref, repository and branch coordinates, and remote preconditions. The Client must render that review, require explicit confirmation, collect a tab-scoped credential, and invoke publication only after confirmation. `IBrowserGitAccessor` validates the reviewed request and performs the smart-HTTP push; it never accepts an unreviewed Git-Bug operation or a credential-bearing DTO.
 
 A successful receipt identifies the published ref/object outcome without exposing credentials. The Manager then forgets the tab credential and refreshes status. Credential rejection, network loss, unsupported refs, and remote-ahead responses clear confirmation and credential state and return safe, retryable recovery guidance. No failure is implicitly replayed and no remote configuration is persisted by the browser harness.
 

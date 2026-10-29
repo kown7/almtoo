@@ -1,11 +1,13 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
-using AlmToo.Managers.Repositories;
+using AlmToo.Managers.Workspace;
+using AlmToo.Managers.Workspace.Interface;
+using AlmToo.Tests.Managers.Workspace;
 using Xunit;
 
-namespace AlmToo.Tests.Managers.Repositories;
+namespace AlmToo.Tests.Managers.Workspace;
 
-public sealed class RepositoryWorkspaceManagerTests
+public sealed class WorkspaceManagerTests
 {
     private static readonly RepositoryInfo Repository = new(
         "https://github.com/example/project.git", "project", "/workspaces/project", true);
@@ -70,7 +72,7 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.False(succeeded);
         Assert.Equal("/../secrets", fake.FilterRequests.Last().Path);
         Assert.Equal("Repository paths cannot traverse the workspace.", manager.State.Error?.Message);
-        Assert.Equal("path-containment", manager.State.Error?.Diagnostic);
+        Assert.DoesNotContain("path-containment", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
         Assert.Equal(GitOperationFailureKind.Unknown, manager.State.Error?.FailureKind);
         Assert.Empty(manager.State.Entries);
     }
@@ -158,7 +160,7 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         Assert.True(await manager.ReviewCommitAsync());
 
-        var input = new RepositoryCommitInput("Review central ownership", "Ada", "ada@example.com");
+        var input = new WorkspaceCommitInput("Review central ownership", "Ada", "ada@example.com");
         manager.SetProposedCommit(input);
 
         Assert.Same(input, manager.State.ProposedCommit);
@@ -175,7 +177,7 @@ public sealed class RepositoryWorkspaceManagerTests
         using var manager = CreateManager(fake);
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         Assert.True(await manager.ReviewCommitAsync());
-        manager.SetProposedCommit(new RepositoryCommitInput("Cancel safely", "Ada", "ada@example.com"));
+        manager.SetProposedCommit(new WorkspaceCommitInput("Cancel safely", "Ada", "ada@example.com"));
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fake.CommitHandler = async (_, token) =>
@@ -193,7 +195,7 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.True(manager.State.Error?.WasCancelled);
         Assert.Null(manager.State.CreatedCommit);
         Assert.Null(manager.State.LastWriteSucceeded);
-        Assert.Equal(RepositoryWorkspaceOperation.None, manager.State.Operation);
+        Assert.Equal(WorkspaceOperation.None, manager.State.Operation);
     }
 
     [Fact]
@@ -244,7 +246,7 @@ public sealed class RepositoryWorkspaceManagerTests
 
         Assert.False(conflicting);
         Assert.True(await active);
-        Assert.Equal(RepositoryWorkspaceOperation.None, manager.State.Operation);
+        Assert.Equal(WorkspaceOperation.None, manager.State.Operation);
         Assert.Equal(0, fake.InspectCalls);
     }
 
@@ -420,7 +422,7 @@ public sealed class RepositoryWorkspaceManagerTests
 
         var succeeded = await manager.StoreCredentialAsync(secret);
         var serializedState = JsonSerializer.Serialize(manager.State);
-        var managerStringFields = typeof(RepositoryWorkspaceManager)
+        var managerStringFields = typeof(WorkspaceManager)
             .GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
             .Where(field => field.FieldType == typeof(string))
             .Select(field => (string?)field.GetValue(manager));
@@ -428,13 +430,12 @@ public sealed class RepositoryWorkspaceManagerTests
         Assert.False(succeeded);
         Assert.DoesNotContain(secret, serializedState, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, manager.State.Error?.Message ?? string.Empty, StringComparison.Ordinal);
-        Assert.DoesNotContain(secret, manager.State.Error?.Diagnostic ?? string.Empty, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, managerStringFields);
         Assert.True(manager.State.CredentialReplacementRequired);
     }
 
     [Fact]
-    public async Task Accessor_exception_is_translated_to_safe_type_only_diagnostic()
+    public async Task Accessor_exception_is_translated_to_safe_failure_state()
     {
         var fake = new FakeBrowserAccessor
         {
@@ -446,13 +447,13 @@ public sealed class RepositoryWorkspaceManagerTests
 
         Assert.False(succeeded);
         Assert.Equal("The repository operation could not be completed safely.", manager.State.Error?.Message);
-        Assert.Equal(nameof(InvalidOperationException), manager.State.Error?.Diagnostic);
+        Assert.Equal(GitOperationFailureKind.Unknown, manager.State.Error?.FailureKind);
         Assert.DoesNotContain("secret=abc", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
     }
 
-    private static RepositoryWorkspaceManager CreateManager(FakeBrowserAccessor fake) => new(fake, fake);
+    private static WorkspaceManager CreateManager(FakeBrowserAccessor fake) => new(fake, new NoOpGitBugAccessor());
 
-    private static async Task PreparePushAsync(RepositoryWorkspaceManager manager)
+    private static async Task PreparePushAsync(WorkspaceManager manager)
     {
         Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
         Assert.True(await manager.StoreCredentialAsync("one-attempt-token"));
@@ -460,7 +461,7 @@ public sealed class RepositoryWorkspaceManagerTests
         manager.ConfirmPushReview(true);
     }
 
-    internal sealed class FakeBrowserAccessor : IBrowserGitAccessor, IBrowserFileAccessor
+    internal sealed class FakeBrowserAccessor : IBrowserGitAccessor
     {
         public List<string> Calls { get; } = [];
         public List<RepositoryOpenRequest> OpenRequests { get; } = [];
@@ -529,6 +530,12 @@ public sealed class RepositoryWorkspaceManagerTests
             Calls.Add("publication-review");
             return await PublicationReviewAsync(cancellationToken);
         }
+
+        public ValueTask<GitOperationResult<GitPublicationReceipt>> PublishAsync(
+            GitPublicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<GitOperationResult<GitPublicationReceipt>>(
+                new NotSupportedException("Publication is not configured in this test double."));
 
         public async ValueTask<GitOperationResult<BranchSnapshot>> GetBranchesAsync(CancellationToken cancellationToken = default) =>
             BranchesAsync is null

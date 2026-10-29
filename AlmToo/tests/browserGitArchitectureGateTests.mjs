@@ -70,8 +70,8 @@ export function inspectArchitecture(snapshot) {
   for (const path of ['Components/RepositoryBranchSelector.razor', 'Components/RepositoryCommitHistory.razor']) {
     const client = snapshot.clients.get(path);
     if (client === undefined) continue;
-    if (!/@using\s+AlmToo\.Managers\.Repositories/.test(client) || !/RepositoryWorkspaceState\s+State/.test(client)) {
-      failures.push(violation('BRANCH_HISTORY_STATE', path, 'branch and history Clients must render passive RepositoryWorkspaceState'));
+    if (!/@using\s+AlmToo\.Managers\.Workspace/.test(client) || !/WorkspaceState\s+State/.test(client)) {
+      failures.push(violation('BRANCH_HISTORY_STATE', path, 'branch and history Clients must render passive WorkspaceState'));
     }
     if (!/EventCallback/.test(client) || /@inject\b|\bWorkspace\.|State\.[A-Za-z]\w*\s*=(?!=)/.test(client)) {
       failures.push(violation('BRANCH_HISTORY_CALLBACK_BOUNDARY', path, 'branch and history Clients must expose callbacks without Manager orchestration or state mutation'));
@@ -86,7 +86,7 @@ export function inspectArchitecture(snapshot) {
   }
 
   failures.push(...matchingSources(snapshot.accessors, /AlmToo\.(?:Managers|Pages|Components)\b|\b(?:NavigationManager|RenderFragment|EventCallback|RepositoryWorkspaceState|StateChanged|CredentialReplacementRequired|ConfirmPush|AutoRetry)\b/, 'ACCESSOR_WORKFLOW_OR_UI', 'Accessor must not own Manager workflow policy or Client presentation state'));
-  failures.push(...matchingSources(production, /\b(?:IVersionControlAccessor|VersionControlAccessor|IBrowserGitService|BrowserGitService)\b|AlmToo\.(?:Accessors\.Git|Services\.Git)\b/, 'LEGACY_GIT_ARCHITECTURE', 'legacy Browser Git service name or namespace is forbidden'));
+  failures.push(...matchingSources(production, /\b(?:IVersionControlAccessor|VersionControlAccessor|IBrowserGitService|BrowserGitService|IGitPublicationAccessor|IBrowserFileAccessor)\b|AlmToo\.(?:Accessors\.Git|Services\.Git)\b/, 'LEGACY_GIT_ARCHITECTURE', 'legacy Browser Git service or redundant Accessor facet name is forbidden'));
 
   const contract = snapshot.contracts.get(contractPath);
   if (contract === undefined) {
@@ -128,10 +128,8 @@ export function inspectArchitecture(snapshot) {
   const registrations = [
     [/AddScoped<BrowserGitAccessor>\s*\(\s*\)/, 'concrete scoped BrowserGitAccessor registration'],
     [/AddScoped<IBrowserGitAccessor>\s*\(\s*\w+\s*=>\s*\w+\.GetRequiredService<BrowserGitAccessor>\s*\(\s*\)\s*\)/, 'IBrowserGitAccessor factory resolving the shared concrete instance'],
-    [/AddScoped<IBrowserFileAccessor>\s*\(\s*\w+\s*=>\s*\w+\.GetRequiredService<BrowserGitAccessor>\s*\(\s*\)\s*\)/, 'IBrowserFileAccessor factory resolving the shared concrete instance'],
     [/AddScoped<IGitBugAccessor>\s*\(\s*\w+\s*=>\s*\w+\.GetRequiredService<BrowserGitAccessor>\s*\(\s*\)\s*\)/, 'IGitBugAccessor factory resolving the shared concrete instance'],
-    [/AddScoped<RepositoryWorkspaceManager>\s*\(\s*\)/, 'concrete scoped RepositoryWorkspaceManager registration'],
-    [/AddScoped<GitBugWorkspaceManager>\s*\(\s*\)/, 'concrete scoped GitBugWorkspaceManager registration']
+    [/AddScoped<WorkspaceManager>\s*\(\s*\)/, 'concrete scoped WorkspaceManager registration']
   ];
   for (const [pattern, expectation] of registrations) if (!pattern.test(program)) failures.push(violation('SCOPED_COMPOSITION', 'Program.cs', `missing ${expectation}`));
   if (/AddScoped<I(?:Repository|GitBug)WorkspaceManager>/.test(program)) failures.push(violation('MANAGER_INTERFACE', 'Program.cs', 'cohesive concrete Managers must remain interface-free'));
@@ -146,13 +144,12 @@ export function inspectArchitecture(snapshot) {
   const interfaceReview = reviewSection(snapshot.design, headings[2], headings[3]) ?? '';
   const required = [
     [layerReview, /Pages\/Home\.razor[\s\S]*\|\s*Client\s*\|/, 'Home Client layer mapping'],
-    [layerReview, /RepositoryWorkspaceManager[\s\S]*\|\s*Manager\s*\|/, 'repository Manager layer mapping'],
+    [layerReview, /WorkspaceManager[\s\S]*\|\s*Manager\s*\|/, 'WorkspaceManager layer mapping'],
     [layerReview, /browserGitEngine\.js[\s\S]*\|\s*Accessor\s*\|/, 'browser Git engine Accessor layer mapping'],
     [layerReview, /IBrowserGitAccessor[\s\S]*\|\s*Accessor\s*\|/, 'Browser Git Accessor layer mapping'],
     [layerReview, /Accessor\/BrowserGitAccessor\/Interface\/BrowserGitContracts\.cs[\s\S]*\|\s*Accessor contract\s*\|/, 'Browser Git Accessor contract mapping'],
     [interfaceReview, /IBrowserGitAccessor[^\n]*platform boundary[^\n]*substitution seam/i, 'IBrowserGitAccessor boundary and substitution rationale'],
-    [interfaceReview, /IBrowserFileAccessor[^\n]*platform boundary[^\n]*substitution seam/i, 'IBrowserFileAccessor boundary and substitution rationale'],
-    [interfaceReview, /RepositoryWorkspaceManager[^\n]*interface-free/i, 'interface-free concrete Manager rationale'],
+    [interfaceReview, /WorkspaceManager[^\n]*interface-free/i, 'interface-free concrete Manager rationale'],
     [snapshot.design, /\*\*Overall result:\*\*\s+PASS\b/, 'overall passing result']
   ];
   for (const [document, pattern, description] of required) if (!pattern.test(document)) failures.push(violation('REVIEW_DIVERGENCE', reviewPath, `missing ${description}`));
@@ -179,17 +176,17 @@ function assertViolation(snapshot, expectedRule, expectedPath) {
 
 function fixture(overrides = {}) {
   const validReview = [
-    '### 1. Layer assignments\n| Pages/Home.razor | Client | Render | Manager | Accessor |\n| RepositoryWorkspaceManager | Manager | Coordinate | Accessor | Manager |\n| browserGitEngine.js | Accessor | Integrate | Platform | Client |\n| IBrowserGitAccessor | Accessor | Integrate | Platform | Client |\n| Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs | Accessor contract | Transfer | Accessor interfaces and data | Behavior |\n**Result:** PASS',
+    '### 1. Layer assignments\n| Pages/Home.razor | Client | Render | Manager | Accessor |\n| WorkspaceManager | Manager | Coordinate | Accessor | Manager |\n| browserGitEngine.js | Accessor | Integrate | Platform | Client |\n| IBrowserGitAccessor | Accessor | Integrate | Platform | Client |\n| Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs | Accessor contract | Transfer | Accessor interfaces and data | Behavior |\n**Result:** PASS',
     '### 2. Dependency direction\nOne way.\n**Result:** PASS',
-    '### 3. Interface justification\n| IBrowserGitAccessor | browser Git platform boundary and substitution seam |\n| IBrowserFileAccessor | browser filesystem platform boundary and substitution seam |\nThe concrete RepositoryWorkspaceManager remains interface-free.\n**Result:** PASS',
+    '### 3. Interface justification\n| IBrowserGitAccessor | browser Git platform boundary and substitution seam |\n| IGitBugAccessor | Git-Bug format/storage boundary and fixture-backed substitution seam |\nThe concrete WorkspaceManager remains interface-free.\n**Result:** PASS',
     '### 4. Cohesion and decomposition\nCohesive.\n**Result:** PASS',
     '### 5. Verification placement\nCovered.\n**Result:** PASS',
     '### 6. Exceptions\nNone.\n**Result:** NOT APPLICABLE',
     '## Compliance statement\n**Overall result:** PASS'
   ].join('\n');
   const base = {
-    clients: new Map([['Pages/Home.razor', '@inject RepositoryWorkspaceManager Workspace']]),
-    managers: new Map([['Managers/Repositories/RepositoryWorkspaceManager.cs', 'public sealed class RepositoryWorkspaceManager { }']]),
+    clients: new Map([['Pages/Home.razor', '@inject WorkspaceManager Workspace']]),
+    managers: new Map([['Managers/Workspace/Service/WorkspaceManager.cs', 'public sealed class WorkspaceManager { }']]),
     accessors: new Map([
       ['Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs', 'public interface IBrowserGitAccessor { }'],
       [browserGitAccessorPath, 'public sealed class BrowserGitAccessor : IGitBugAccessor { }'],
@@ -199,7 +196,7 @@ function fixture(overrides = {}) {
       [contractPath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public record GitOperationResult(string Operation, bool Succeeded, string Message);'],
       [gitBugInterfacePath, 'namespace AlmToo.Accessor.BrowserGitAccessor.Interface; public interface IGitBugAccessor { ValueTask ListIssuesAsync(); ValueTask GetIssueAsync(); }']
     ]),
-    composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>(); services.AddScoped<IBrowserGitAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IBrowserFileAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IGitBugAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<RepositoryWorkspaceManager>(); services.AddScoped<GitBugWorkspaceManager>();']]),
+    composition: new Map([['Program.cs', 'services.AddScoped<BrowserGitAccessor>(); services.AddScoped<IBrowserGitAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<IGitBugAccessor>(s => s.GetRequiredService<BrowserGitAccessor>()); services.AddScoped<WorkspaceManager>();']]),
     design: validReview,
     gitBugDesign: '### T03 iDesign review\nClient to Manager to Accessor to Resource. IGitBugAccessor protects the external-format and platform boundary. No architectural exception is required.\n**Result:** PASS\n## Manager and Client behavior'
   };
@@ -218,7 +215,7 @@ test('negative fixtures identify dependency and ownership violations at concrete
   assertViolation(fixture({ clients: new Map([['Components/IssueList.razor', '@code { GitBugIssueQuery Query = new(); }']]) }), 'CLIENT_ACCESSOR_EDGE', 'Components/IssueList.razor');
   assertViolation(fixture({ clients: new Map([['Pages/Home.razor', 'await browserGitEngine.synchronize(request);']]) }), 'CLIENT_ACCESSOR_EDGE', 'Pages/Home.razor');
   assertViolation(fixture({ clients: new Map([['Components/RepositoryFileBrowser.razor', '@inject IJSRuntime GitRuntime']]) }), 'CLIENT_GIT_INTEROP', 'Components/RepositoryFileBrowser.razor');
-  assertViolation(fixture({ managers: new Map([['Managers/Repositories/RepositoryWorkspaceManager.cs', 'sealed class RepositoryWorkspaceManager { BillingManager other; }']]) }), 'MANAGER_TO_MANAGER', 'Managers/Repositories/RepositoryWorkspaceManager.cs');
+  assertViolation(fixture({ managers: new Map([['Managers/Workspace/Service/WorkspaceManager.cs', 'sealed class WorkspaceManager { BillingManager other; }']]) }), 'MANAGER_TO_MANAGER', 'Managers/Workspace/Service/WorkspaceManager.cs');
   assertViolation(fixture({ accessors: new Map([['Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs', 'sealed class BrowserGitAccessor { RepositoryWorkspaceState state; void ConfirmPush() {} }']]) }), 'ACCESSOR_WORKFLOW_OR_UI', 'Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs');
 });
 

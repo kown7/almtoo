@@ -21,8 +21,7 @@ test('composition registers one scoped browser workspace Accessor and concrete M
 
   assert.match(program, /AddScoped<BrowserGitAccessor>\(\)/);
   assert.match(program, /AddScoped<IBrowserGitAccessor>\(services => services\.GetRequiredService<BrowserGitAccessor>\(\)\)/);
-  assert.match(program, /AddScoped<IBrowserFileAccessor>\(services => services\.GetRequiredService<BrowserGitAccessor>\(\)\)/);
-  assert.match(program, /AddScoped<RepositoryWorkspaceManager>\(\)/);
+  assert.match(program, /AddScoped<WorkspaceManager>\(\)/);
   assert.doesNotMatch(program, /IRepositoryWorkspaceManager|IVersionControlAccessor|Resources/);
 });
 
@@ -30,8 +29,8 @@ test('Home injects the concrete repository Manager and has no Client to Accessor
   const [home, ...children] = await clientSources();
   const allClients = [home, ...children].join('\n');
 
-  assert.match(home, /@inject RepositoryWorkspaceManager Workspace/);
-  assert.match(home, /@using AlmToo\.Managers\.Repositories/);
+  assert.match(home, /@inject WorkspaceManager Workspace/);
+  assert.match(home, /@using AlmToo\.Managers\.Workspace/);
   assert.doesNotMatch(allClients, /IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|AlmToo\.Accessor|AlmToo\.Services\.Git/);
   assert.doesNotMatch(allClients, /IJSRuntime|IJSObjectReference|JSImport|InvokeAsync<.*>\("(?:storeCredential|getCredentialForPush|forgetCredential|hasCredential)"/);
   assert.doesNotMatch(allClients, /\.Diagnostic\b|personalAccessToken|accessToken/i);
@@ -67,7 +66,7 @@ test('Home delegates the complete repository workflow to the Manager', async () 
 test('Home renders Manager-owned state and passes that state to presentation children', async () => {
   const home = await source('Pages/Home.razor');
 
-  assert.match(home, /private RepositoryWorkspaceState State => Workspace\.State/);
+  assert.match(home, /private WorkspaceState State => Workspace\.State/);
   assert.match(home, /<RepositoryFileBrowser State="State"[\s\S]*OnDirectorySelected="LoadDirectoryAsync"[\s\S]*OnFileSelected="SelectFileAsync"/);
   assert.match(home, /<RepositoryBranchSelector State="State"[\s\S]*OnRefreshRequested="LoadBranchHistoryAsync"[\s\S]*OnBranchSelected="SwitchBranchAsync"/);
   assert.match(home, /<RepositoryCommitHistory State="State"[\s\S]*OnRetryRequested="LoadBranchHistoryAsync"\s*\/>/);
@@ -90,14 +89,14 @@ test('repository child components are presentation-only Manager state and callba
   const children = [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm].join('\n');
 
   for (const child of [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm]) {
-    assert.match(child, /@using AlmToo\.Managers\.Repositories/);
-    assert.match(child, /RepositoryWorkspaceState State/);
+    assert.match(child, /@using AlmToo\.Managers\.Workspace/);
+    assert.match(child, /WorkspaceState State/);
     assert.doesNotMatch(child, /@inject|Workspace\.|Accessor|IJSRuntime/);
   }
   assert.match(fileBrowser, /EventCallback<string> OnDirectorySelected/);
   assert.match(fileBrowser, /EventCallback<string> OnFileSelected/);
   assert.match(changedFiles, /EventCallback OnRefreshRequested/);
-  assert.match(commitForm, /EventCallback<RepositoryCommitInput> OnCommitRequested/);
+  assert.match(commitForm, /EventCallback<WorkspaceCommitInput> OnCommitRequested/);
   assert.doesNotMatch(children, /\b(?:CommitRequest|PushRequest|RepositoryOpenRequest)\b/);
 });
 
@@ -120,7 +119,7 @@ test('commit form validates presentation input and delegates a Manager-owned DTO
   assert.match(commitForm, /Enter a commit message\./);
   assert.match(commitForm, /Enter an author name\./);
   assert.match(commitForm, /Enter a valid author email\./);
-  assert.match(commitForm, /new RepositoryCommitInput\(message, authorName, authorEmail\)/);
+  assert.match(commitForm, /new WorkspaceCommitInput\(message, authorName, authorEmail\)/);
   assert.match(commitForm, /State\.CreatedCommit\.CommitId/);
   assert.match(commitForm, /State\.CreatedCommit\.Message/);
 });

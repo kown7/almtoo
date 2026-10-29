@@ -6,23 +6,20 @@ const root = new URL('../', import.meta.url);
 const source = name => readFile(new URL(name, root), 'utf8');
 
 test('Browser Git interfaces and passive contract records share the Accessor interface namespace', async () => {
-  const [git, file, contracts] = await Promise.all([
+  const [git, contracts] = await Promise.all([
     source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
-    source('Accessor/BrowserGitAccessor/Interface/IBrowserFileAccessor.cs'),
     source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs')
   ]);
-  for (const facet of [git, file]) {
+  for (const facet of [git]) {
     assert.doesNotMatch(facet, /AlmToo\.Resource\.BrowserGitResource\.Data/);
     assert.match(facet, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface;/);
   }
   assert.match(contracts, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Interface;/);
-  assert.doesNotMatch(git + file + contracts, /AlmToo\.Resources|\.Context\b/);
-  for (const facet of [git, file]) assert.doesNotMatch(facet, /\b(?:record|enum)\s+(?:GitOperationResult|PushRequest|FilterFilesRequest)\b/);
+  assert.doesNotMatch(git + contracts, /AlmToo\.Resources|\.Context\b/);
+  assert.doesNotMatch(git, /\b(?:record|enum)\s+(?:GitOperationResult|PushRequest|FilterFilesRequest)\b/);
   assert.match(git, /interface IBrowserGitAccessor : IAsyncDisposable/);
-  for (const operation of ['CloneOrOpenAsync', 'GetStatusAsync', 'CommitAsync', 'InspectPushAsync', 'HasCredentialAsync', 'StoreCredentialAsync', 'ForgetCredentialAsync', 'PushAsync', 'SynchronizeAsync']) assert.match(git, new RegExp(operation));
-  assert.match(file, /FilterFilesAsync\(FilterFilesRequest request/);
-  assert.match(file, /UpdateFilesAsync\(UpdateFilesRequest request/);
-  assert.doesNotMatch(git + file, /personalAccessToken|InitializeAsync|ListFilesAsync|ReadTextFileAsync|WriteTextFileAsync/);
+  for (const operation of ['CloneOrOpenAsync', 'GetStatusAsync', 'CommitAsync', 'InspectPublicationAsync', 'PublishAsync', 'InspectPushAsync', 'HasCredentialAsync', 'StoreCredentialAsync', 'ForgetCredentialAsync', 'PushAsync', 'FilterFilesAsync', 'UpdateFilesAsync', 'SynchronizeAsync']) assert.match(git, new RegExp(operation));
+  assert.doesNotMatch(git, /personalAccessToken|InitializeAsync|ListFilesAsync|ReadTextFileAsync|WriteTextFileAsync/);
   assert.doesNotMatch(contracts, /record SynchronizationFailure\([\s\S]*?(?:Diagnostic|credential|token)/i);
   assert.match(contracts, /SynchronizationFailure\(\s*SynchronizationFailureCategory Category,\s*string Message\)/);
   for (const dto of ['GitOperationResult', 'FilterFilesRequest', 'FilterFilesResult', 'UpdateFilesRequest', 'UpdateFilesResult', 'PushReview', 'PushRequest', 'PushResult', 'SynchronizationRequest', 'IncomingCommitMetadata', 'ChangedFileSummary', 'SynchronizationReview', 'SynchronizationFailure']) assert.match(contracts, new RegExp(`record ${dto}\\b`));
@@ -36,18 +33,18 @@ test('Browser Git interfaces and passive contract records share the Accessor int
   assert.doesNotMatch(passiveContracts, /\b(?:static|class|interface)\b|\b(?:Success|Failure)\s*\(|=>/);
 });
 
-test('one scoped Service implements both facets and both DI contracts resolve that instance', async () => {
+test('one scoped Accessor implements the core and Git-Bug contracts' , async () => {
   const [service, program] = await Promise.all([
     source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
     source('Program.cs')
   ]);
   assert.match(service, /namespace AlmToo\.Accessor\.BrowserGitAccessor\.Service;/);
-  assert.match(service, /sealed class BrowserGitAccessor : IBrowserGitAccessor, IBrowserFileAccessor/);
+  assert.match(service, /sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor/);
   assert.match(program, /AddScoped<BrowserGitAccessor>\(\)/);
   assert.match(program, /AddScoped<IBrowserGitAccessor>\(services => services\.GetRequiredService<BrowserGitAccessor>\(\)\)/);
-  assert.match(program, /AddScoped<IBrowserFileAccessor>\(services => services\.GetRequiredService<BrowserGitAccessor>\(\)\)/);
-  assert.match(program, /AddScoped<RepositoryWorkspaceManager>\(\)/);
-  assert.doesNotMatch(program, /AddScoped<IBrowserGitAccessor, BrowserGitAccessor>|AddScoped<IBrowserFileAccessor, BrowserGitAccessor>/);
+  assert.match(program, /AddScoped<IGitBugAccessor>\(services => services\.GetRequiredService<BrowserGitAccessor>\(\)\)/);
+  assert.match(program, /AddScoped<WorkspaceManager>\(\)/);
+  assert.doesNotMatch(program, /AddScoped<IBrowserGitAccessor, BrowserGitAccessor>|AddScoped<IGitBugAccessor, BrowserGitAccessor>/);
   assert.doesNotMatch(program, /IRepositoryWorkspaceManager|IVersionControlAccessor|Resources/);
 });
 
@@ -125,13 +122,13 @@ test('Accessor normalizes cancellation, interop failures, initialization, and pa
 
 test('publication contracts allow only reviewed branch and Git-Bug refs with bounded preconditions', async () => {
   const [facet, contracts, service, engine] = await Promise.all([
-    source('Accessor/BrowserGitAccessor/Interface/IGitPublicationAccessor.cs'),
+    source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
     source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'),
     source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
     source('wwwroot/js/browserGitEngine.js')
   ]);
 
-  assert.match(facet, /interface IGitPublicationAccessor/);
+  assert.match(facet, /interface IBrowserGitAccessor/);
   assert.match(facet, /InspectPublicationAsync/);
   assert.match(facet, /PublishAsync\(\s*GitPublicationRequest request/);
   for (const record of ['GitRefUpdate', 'GitRemotePrecondition', 'GitPublicationRequest', 'GitPublicationReview', 'GitPublicationReceipt']) {

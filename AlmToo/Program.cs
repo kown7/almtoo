@@ -3,8 +3,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using AlmToo;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
 using AlmToo.Accessor.BrowserGitAccessor.Service;
-using AlmToo.Managers.GitBug;
-using AlmToo.Managers.Repositories;
+using AlmToo.Managers.Workspace;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
@@ -13,10 +12,7 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<BrowserGitAccessor>();
 builder.Services.AddScoped<IBrowserGitAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
-builder.Services.AddScoped<IGitPublicationAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
-builder.Services.AddScoped<IBrowserFileAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
 builder.Services.AddScoped<IGitBugAccessor>(services => services.GetRequiredService<BrowserGitAccessor>());
-builder.Services.AddScoped<RepositoryWorkspaceManager>();
-builder.Services.AddScoped<GitBugWorkspaceManager>();
+builder.Services.AddScoped<WorkspaceManager>();
 
 await builder.Build().RunAsync();

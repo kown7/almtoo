@@ -1,29 +1,28 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Managers.Workspace.Interface;
 
-namespace AlmToo.Managers.Repositories;
+namespace AlmToo.Managers.Workspace;
 
 /// <summary>Coordinates one browser-local repository workspace and exposes credential-free UI state.</summary>
-public sealed class RepositoryWorkspaceManager : IDisposable
+public sealed partial class WorkspaceManager : IDisposable
 {
     private readonly IBrowserGitAccessor gitAccessor;
-    private readonly IGitPublicationAccessor publicationAccessor;
-    private readonly IBrowserFileAccessor fileAccessor;
+    private readonly IGitBugAccessor gitBugAccessor;
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private CancellationTokenSource? activeOperation;
     private bool disposed;
 
-    public RepositoryWorkspaceManager(IBrowserGitAccessor gitAccessor, IBrowserFileAccessor fileAccessor)
+    public WorkspaceManager(IBrowserGitAccessor gitAccessor, IGitBugAccessor gitBugAccessor)
     {
         this.gitAccessor = gitAccessor;
-        publicationAccessor = gitAccessor;
-        this.fileAccessor = fileAccessor;
+        this.gitBugAccessor = gitBugAccessor;
     }
 
-    public RepositoryWorkspaceState State { get; } = new();
+    public WorkspaceState State { get; } = new();
     public event Action? StateChanged;
 
     public Task<bool> InitializeCredentialStateAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.InitializeCredential, async token =>
+        RunAsync(WorkspaceOperation.InitializeCredential, async token =>
         {
             var result = await gitAccessor.HasCredentialAsync(token);
             if (!result.Succeeded)
@@ -36,10 +35,10 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             State.HasCredential = result.Value;
             State.CredentialReplacementRequired = false;
             return Succeed(result.Value ? "A token is available for an explicit push in this tab." : "No token is stored for this tab.");
-        }, cancellationToken, exposeAccessorException: false);
+        }, cancellationToken);
 
     public Task<bool> OpenRepositoryAsync(string repositoryUrl, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.OpenRepository, async token =>
+        RunAsync(WorkspaceOperation.OpenRepository, async token =>
         {
             var trimmedUrl = repositoryUrl?.Trim() ?? string.Empty;
             if (trimmedUrl.Length == 0)
@@ -57,6 +56,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             }
 
             State.Repository = open.Value;
+            SetRepository(open.Value);
             if (!await LoadDirectoryCoreAsync("/", token))
             {
                 return false;
@@ -76,10 +76,10 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }, cancellationToken);
 
     public Task<bool> LoadBranchHistoryAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.LoadBranchHistory, LoadBranchHistoryCoreAsync, cancellationToken);
+        RunAsync(WorkspaceOperation.LoadBranchHistory, LoadBranchHistoryCoreAsync, cancellationToken);
 
     public Task<bool> SwitchBranchAsync(string branchName, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.SwitchBranch, async token =>
+        RunAsync(WorkspaceOperation.SwitchBranch, async token =>
         {
             if (!RequireRepository())
             {
@@ -158,10 +158,10 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }, cancellationToken);
 
     public Task<bool> LoadDirectoryAsync(string path, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.LoadDirectory, token => LoadDirectoryCoreAsync(path, token), cancellationToken);
+        RunAsync(WorkspaceOperation.LoadDirectory, token => LoadDirectoryCoreAsync(path, token), cancellationToken);
 
     public Task<bool> SelectFileAsync(string path, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.LoadFile, async token =>
+        RunAsync(WorkspaceOperation.LoadFile, async token =>
         {
             if (!RequireRepository())
             {
@@ -184,7 +184,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             State.EditableFileContent = string.Empty;
             NotifyChanged();
 
-            var result = await fileAccessor.FilterFilesAsync(new FilterFilesRequest(path, FileFilterKind.TextContent), token);
+            var result = await gitAccessor.FilterFilesAsync(new FilterFilesRequest(path, FileFilterKind.TextContent), token);
             if (!result.Succeeded || result.Value?.TextFile is null)
             {
                 return Fail(result, "The selected file could not be loaded as text. Choose another file or reopen the repository.");
@@ -209,7 +209,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     }
 
     public Task<bool> SaveSelectedFileAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.SaveFile, async token =>
+        RunAsync(WorkspaceOperation.SaveFile, async token =>
         {
             if (!RequireRepository() || string.IsNullOrWhiteSpace(State.SelectedFilePath) || State.SelectedFileContent is null)
             {
@@ -217,7 +217,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             }
 
             var savedContent = State.EditableFileContent;
-            var result = await fileAccessor.UpdateFilesAsync(
+            var result = await gitAccessor.UpdateFilesAsync(
                 new UpdateFilesRequest([new TextFileUpdate(State.SelectedFilePath, savedContent)]), token);
             if (!result.Succeeded || result.Value is null)
             {
@@ -234,10 +234,10 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }, cancellationToken);
 
     public Task<bool> RefreshStatusAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.RefreshStatus, RefreshStatusCoreAsync, cancellationToken);
+        RunAsync(WorkspaceOperation.RefreshStatus, RefreshStatusCoreAsync, cancellationToken);
 
     public Task<bool> ReviewSynchronizationAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.ReviewSynchronization, async token =>
+        RunAsync(WorkspaceOperation.ReviewSynchronization, async token =>
         {
             if (!RequireRepository())
             {
@@ -261,7 +261,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }, cancellationToken);
 
     public Task<bool> ApplySynchronizationAsync(SynchronizationReview reviewedSynchronization, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.ApplySynchronization, async token =>
+        RunAsync(WorkspaceOperation.ApplySynchronization, async token =>
         {
             if (!RequireRepository())
             {
@@ -315,7 +315,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }, cancellationToken);
 
     public Task<bool> ReviewCommitAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.ReviewCommit, async token =>
+        RunAsync(WorkspaceOperation.ReviewCommit, async token =>
         {
             if (!RequireRepository())
             {
@@ -344,7 +344,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
 
     /// <summary>Loads the reviewed branch and Git-Bug ref set without applying it.</summary>
     public Task<bool> ReviewPublicationAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.ReviewPublication, async token =>
+        RunAsync(WorkspaceOperation.ReviewPublication, async token =>
         {
             if (!RequireRepository())
             {
@@ -373,7 +373,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     }
 
     public Task<bool> PublishReviewedPublicationAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.PublishPublication, async token =>
+        RunAsync(WorkspaceOperation.PublishPublication, async token =>
         {
             if (State.PublicationReview is not { } review)
             {
@@ -389,7 +389,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     public Task<bool> PublishPublicationAsync(
         GitPublicationRequest request,
         CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.PublishPublication,
+        RunAsync(WorkspaceOperation.PublishPublication,
             token => PublishPublicationCoreAsync(request, token), cancellationToken);
 
     public Task<bool> PublishReviewedAsync(CancellationToken cancellationToken = default) =>
@@ -400,7 +400,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         CancellationToken cancellationToken = default) =>
         PublishPublicationAsync(request, cancellationToken);
 
-    public void SetProposedCommit(RepositoryCommitInput? request)
+    public void SetProposedCommit(WorkspaceCommitInput? request)
     {
         State.ProposedCommit = request;
         State.Error = null;
@@ -408,7 +408,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     }
 
     public Task<bool> ConfirmLocalCommitAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.Commit, token =>
+        RunAsync(WorkspaceOperation.Commit, token =>
         {
             if (!State.CommitReviewLoaded || State.ProposedCommit is null)
             {
@@ -418,13 +418,13 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             return CommitCoreAsync(State.ProposedCommit, token);
         }, cancellationToken);
 
-    public Task<bool> CommitAsync(RepositoryCommitInput request, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.Commit, token => CommitCoreAsync(request, token), cancellationToken);
+    public Task<bool> CommitAsync(WorkspaceCommitInput request, CancellationToken cancellationToken = default) =>
+        RunAsync(WorkspaceOperation.Commit, token => CommitCoreAsync(request, token), cancellationToken);
 
     public Task<bool> CommitAsync(CommitRequest request, CancellationToken cancellationToken = default) =>
-        CommitAsync(new RepositoryCommitInput(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
+        CommitAsync(new WorkspaceCommitInput(request.Message, request.AuthorName, request.AuthorEmail), cancellationToken);
 
-    private async Task<bool> CommitCoreAsync(RepositoryCommitInput request, CancellationToken token)
+    private async Task<bool> CommitCoreAsync(WorkspaceCommitInput request, CancellationToken token)
     {
         if (!RequireRepository())
         {
@@ -461,7 +461,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     }
 
     public Task<bool> InspectPushAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.InspectPush, async token =>
+        RunAsync(WorkspaceOperation.InspectPush, async token =>
         {
             if (!RequireRepository())
             {
@@ -488,7 +488,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     }
 
     public Task<bool> StoreCredentialAsync(string credential, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.StoreCredential, async token =>
+        RunAsync(WorkspaceOperation.StoreCredential, async token =>
         {
             var credentialForAttempt = credential?.Trim() ?? string.Empty;
             if (credentialForAttempt.Length == 0)
@@ -511,10 +511,10 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             {
                 credentialForAttempt = string.Empty;
             }
-        }, cancellationToken, exposeAccessorException: false);
+        }, cancellationToken);
 
     public Task<bool> ForgetCredentialAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.ForgetCredential, async token =>
+        RunAsync(WorkspaceOperation.ForgetCredential, async token =>
         {
             State.HasCredential = false;
             var result = await gitAccessor.ForgetCredentialAsync(token);
@@ -522,10 +522,10 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             return !State.CredentialReplacementRequired
                 ? Succeed("Token forgotten for this tab.")
                 : Fail("The token could not be removed from tab storage. Close this tab before continuing.", result.FailureKind);
-        }, cancellationToken, exposeAccessorException: false);
+        }, cancellationToken);
 
     public Task<bool> PushReviewedCommitAsync(PushReview reviewedPush, CancellationToken cancellationToken = default) =>
-        RunAsync(RepositoryWorkspaceOperation.Push, async token =>
+        RunAsync(WorkspaceOperation.Push, async token =>
         {
             if (!RequireRepository())
             {
@@ -581,7 +581,11 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             return Succeed($"Pushed commit {result.Value.PushedCommitId} to the reviewed branch.");
         }, cancellationToken);
 
-    public void CancelCurrentOperation() => activeOperation?.Cancel();
+    public void CancelCurrentOperation()
+    {
+        activeOperation?.Cancel();
+        CancelGitBugOperation();
+    }
 
     private async Task<bool> LoadDirectoryCoreAsync(string path, CancellationToken token)
     {
@@ -595,7 +599,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         ClearSelection();
         NotifyChanged();
 
-        var result = await fileAccessor.FilterFilesAsync(new FilterFilesRequest(normalizedPath, FileFilterKind.DirectoryEntries), token);
+        var result = await gitAccessor.FilterFilesAsync(new FilterFilesRequest(normalizedPath, FileFilterKind.DirectoryEntries), token);
         if (!result.Succeeded || result.Value is null)
         {
             return Fail(result, "Repository files could not be loaded. Reopen the public repository and try again.");
@@ -636,7 +640,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         GitOperationResult<GitPublicationReview> result;
         try
         {
-            result = await publicationAccessor.InspectPublicationAsync(token);
+            result = await gitAccessor.InspectPublicationAsync(token);
         }
         catch (NotSupportedException)
         {
@@ -689,7 +693,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
 
         State.LastWriteSucceeded = null;
         State.PublicationConfirmed = false;
-        var result = await publicationAccessor.PublishAsync(request, token);
+        var result = await gitAccessor.PublishAsync(request, token);
         if (!result.Succeeded || result.Value is null)
         {
             State.PublicationFailureKind = result.FailureKind;
@@ -809,10 +813,9 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     };
 
     private async Task<bool> RunAsync(
-        RepositoryWorkspaceOperation operation,
+        WorkspaceOperation operation,
         Func<CancellationToken, Task<bool>> action,
-        CancellationToken cancellationToken,
-        bool exposeAccessorException = true)
+        CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (!await operationGate.WaitAsync(0, CancellationToken.None))
@@ -836,7 +839,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }
         catch (OperationCanceledException) when (linkedCancellation.IsCancellationRequested)
         {
-            if (operation is RepositoryWorkspaceOperation.ReviewSynchronization or RepositoryWorkspaceOperation.ApplySynchronization)
+            if (operation is WorkspaceOperation.ReviewSynchronization or WorkspaceOperation.ApplySynchronization)
             {
                 State.SynchronizationFailureCategory = SynchronizationFailureCategory.Cancelled;
                 State.SynchronizationDecision = SynchronizationDecisionState.Cancelled;
@@ -845,17 +848,16 @@ public sealed class RepositoryWorkspaceManager : IDisposable
             State.Result = new(operation, false, State.Error.Message);
             return false;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            var diagnostic = exposeAccessorException ? exception.GetType().Name : null;
-            State.Error = new(operation, "The repository operation could not be completed safely.", diagnostic, GitOperationFailureKind.Unknown);
+            State.Error = new(operation, "The repository operation could not be completed safely.", GitOperationFailureKind.Unknown);
             State.Result = new(operation, false, State.Error.Message, State.Error.FailureKind);
             return false;
         }
         finally
         {
             activeOperation = null;
-            State.Operation = RepositoryWorkspaceOperation.None;
+            State.Operation = WorkspaceOperation.None;
             operationGate.Release();
             NotifyChanged();
         }
@@ -882,7 +884,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
     private bool Fail<T>(GitOperationResult<T> result, string fallbackMessage)
     {
         var message = string.IsNullOrWhiteSpace(result.Message) ? fallbackMessage : result.Message;
-        State.Error = new(State.Operation, message, result.Diagnostic, result.FailureKind);
+        State.Error = new(State.Operation, message, result.FailureKind);
         State.Result = new(State.Operation, false, message, result.FailureKind);
         NotifyChanged();
         return false;
@@ -917,6 +919,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         State.SynchronizationDecision = null;
         State.SynchronizationFailureCategory = null;
         State.Repository = null;
+        SetRepository(null);
         State.Entries = Array.Empty<RepositoryFileEntry>();
         State.CurrentPath = "/";
         State.ChangedFiles = Array.Empty<ChangedFile>();
@@ -1021,6 +1024,7 @@ public sealed class RepositoryWorkspaceManager : IDisposable
         }
 
         disposed = true;
+        DisposeGitBugResources();
         activeOperation?.Cancel();
     }
 }

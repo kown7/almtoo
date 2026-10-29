@@ -1,4 +1,4 @@
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
 
 <section class="repository-branch-selector" aria-labelledby="repository-branch-heading">
     <div class="repository-branch-selector__header">
@@ -61,7 +61,7 @@
     {
         <p class="status-message info" role="status" aria-live="polite">Switching branch and refreshing workspace files...</p>
     }
-    else if (State.Result?.Operation == RepositoryWorkspaceOperation.SwitchBranch)
+    else if (State.Result?.Operation == WorkspaceOperation.SwitchBranch)
     {
         <p class="status-message @(State.Result.Succeeded ? "success" : "error")"
            role="@(State.Result.Succeeded ? "status" : "alert")"
@@ -70,13 +70,13 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter, EditorRequired] public WorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback OnRefreshRequested { get; set; }
     [Parameter] public EventCallback<string> OnBranchSelected { get; set; }
 
     private string? SelectedBranch { get; set; }
-    private bool IsLoading => State.IsBranchHistoryLoading || State.Operation == RepositoryWorkspaceOperation.LoadBranchHistory;
-    private bool IsSwitching => State.IsBranchSwitching || State.Operation == RepositoryWorkspaceOperation.SwitchBranch;
+    private bool IsLoading => State.IsBranchHistoryLoading || State.Operation == WorkspaceOperation.LoadBranchHistory;
+    private bool IsSwitching => State.IsBranchSwitching || State.Operation == WorkspaceOperation.SwitchBranch;
     private bool IsBusy => State.IsBusy || State.IsBranchHistoryLoading || State.IsBranchSwitching;
     private string CurrentBranchLabel => State.CurrentBranch is null
         ? "No branch checked out"

@@ -132,9 +132,11 @@ test('authentication rejection clears the credential and requests a replacement'
   await editor.fill(`${await editor.inputValue()}\nAlmToo credential rejection proof ${Date.now()}\n`);
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  await page.getByLabel('Author name').fill('AlmToo Credential UAT');
+  await page.getByLabel('Author email').fill('credential-uat@almtoo.local');
   await page.getByLabel('Commit message').fill(`AlmToo credential rejection proof ${Date.now()}`);
   await page.getByRole('button', { name: 'Create local commit' }).click();
-  await expect(page.getByText('Created a browser-local commit.')).toBeVisible();
+  await expect(page.locator('.commit-form__success')).toContainText('Local commit created:');
 
   const credentialInput = page.getByLabel('GitHub personal access token');
   await enterEphemeralCredential(page, credentialInput);

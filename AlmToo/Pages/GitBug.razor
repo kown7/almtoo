@@ -1,11 +1,10 @@
 @page "/git-bug"
 @* Client composition stays Manager-only; repository write inputs are Manager-owned. *@
 @using AlmToo.Components
-@using AlmToo.Managers.GitBug
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
+@using AlmToo.Managers.Workspace.Interface
 @implements IDisposable
-@inject GitBugWorkspaceManager GitBugWorkspace
-@inject RepositoryWorkspaceManager RepositoryWorkspace
+@inject WorkspaceManager Workspace
 
 <PageTitle>Git-Bug Issues</PageTitle>
 
@@ -47,22 +46,22 @@
         || State.Status == GitBugWorkspaceStatus.EditingIssue
         || State.Status == GitBugWorkspaceStatus.AddingComment
         || State.Status == GitBugWorkspaceStatus.RefreshingAfterWrite
-        || RepositoryWorkspace.State.CommitReviewLoaded
-        || RepositoryWorkspace.State.CreatedCommit is not null
-        || RepositoryWorkspace.State.PushReview is not null
-        || RepositoryWorkspace.State.PublicationReview is not null
-        || (RepositoryWorkspace.State.Operation is RepositoryWorkspaceOperation.ReviewCommit
-            or RepositoryWorkspaceOperation.Commit
-            or RepositoryWorkspaceOperation.ReviewPublication
-            or RepositoryWorkspaceOperation.PublishPublication
-            or RepositoryWorkspaceOperation.InspectPush
-            or RepositoryWorkspaceOperation.StoreCredential
-            or RepositoryWorkspaceOperation.Push)
-        || RepositoryWorkspace.State.PushFailureKind is not null
-        || RepositoryWorkspace.State.PublicationFailureKind is not null))
+        || Workspace.State.CommitReviewLoaded
+        || Workspace.State.CreatedCommit is not null
+        || Workspace.State.PushReview is not null
+        || Workspace.State.PublicationReview is not null
+        || (Workspace.State.Operation is WorkspaceOperation.ReviewCommit
+            or WorkspaceOperation.Commit
+            or WorkspaceOperation.ReviewPublication
+            or WorkspaceOperation.PublishPublication
+            or WorkspaceOperation.InspectPush
+            or WorkspaceOperation.StoreCredential
+            or WorkspaceOperation.Push)
+        || Workspace.State.PushFailureKind is not null
+        || Workspace.State.PublicationFailureKind is not null))
     {
         <GitBugIssueDetail State="State"
-                           RepositoryState="RepositoryWorkspace.State"
+                           RepositoryState="Workspace.State"
                            OnBackRequested="ReturnToIssueList"
                            OnIssueEdited="EditIssueAsync"
                            OnCommentAdded="AddCommentAsync"
@@ -113,7 +112,7 @@
 
 @code {
     private bool disposed;
-    private GitBugWorkspaceState State => GitBugWorkspace.State;
+    private GitBugState State => Workspace.State.GitBug;
     private string StatusHeading => State.Status switch
     {
         GitBugWorkspaceStatus.Unavailable => "Git-Bug data unavailable",
@@ -123,75 +122,73 @@
 
     protected override async Task OnInitializedAsync()
     {
-        GitBugWorkspace.StateChanged += HandleGitBugStateChanged;
-        RepositoryWorkspace.StateChanged += HandleRepositoryStateChanged;
+        Workspace.StateChanged += HandleStateChanged;
         await SynchronizeRepositoryAsync();
     }
 
     private async Task SynchronizeRepositoryAsync()
     {
-        GitBugWorkspace.SetRepository(RepositoryWorkspace.State.Repository);
         if (State.RepositoryAvailable && State.Status == GitBugWorkspaceStatus.Idle)
         {
-            await GitBugWorkspace.LoadIssuesAsync();
+            await Workspace.LoadIssuesAsync();
         }
     }
 
-    private async Task LoadIssuesAsync() => await GitBugWorkspace.LoadIssuesAsync();
-    private async Task OpenIssueAsync(string issueId) => await GitBugWorkspace.OpenIssueAsync(issueId);
+    private async Task LoadIssuesAsync() => await Workspace.LoadIssuesAsync();
+    private async Task OpenIssueAsync(string issueId) => await Workspace.OpenIssueAsync(issueId);
     private async Task EditIssueAsync((string Title, string Description) draft)
     {
-        if (await GitBugWorkspace.EditSelectedIssueAsync(draft.Title, draft.Description))
+        if (await Workspace.EditSelectedIssueAsync(draft.Title, draft.Description))
         {
-            await RepositoryWorkspace.RefreshStatusAsync();
+            await Workspace.RefreshStatusAsync();
         }
     }
     private async Task AddCommentAsync(string body)
     {
-        if (await GitBugWorkspace.AddCommentToSelectedIssueAsync(body))
+        if (await Workspace.AddCommentToSelectedIssueAsync(body))
         {
-            await RepositoryWorkspace.RefreshStatusAsync();
+            await Workspace.RefreshStatusAsync();
         }
     }
-    private async Task RefreshRepositoryStatusAsync() => await RepositoryWorkspace.RefreshStatusAsync();
-    private async Task ReviewCommitAsync() => await RepositoryWorkspace.ReviewCommitAsync();
-    private async Task ConfirmCommitAsync() => await RepositoryWorkspace.ConfirmLocalCommitAsync();
+    private async Task RefreshRepositoryStatusAsync() => await Workspace.RefreshStatusAsync();
+    private async Task ReviewCommitAsync() => await Workspace.ReviewCommitAsync();
+    private async Task ConfirmCommitAsync() => await Workspace.ConfirmLocalCommitAsync();
     private void SetCommitDetails((string Message, string AuthorName, string Email) details) =>
-        RepositoryWorkspace.SetProposedCommit(new RepositoryCommitInput(details.Message, details.AuthorName, details.Email));
-    private async Task ReviewPushAsync() => await RepositoryWorkspace.InspectPushAsync();
-    private async Task SubmitCredentialAsync(string credential) => await RepositoryWorkspace.StoreCredentialAsync(credential);
-    private void ConfirmPushAsync() => RepositoryWorkspace.ConfirmPushReview(true);
+        Workspace.SetProposedCommit(new WorkspaceCommitInput(details.Message, details.AuthorName, details.Email));
+    private async Task ReviewPushAsync() => await Workspace.InspectPushAsync();
+    private async Task SubmitCredentialAsync(string credential) => await Workspace.StoreCredentialAsync(credential);
+    private void ConfirmPushAsync() => Workspace.ConfirmPushReview(true);
     private async Task PushAsync()
     {
-        if (RepositoryWorkspace.State.PushReview is { } review)
+        if (Workspace.State.PushReview is { } review)
         {
-            await RepositoryWorkspace.PushReviewedCommitAsync(review);
+            await Workspace.PushReviewedCommitAsync(review);
         }
     }
-    private async Task RetryPushAsync() => await RepositoryWorkspace.InspectPushAsync();
-    private async Task ReviewPublicationAsync() => await RepositoryWorkspace.ReviewPublicationAsync();
-    private void ConfirmPublicationAsync() => RepositoryWorkspace.ConfirmPublicationReview(true);
+    private async Task RetryPushAsync() => await Workspace.InspectPushAsync();
+    private async Task ReviewPublicationAsync() => await Workspace.ReviewPublicationAsync();
+    private void ConfirmPublicationAsync() => Workspace.ConfirmPublicationReview(true);
     private async Task PublishPublicationAsync()
     {
-        await RepositoryWorkspace.PublishReviewedPublicationAsync();
+        await Workspace.PublishReviewedPublicationAsync();
     }
-    private async Task RetryPublicationAsync() => await RepositoryWorkspace.ReviewPublicationAsync();
-    private async Task ReplaceCredentialAsync(string credential) => await RepositoryWorkspace.StoreCredentialAsync(credential);
-    private void ReturnToIssueList() => GitBugWorkspace.ReturnToIssueList();
+    private async Task RetryPublicationAsync() => await Workspace.ReviewPublicationAsync();
+    private async Task ReplaceCredentialAsync(string credential) => await Workspace.StoreCredentialAsync(credential);
+    private void ReturnToIssueList() => Workspace.ReturnToIssueList();
 
     private async Task RetryAsync()
     {
         if (State.SelectedIssueId is { } selectedIssueId)
         {
-            await GitBugWorkspace.OpenIssueAsync(selectedIssueId.Value);
+            await Workspace.OpenIssueAsync(selectedIssueId.Value);
         }
         else
         {
-            await GitBugWorkspace.LoadIssuesAsync();
+            await Workspace.LoadIssuesAsync();
         }
     }
 
-    private void HandleGitBugStateChanged()
+    private void HandleStateChanged()
     {
         if (!disposed)
         {
@@ -199,20 +196,10 @@
         }
     }
 
-    private void HandleRepositoryStateChanged()
-    {
-        if (!disposed)
-        {
-            _ = InvokeAsync(SynchronizeRepositoryAsync);
-        }
-    }
-
     public void Dispose()
     {
         disposed = true;
-        GitBugWorkspace.StateChanged -= HandleGitBugStateChanged;
-        RepositoryWorkspace.StateChanged -= HandleRepositoryStateChanged;
-        GitBugWorkspace.CancelCurrentOperation();
-        RepositoryWorkspace.CancelCurrentOperation();
+        Workspace.StateChanged -= HandleStateChanged;
+        Workspace.CancelCurrentOperation();
     }
 }

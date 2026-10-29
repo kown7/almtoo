@@ -1,4 +1,4 @@
-@using AlmToo.Managers.Repositories
+@using AlmToo.Managers.Workspace
 
 <section class="file-browser" aria-labelledby="file-browser-heading">
     <div class="file-browser__header">
@@ -6,7 +6,7 @@
         <p class="file-browser__path" aria-label="Current repository path">@State.CurrentPath</p>
     </div>
 
-    @if (State.Operation == RepositoryWorkspaceOperation.LoadDirectory)
+    @if (State.Operation == WorkspaceOperation.LoadDirectory)
     {
         <p class="status-message info" role="status" aria-live="polite">Loading repository files...</p>
     }
@@ -53,7 +53,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public RepositoryWorkspaceState State { get; set; } = null!;
+    [Parameter, EditorRequired] public WorkspaceState State { get; set; } = null!;
     [Parameter] public EventCallback<string> OnDirectorySelected { get; set; }
     [Parameter] public EventCallback<string> OnFileSelected { get; set; }
 

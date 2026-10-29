@@ -1,12 +1,19 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
-using AlmToo.Managers.GitBug;
+using AlmToo.Managers.Workspace;
+using AlmToo.Managers.Workspace.Interface;
 using Xunit;
 
-namespace AlmToo.Tests.Managers.GitBug;
+namespace AlmToo.Tests.Managers.Workspace;
 
-public sealed class GitBugWorkspaceManagerTests
+public sealed class WorkspaceManagerGitBugTests
 {
+    private static WorkspaceManager CreateManager(IGitBugAccessor accessor)
+    {
+        var browser = new AlmToo.Tests.Managers.Workspace.WorkspaceManagerTests.FakeBrowserAccessor();
+        return new WorkspaceManager(browser, accessor);
+    }
+
     private const string FirstIdValue = "1111111111111111111111111111111111111111111111111111111111111111";
     private const string SecondIdValue = "2222222222222222222222222222222222222222222222222222222222222222";
     private static readonly GitBugIssueId FirstId = new(FirstIdValue);
@@ -30,21 +37,21 @@ public sealed class GitBugWorkspaceManagerTests
         manager.SetRepository(Repository);
 
         Assert.True(await manager.LoadIssuesAsync(new(GitBugIssueState.Open, "issue", PageSize: 25)));
-        Assert.Equal(GitBugWorkspaceStatus.ListReady, manager.State.Status);
-        Assert.Equal([FirstIssue, SecondIssue], manager.State.Issues);
-        Assert.Equal(2, manager.State.TotalCount);
+        Assert.Equal(GitBugWorkspaceStatus.ListReady, manager.State.GitBug.Status);
+        Assert.Equal([FirstIssue, SecondIssue], manager.State.GitBug.Issues);
+        Assert.Equal(2, manager.State.GitBug.TotalCount);
 
         Assert.True(await manager.OpenIssueAsync(FirstId));
-        Assert.Equal(GitBugWorkspaceStatus.DetailReady, manager.State.Status);
-        Assert.Equal(FirstDetail, manager.State.SelectedIssue);
-        Assert.Equal([FirstIssue, SecondIssue], manager.State.Issues);
+        Assert.Equal(GitBugWorkspaceStatus.DetailReady, manager.State.GitBug.Status);
+        Assert.Equal(FirstDetail, manager.State.GitBug.SelectedIssue);
+        Assert.Equal([FirstIssue, SecondIssue], manager.State.GitBug.Issues);
 
         manager.ReturnToIssueList();
 
-        Assert.Equal(GitBugWorkspaceStatus.ListReady, manager.State.Status);
-        Assert.Null(manager.State.SelectedIssueId);
-        Assert.Null(manager.State.SelectedIssue);
-        Assert.Equal([FirstIssue, SecondIssue], manager.State.Issues);
+        Assert.Equal(GitBugWorkspaceStatus.ListReady, manager.State.GitBug.Status);
+        Assert.Null(manager.State.GitBug.SelectedIssueId);
+        Assert.Null(manager.State.GitBug.SelectedIssue);
+        Assert.Equal([FirstIssue, SecondIssue], manager.State.GitBug.Issues);
         Assert.Equal(6, changes);
     }
 
@@ -56,7 +63,7 @@ public sealed class GitBugWorkspaceManagerTests
 
         Assert.False(await manager.LoadIssuesAsync(new()));
         Assert.Empty(fake.ListQueries);
-        Assert.Equal(GitBugWorkspaceStatus.Idle, manager.State.Status);
+        Assert.Equal(GitBugWorkspaceStatus.Idle, manager.State.GitBug.Status);
 
         manager.SetRepository(Repository);
         Assert.True(await manager.LoadIssuesAsync(new(PageSize: 0)));
@@ -69,7 +76,7 @@ public sealed class GitBugWorkspaceManagerTests
         Assert.False(await manager.LoadIssuesAsync(new(SearchText: "bad\rquery")));
         Assert.False(await manager.LoadIssuesAsync(new((GitBugIssueState)99)));
         Assert.Equal(2, fake.ListQueries.Count);
-        Assert.Equal(GitBugWorkspaceStatus.Failed, manager.State.Status);
+        Assert.Equal(GitBugWorkspaceStatus.Failed, manager.State.GitBug.Status);
     }
 
     [Fact]
@@ -84,7 +91,7 @@ public sealed class GitBugWorkspaceManagerTests
         Assert.False(await manager.OpenIssueAsync(new(new string('a', 64))));
 
         Assert.Empty(fake.DetailIds);
-        Assert.Contains("current issue list", manager.State.Message);
+        Assert.Contains("current issue list", manager.State.GitBug.Message);
     }
 
     [Theory]
@@ -109,8 +116,8 @@ public sealed class GitBugWorkspaceManagerTests
 
         Assert.False(await manager.LoadIssuesAsync(new()));
 
-        Assert.Equal(expectedStatus, manager.State.Status);
-        Assert.Contains(expectedMessage, manager.State.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(expectedStatus, manager.State.GitBug.Status);
+        Assert.Contains(expectedMessage, manager.State.GitBug.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(secret, JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
     }
 
@@ -125,8 +132,8 @@ public sealed class GitBugWorkspaceManagerTests
 
         Assert.False(await manager.LoadIssuesAsync(new(GitBugIssueState.Closed)));
 
-        Assert.Equal(GitBugWorkspaceStatus.Unsupported, manager.State.Status);
-        Assert.Equal([FirstIssue, SecondIssue], manager.State.Issues);
+        Assert.Equal(GitBugWorkspaceStatus.Unsupported, manager.State.GitBug.Status);
+        Assert.Equal([FirstIssue, SecondIssue], manager.State.GitBug.Issues);
     }
 
     [Fact]
@@ -161,7 +168,7 @@ public sealed class GitBugWorkspaceManagerTests
         Assert.True(firstToken.IsCancellationRequested);
         releaseFirst.SetResult();
         Assert.False(await firstLoad);
-        Assert.Equal(SecondIssue, Assert.Single(manager.State.Issues));
+        Assert.Equal(SecondIssue, Assert.Single(manager.State.GitBug.Issues));
         Assert.Equal("second", fake.ListQueries.Last().SearchText);
     }
 
@@ -189,15 +196,15 @@ public sealed class GitBugWorkspaceManagerTests
         manager.SetRepository(Repository with { RootPath = "/workspaces/other" });
 
         Assert.True(observedToken.IsCancellationRequested);
-        Assert.Equal(GitBugWorkspaceStatus.Idle, manager.State.Status);
-        Assert.True(manager.State.RepositoryAvailable);
-        Assert.Empty(manager.State.Issues);
-        Assert.Null(manager.State.SelectedIssue);
+        Assert.Equal(GitBugWorkspaceStatus.Idle, manager.State.GitBug.Status);
+        Assert.True(manager.State.GitBug.RepositoryAvailable);
+        Assert.Empty(manager.State.GitBug.Issues);
+        Assert.Null(manager.State.GitBug.SelectedIssue);
         Assert.DoesNotContain("/workspaces/other", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
 
         release.SetResult();
         Assert.False(await load);
-        Assert.Empty(manager.State.Issues);
+        Assert.Empty(manager.State.GitBug.Issues);
     }
 
     [Fact]
@@ -228,9 +235,9 @@ public sealed class GitBugWorkspaceManagerTests
         manager.CancelCurrentOperation();
 
         Assert.False(await load);
-        Assert.Equal(GitBugWorkspaceStatus.Failed, manager.State.Status);
-        Assert.Contains("cancelled", manager.State.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.True(manager.State.CanRetry);
+        Assert.Equal(GitBugWorkspaceStatus.Failed, manager.State.GitBug.Status);
+        Assert.Contains("cancelled", manager.State.GitBug.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(manager.State.GitBug.CanRetry);
     }
 
     [Fact]
@@ -291,11 +298,11 @@ public sealed class GitBugWorkspaceManagerTests
         Assert.Equal(FirstId, request.IssueId);
         Assert.Equal("Updated title", request.Title);
         Assert.Equal(string.Empty, request.Description);
-        Assert.Equal(GitBugWorkspaceStatus.DetailReady, manager.State.Status);
-        Assert.Equal(string.Empty, manager.State.SelectedIssue!.Description);
-        Assert.True(manager.State.LastWriteSucceeded);
-        Assert.True(manager.State.LastRefreshSucceeded);
-        Assert.Contains("No commit or push", manager.State.Message);
+        Assert.Equal(GitBugWorkspaceStatus.DetailReady, manager.State.GitBug.Status);
+        Assert.Equal(string.Empty, manager.State.GitBug.SelectedIssue!.Description);
+        Assert.True(manager.State.GitBug.LastWriteSucceeded);
+        Assert.True(manager.State.GitBug.LastRefreshSucceeded);
+        Assert.Contains("No commit or push", manager.State.GitBug.Message);
     }
 
     [Fact]
@@ -340,7 +347,7 @@ public sealed class GitBugWorkspaceManagerTests
         Assert.False(await manager.AddCommentToSelectedIssueAsync(string.Empty));
         Assert.Empty(fake.EditRequests);
         Assert.Empty(fake.CommentRequests);
-        Assert.Contains("valid", manager.State.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("valid", manager.State.GitBug.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -356,15 +363,15 @@ public sealed class GitBugWorkspaceManagerTests
 
         Assert.False(await manager.OpenIssueAsync(FirstId));
         Assert.DoesNotContain(secret, JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
-        Assert.Equal(GitBugWorkspaceStatus.Failed, manager.State.Status);
+        Assert.Equal(GitBugWorkspaceStatus.Failed, manager.State.GitBug.Status);
 
         fake.DetailHandler = (_, _) => ValueTask.FromResult(Success(FirstDetail with { Summary = SecondIssue }));
         Assert.False(await manager.OpenIssueAsync(FirstId));
-        Assert.Equal(GitOperationFailureKind.GitBugDataMalformed, manager.State.FailureKind);
-        Assert.Null(manager.State.SelectedIssue);
+        Assert.Equal(GitOperationFailureKind.GitBugDataMalformed, manager.State.GitBug.FailureKind);
+        Assert.Null(manager.State.GitBug.SelectedIssue);
     }
 
-    private static GitBugWorkspaceManager CreateManager(FakeGitBugAccessor fake) => new(fake);
+    private static WorkspaceManager CreateManager(FakeGitBugAccessor fake) => CreateManager((IGitBugAccessor)fake);
 
     private static GitOperationResult<T> Success<T>(T value) =>
         new("test", true, "Succeeded.", value);
