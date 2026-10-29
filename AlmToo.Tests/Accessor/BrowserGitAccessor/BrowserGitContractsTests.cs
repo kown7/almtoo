@@ -408,4 +408,49 @@ public sealed class BrowserGitContractsTests
             [validPrecondition],
             BoundedUpdateCount: 2)));
     }
+
+    [Fact]
+    public void Reviewed_reconciliation_contract_requires_exact_bounded_selections_and_remote_preconditions()
+    {
+        var sourceRevision = new string('a', 40);
+        var remoteObjectId = new string('b', 40);
+        var request = new ReviewedReconciliationApplyRequest(
+            "review-1",
+            sourceRevision,
+            2,
+            [
+                new ReviewedReconciliationSelection("/README.md", "KeepLocal"),
+                new ReviewedReconciliationSelection("/docs/guide.md", "AcceptRemote")
+            ],
+            [
+                new ReviewedReconciliationRemotePrecondition("/README.md", remoteObjectId),
+                new ReviewedReconciliationRemotePrecondition("/docs/guide.md", null)
+            ]);
+
+        Assert.True(BrowserGitReconciliationContract.IsValidRequest(request));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            Selections = [request.Selections[0], request.Selections[0]]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            Selections = [new ReviewedReconciliationSelection("/docs/../secret.txt", "AcceptRemote")]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            Selections = [
+                new ReviewedReconciliationSelection("/README.md", "UnknownResolution"),
+                request.Selections[1]
+            ]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            RemotePreconditions = [
+                request.RemotePreconditions[0],
+                new ReviewedReconciliationRemotePrecondition("/other.md", null)
+            ]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidFailure(GitOperationFailureKind.Unknown));
+        Assert.True(BrowserGitReconciliationContract.IsValidFailure(GitOperationFailureKind.ReconciliationStaleRemote));
+    }
 }

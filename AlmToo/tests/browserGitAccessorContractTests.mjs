@@ -184,3 +184,44 @@ test('remote snapshot boundary is typed, bounded, and strictly read-only', async
   assert.match(remoteSurface, /failureKind,[\s\S]*?null\);/);
   assert.doesNotMatch(remoteSurface, /fetch\(|checkout\(|writeFile\(|commit\(|push\(|persistFilesystem\(/);
 });
+
+test('reviewed reconciliation apply is preconditioned, bounded, and rollback-safe', async () => {
+  const [facet, contracts, service, engine] = await Promise.all([
+    source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'),
+    source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
+    source('wwwroot/js/browserGitEngine.js')
+  ]);
+
+  assert.match(facet, /ApplyReviewedReconciliationAsync\(ReviewedReconciliationApplyRequest request/);
+  for (const record of [
+    'ReviewedReconciliationSelection',
+    'ReviewedReconciliationRemotePrecondition',
+    'ReviewedReconciliationApplyRequest',
+    'ReviewedReconciliationApplyReceipt'
+  ]) {
+    assert.match(contracts, new RegExp(`record ${record}\\b`));
+  }
+  assert.match(contracts, /selection\.Resolution is "KeepLocal" or "AcceptRemote"/);
+  assert.match(contracts, /SetEquals\(request\.RemotePreconditions/);
+  assert.match(service, /BrowserGitReconciliationContract\.IsValidRequest/);
+  assert.match(service, /SanitizeReviewedReconciliationResult/);
+  assert.match(service, /ReconciliationStaleRemote/);
+  assert.match(service, /Diagnostic: null/);
+
+  const applySurface = engine.slice(
+    engine.indexOf('export async function applyReviewedReconciliation'),
+    engine.indexOf('async function captureSynchronizationRefs'));
+  assert.match(applySurface, /resolveRef\(\{ fs, dir, ref: remoteRef \}\)/);
+  assert.match(applySurface, /expectedRemoteObjectId/);
+  assert.match(applySurface, /readBlob/);
+  assert.match(applySurface, /writeFile/);
+  assert.match(applySurface, /restoreReviewedReconciliationFiles/);
+  assert.match(applySurface, /persistFilesystem/);
+  assert.match(applySurface, /reconciliationStaleRemote/);
+  assert.match(applySurface, /reconciliationUnsupportedResolution/);
+  assert.match(applySurface, /reconciliationCancelled/);
+  assert.match(applySurface, /failureWithKind\([\s\S]*?, null\)/);
+  assert.doesNotMatch(applySurface, /git\.(?:fetch|push|commit)\s*\(/);
+  assert.doesNotMatch(applySurface, /personalAccessToken|github_pat|credential/i);
+});

@@ -51,6 +51,14 @@ public enum GitOperationFailureKind
     RemoteSnapshotLimitExceeded,
     RemoteSnapshotCancelled,
     RemoteSnapshotUnknown,
+    ReconciliationInvalidRequest,
+    ReconciliationStaleRemote,
+    ReconciliationUnsupportedResolution,
+    ReconciliationWriteFailed,
+    ReconciliationCancelled,
+    ReconciliationDataMalformed,
+    ReconciliationDataUnavailable,
+    ReconciliationUnknown,
     Unknown
 }
 
@@ -61,6 +69,120 @@ public static class GitBugWriteOperations
     public const string CommentCreate = "gitBug.comment.create";
     public const string WriteReview = "gitBug.write.review";
     public const string WriteCommit = "gitBug.write.commit";
+}
+
+/// <summary>Stable operation names for the reviewed reconciliation write boundary.</summary>
+public static class BrowserGitReconciliationOperations
+{
+    public const string Apply = "git.reconciliation.apply";
+}
+
+/// <summary>One path-scoped resolution selected from a bounded reconciliation review.</summary>
+public sealed record ReviewedReconciliationSelection(string Path, string Resolution);
+
+/// <summary>One path-scoped remote object precondition captured by the review.</summary>
+public sealed record ReviewedReconciliationRemotePrecondition(string Path, string? ExpectedRemoteObjectId);
+
+/// <summary>Credential-free, explicitly reviewed reconciliation input for the Accessor boundary.</summary>
+public sealed record ReviewedReconciliationApplyRequest(
+    string ReviewId,
+    string SourceRevision,
+    int BoundedChangeCount,
+    IReadOnlyList<ReviewedReconciliationSelection> Selections,
+    IReadOnlyList<ReviewedReconciliationRemotePrecondition> RemotePreconditions);
+
+/// <summary>Safe receipt for a bounded reviewed reconciliation apply.</summary>
+public sealed record ReviewedReconciliationApplyReceipt(
+    string ReviewId,
+    string SourceRevision,
+    IReadOnlyList<string> AppliedPaths,
+    int BoundedAppliedPathCount);
+
+/// <summary>Pure bounds and allowlist checks for reviewed reconciliation input and output.</summary>
+public static class BrowserGitReconciliationContract
+{
+    public const int MaximumChanges = 1000;
+    public const int MaximumPathLength = 1024;
+    public const int MaximumReviewIdLength = 128;
+    public const int MaximumSourceRevisionLength = 128;
+    public const int MaximumResolutionLength = 32;
+    public const int MaximumObjectIdLength = 64;
+
+    public static bool IsValidOperation(string? operation) => operation is BrowserGitReconciliationOperations.Apply;
+
+    public static bool IsValidFailure(GitOperationFailureKind kind) => kind is
+        GitOperationFailureKind.ReconciliationInvalidRequest or
+        GitOperationFailureKind.ReconciliationStaleRemote or
+        GitOperationFailureKind.ReconciliationUnsupportedResolution or
+        GitOperationFailureKind.ReconciliationWriteFailed or
+        GitOperationFailureKind.ReconciliationCancelled or
+        GitOperationFailureKind.ReconciliationDataMalformed or
+        GitOperationFailureKind.ReconciliationDataUnavailable or
+        GitOperationFailureKind.ReconciliationUnknown;
+
+    public static bool IsValidRequest(ReviewedReconciliationApplyRequest? request) =>
+        request is not null
+        && IsSafeText(request.ReviewId, MaximumReviewIdLength)
+        && IsObjectId(request.SourceRevision)
+        && request.BoundedChangeCount is >= 0 and <= MaximumChanges
+        && request.Selections is not null
+        && request.Selections.Count <= MaximumChanges
+        && request.Selections.All(IsValidSelection)
+        && HasUniquePaths(request.Selections.Select(selection => selection.Path))
+        && request.RemotePreconditions is not null
+        && request.RemotePreconditions.Count <= MaximumChanges
+        && request.RemotePreconditions.All(IsValidPrecondition)
+        && HasUniquePaths(request.RemotePreconditions.Select(precondition => precondition.Path))
+        && request.Selections.Count == request.RemotePreconditions.Count
+        && request.Selections.Select(selection => selection.Path).ToHashSet(StringComparer.Ordinal)
+            .SetEquals(request.RemotePreconditions.Select(precondition => precondition.Path))
+        && request.BoundedChangeCount == request.Selections.Count;
+
+    public static bool IsValidReceipt(ReviewedReconciliationApplyReceipt? receipt) =>
+        receipt is not null
+        && IsSafeText(receipt.ReviewId, MaximumReviewIdLength)
+        && IsObjectId(receipt.SourceRevision)
+        && receipt.AppliedPaths is not null
+        && receipt.BoundedAppliedPathCount == receipt.AppliedPaths.Count
+        && receipt.BoundedAppliedPathCount <= MaximumChanges
+        && receipt.AppliedPaths.All(path => IsSafePath(path))
+        && HasUniquePaths(receipt.AppliedPaths);
+
+    public static bool IsValidSelection(ReviewedReconciliationSelection? selection) =>
+        selection is not null
+        && IsSafePath(selection.Path)
+        && IsSafeText(selection.Resolution, MaximumResolutionLength)
+        && selection.Resolution is "KeepLocal" or "AcceptRemote";
+
+    public static bool IsValidPrecondition(ReviewedReconciliationRemotePrecondition? precondition) =>
+        precondition is not null
+        && IsSafePath(precondition.Path)
+        && (precondition.ExpectedRemoteObjectId is null || IsObjectId(precondition.ExpectedRemoteObjectId));
+
+    private static bool IsObjectId(string? value) =>
+        value is not null
+        && value.Length is 40 or 64
+        && value.All(Uri.IsHexDigit);
+
+    private static bool IsSafePath(string? value) =>
+        value is not null
+        && value.StartsWith("/", StringComparison.Ordinal)
+        && value.Length <= MaximumPathLength
+        && value.IndexOfAny(['\\', '\0', '\r', '\n']) < 0
+        && !value.Contains('%', StringComparison.Ordinal)
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.Contains("/../", StringComparison.Ordinal)
+        && !value.EndsWith("/..", StringComparison.Ordinal)
+        && value.Split('/').Skip(1).All(segment => segment.Length > 0 && segment is not "." and not "..");
+
+    private static bool IsSafeText(string? value, int maximum) =>
+        value is not null
+        && value.Trim().Length > 0
+        && value.Length <= maximum
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+
+    private static bool HasUniquePaths(IEnumerable<string> paths) =>
+        paths.Distinct(StringComparer.Ordinal).Count() == paths.Count();
 }
 
 public enum GitBugWriteStage

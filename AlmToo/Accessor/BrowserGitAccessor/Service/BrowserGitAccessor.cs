@@ -395,6 +395,108 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
         }
     }
 
+    public async ValueTask<GitOperationResult<ReviewedReconciliationApplyReceipt>> ApplyReviewedReconciliationAsync(
+        ReviewedReconciliationApplyRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = BrowserGitReconciliationOperations.Apply;
+        if (!BrowserGitReconciliationContract.IsValidRequest(request))
+        {
+            return new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                operation,
+                false,
+                "The reviewed reconciliation request is not valid.",
+                Value: default,
+                Diagnostic: null,
+                FailureKind: GitOperationFailureKind.ReconciliationInvalidRequest);
+        }
+
+        try
+        {
+            var result = await InvokeWithValueAsync<ReviewedReconciliationApplyReceiptDto, ReviewedReconciliationApplyReceipt>(
+                operation,
+                "applyReviewedReconciliation",
+                value => value.ToContract(),
+                cancellationToken,
+                request);
+
+            if (!result.Succeeded)
+            {
+                return SanitizeReviewedReconciliationResult(result);
+            }
+
+            if (result.Value is null)
+            {
+                return SanitizeReviewedReconciliationResult(result);
+            }
+
+            return BrowserGitReconciliationContract.IsValidReceipt(result.Value)
+                && string.Equals(result.Value.ReviewId, request.ReviewId, StringComparison.Ordinal)
+                && string.Equals(result.Value.SourceRevision, request.SourceRevision, StringComparison.Ordinal)
+                ? result
+                : new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                    operation,
+                    false,
+                    "The reviewed reconciliation result could not be read safely.",
+                    Value: default,
+                    Diagnostic: null,
+                    FailureKind: GitOperationFailureKind.ReconciliationDataMalformed);
+        }
+        catch (OperationCanceledException)
+        {
+            return new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                operation,
+                false,
+                "The reviewed reconciliation apply was canceled safely.",
+                Value: default,
+                Diagnostic: null,
+                FailureKind: GitOperationFailureKind.ReconciliationCancelled);
+        }
+        catch (Exception)
+        {
+            return new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                operation,
+                false,
+                "The reviewed reconciliation apply could not be completed safely.",
+                Value: default,
+                Diagnostic: null,
+                FailureKind: GitOperationFailureKind.ReconciliationUnknown);
+        }
+    }
+
+    private static GitOperationResult<ReviewedReconciliationApplyReceipt> SanitizeReviewedReconciliationResult(
+        GitOperationResult<ReviewedReconciliationApplyReceipt> result)
+    {
+        if (result.Succeeded && result.Value is not null
+            && BrowserGitReconciliationContract.IsValidReceipt(result.Value))
+        {
+            return result with { Diagnostic = null, FailureKind = null };
+        }
+
+        var failureKind = result.FailureKind is { } kind && BrowserGitReconciliationContract.IsValidFailure(kind)
+            ? kind
+            : result.Message.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+                ? GitOperationFailureKind.ReconciliationCancelled
+                : GitOperationFailureKind.ReconciliationWriteFailed;
+        var message = failureKind switch
+        {
+            GitOperationFailureKind.ReconciliationInvalidRequest => "The reviewed reconciliation request is not valid.",
+            GitOperationFailureKind.ReconciliationStaleRemote => "The reviewed remote state is stale; review it again before applying.",
+            GitOperationFailureKind.ReconciliationUnsupportedResolution => "The selected reconciliation resolution is not supported.",
+            GitOperationFailureKind.ReconciliationCancelled => "The reviewed reconciliation apply was canceled safely.",
+            GitOperationFailureKind.ReconciliationDataMalformed => "The reviewed reconciliation data could not be read safely.",
+            GitOperationFailureKind.ReconciliationDataUnavailable => "The reviewed reconciliation data is unavailable.",
+            _ => "The reviewed reconciliation could not be applied safely."
+        };
+        return new(
+            BrowserGitReconciliationOperations.Apply,
+            false,
+            message,
+            Value: default,
+            Diagnostic: null,
+            FailureKind: failureKind);
+    }
+
     public async ValueTask<GitOperationResult<GitBugIssuePage>> ListIssuesAsync(
         GitBugIssueQuery query,
         CancellationToken cancellationToken = default)
@@ -912,6 +1014,14 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
         "branchSwitchUnsupportedReference" => GitOperationFailureKind.BranchSwitchUnsupportedReference,
         "branchSwitchUnavailable" => GitOperationFailureKind.BranchSwitchUnavailable,
         "branchSwitchUnknown" => GitOperationFailureKind.BranchSwitchUnknown,
+        "reconciliationInvalidRequest" => GitOperationFailureKind.ReconciliationInvalidRequest,
+        "reconciliationStaleRemote" => GitOperationFailureKind.ReconciliationStaleRemote,
+        "reconciliationUnsupportedResolution" => GitOperationFailureKind.ReconciliationUnsupportedResolution,
+        "reconciliationWriteFailed" => GitOperationFailureKind.ReconciliationWriteFailed,
+        "reconciliationCancelled" => GitOperationFailureKind.ReconciliationCancelled,
+        "reconciliationDataMalformed" => GitOperationFailureKind.ReconciliationDataMalformed,
+        "reconciliationDataUnavailable" => GitOperationFailureKind.ReconciliationDataUnavailable,
+        "reconciliationUnknown" => GitOperationFailureKind.ReconciliationUnknown,
         "unknown" => GitOperationFailureKind.Unknown,
         _ => null
     };
@@ -1193,6 +1303,24 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             Message,
             AuthorName,
             AuthoredAt);
+    }
+
+    private sealed record ReviewedReconciliationApplyReceiptDto
+    {
+        [JsonPropertyName("reviewId")]
+        public string ReviewId { get; init; } = string.Empty;
+
+        [JsonPropertyName("sourceRevision")]
+        public string SourceRevision { get; init; } = string.Empty;
+
+        [JsonPropertyName("appliedPaths")]
+        public IReadOnlyList<string> AppliedPaths { get; init; } = [];
+
+        [JsonPropertyName("boundedAppliedPathCount")]
+        public int BoundedAppliedPathCount { get; init; }
+
+        public ReviewedReconciliationApplyReceipt ToContract() =>
+            new(ReviewId, SourceRevision, AppliedPaths, BoundedAppliedPathCount);
     }
 
     private sealed record BrowserGitResponse<TValue>

@@ -67,6 +67,16 @@ The agent must present the current section to the user and stop while it is `PEN
 **User approval:** Explicitly approved by user request to continue on 2026-10-25
 **Review result:** PASS. The consolidation preserves Client -> Manager -> Accessor direction, removes duplicate workspace context ownership, and introduces no Engine or pass-through Manager interface.
 
+## M016 S03 Reviewed reconciliation apply Accessor boundary
+
+**Status:** APPROVED
+**Affected layers:** Manager, Accessor, Resource
+**Dependency direction:** WorkspaceManager -> `IBrowserGitAccessor` -> `BrowserGitAccessor` -> `browserGitEngine.js`
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; add the reviewed reconciliation apply operation to the existing cohesive seam; no new interface.
+**Interface justifications:** `IBrowserGitAccessor` protects the browser Git platform boundary and its fixture-backed substitution seam; a separate reconciliation interface would be a pass-through with no independent implementation or caller.
+**Exceptions or risks:** The Resource revalidates the active remote-tracking ref and path-scoped object IDs before mutation, bounds text/path writes, and restores captured local files after write failure; raw browser/Git diagnostics and credentials remain inside the Accessor/Resource boundary.
+**Review result:** PASS. The reviewed apply remains Manager-orchestrated, Accessor-normalized, and Resource-executed with no Client-to-Accessor path or new decomposition.
+
 ## M015 S03 Accessor facet consolidation
 
 **Status:** APPROVED

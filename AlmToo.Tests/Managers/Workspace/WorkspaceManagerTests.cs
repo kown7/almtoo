@@ -864,6 +864,7 @@ public sealed class WorkspaceManagerTests
         public Func<CancellationToken, ValueTask<GitOperationResult<GitPublicationReview>>>? PublicationReviewAsync { get; set; }
         public Func<CancellationToken, ValueTask<GitOperationResult<BranchSnapshot>>>? BranchesAsync { get; set; }
         public Func<RemoteSnapshotRequest, CancellationToken, ValueTask<GitOperationResult<RemoteSnapshot>>>? RemoteSnapshotAsync { get; set; }
+        public Func<ReviewedReconciliationApplyRequest, CancellationToken, ValueTask<GitOperationResult<ReviewedReconciliationApplyReceipt>>>? ReviewedReconciliationApplyAsyncHandler { get; set; }
         public Func<BranchHistoryRequest, CancellationToken, ValueTask<GitOperationResult<CommitHistory>>>? HistoryAsync { get; set; }
         public Func<CheckoutBranchRequest, CancellationToken, ValueTask<GitOperationResult>>? CheckoutAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<SynchronizationReview>>>? SynchronizeHandler { get; set; }
@@ -936,6 +937,18 @@ public sealed class WorkspaceManagerTests
                     Value: default,
                     FailureKind: GitOperationFailureKind.RemoteSnapshotDataUnavailable)
                 : await RemoteSnapshotAsync(request, cancellationToken);
+
+        public async ValueTask<GitOperationResult<ReviewedReconciliationApplyReceipt>> ApplyReviewedReconciliationAsync(
+            ReviewedReconciliationApplyRequest request,
+            CancellationToken cancellationToken = default) =>
+            ReviewedReconciliationApplyAsyncHandler is null
+                ? new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                    BrowserGitReconciliationOperations.Apply,
+                    false,
+                    "Reviewed reconciliation is not configured in this test double.",
+                    Value: default,
+                    FailureKind: GitOperationFailureKind.ReconciliationDataUnavailable)
+                : await ReviewedReconciliationApplyAsyncHandler(request, cancellationToken);
 
         public async ValueTask<GitOperationResult> CheckoutBranchAsync(CheckoutBranchRequest request, CancellationToken cancellationToken = default)
         {
