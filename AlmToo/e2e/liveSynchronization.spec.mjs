@@ -292,7 +292,7 @@ test('preserves browser-local state for inaccessible and divergent controlled re
     await page.getByLabel('Author email').fill('live-proof@almtoo.local');
     await page.getByLabel('Commit message').fill(`divergent live proof ${fixture.runId}`);
     await page.getByRole('button', { name: 'Create local commit' }).click();
-    await expect(page.getByText('Created a browser-local commit.')).toBeVisible();
+    await expect(page.locator('.commit-form__success')).toContainText('Local commit created:');
 
     await fixture.advance();
     const divergentBefore = await workspaceSnapshot(page);

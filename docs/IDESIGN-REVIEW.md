@@ -402,6 +402,16 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 
 **Result:** PASS
 
+## M015 cross-slice integration review
+
+**Status:** PENDING APPROVAL
+**Affected layers:** Client, Manager, Accessor, Resource (browser Git integration)
+**Dependency direction:** Client -> WorkspaceManager -> Browser Git Accessor contracts -> BrowserGitAccessor -> browser Git integration
+**Interfaces added or retained:** `IBrowserGitAccessor` and `IGitBugAccessor` retained as Accessor seams; no Engine interface or Git-Bug Engine proposed.
+**Interface justifications:** `IBrowserGitAccessor` isolates the browser Git platform dependency and supplies a Manager testing seam; `IGitBugAccessor` preserves the distinct Git-Bug integration contract within the same Accessor boundary.
+**Declared review scope:** Evaluate only the M015 boundary map and the supplied S01, S02, and S03 evidence for cross-slice integration. Do not require redundant direct dependencies or invent boundaries; transitive dependency chains are valid.
+**Ownership assertions to verify after approval:** WorkspaceManager owns application use-cases, workspace state, cancellation, and safe failures; BrowserGitAccessor owns Git and Git-Bug integration and DTO contracts; no Git-Bug Engine exists without separate deterministic policy justification.
+
 ## M013 S04 T03 central publication acceptance review
 
 - [x] **Client:** the Git-Bug and repository write components render passive Manager state and submit explicit issue edit/comment, changed-ref review, credential, confirmation, publish, retry, and recovery intents. They do not call `IGitPublicationAccessor`, JavaScript, or controlled-remote infrastructure directly.

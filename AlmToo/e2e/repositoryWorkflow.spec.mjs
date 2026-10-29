@@ -65,13 +65,13 @@ test('completes the browser-local repository workflow through push review', asyn
   await page.getByLabel('Author email').fill('browser-uat@almtoo.local');
   await page.getByLabel('Commit message').fill(commitMessage);
   await page.getByRole('button', { name: 'Create local commit' }).click();
-  await expect(page.getByText('Created a browser-local commit.')).toBeVisible();
+  await expect(page.locator('.commit-form__success')).toContainText('Local commit created:');
   await expectManagerSettled(page);
 
-  const commitConfirmation = page.locator('.commit-form__confirmation');
-  const commitId = (await commitConfirmation.locator('div').filter({ hasText: /^Commit[0-9a-f]{40}$/i }).locator('dd').textContent())?.trim();
+  const commitConfirmation = page.locator('.commit-form__success');
+  const commitId = (await commitConfirmation.locator('code').textContent())?.trim();
   expect(commitId, 'The completed commit should expose its full identifier').toMatch(/^[0-9a-f]{40}$/i);
-  await expect(commitConfirmation.locator('div').filter({ hasText: `Message${commitMessage}` }).locator('dd')).toHaveText(commitMessage);
+  await expect(commitConfirmation).toContainText(commitMessage);
   await expect(changedFiles.getByRole('list', { name: 'Changed file list' })).toHaveCount(0);
   await expect(changedFiles.getByText('No changed files detected.')).toBeVisible();
 
