@@ -806,6 +806,232 @@ public sealed class WorkspaceManagerTests
         Assert.DoesNotContain("secret=abc", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ReviewedReconciliationRequiresSelectionAndExplicitConfirmation()
+    {
+        var remoteObjectId = new string('b', 40);
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Status ready.", [])),
+            RemoteSnapshotAsync = (_, _) => ValueTask.FromResult(new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                true,
+                "Remote snapshot ready.",
+                CreateRemoteSnapshot(new RemoteSnapshotBlob("/remote.txt", remoteObjectId, 12))))
+        };
+        var applyCalls = 0;
+        fake.ReviewedReconciliationApplyAsyncHandler = (request, _) =>
+        {
+            applyCalls++;
+            return ValueTask.FromResult(new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                BrowserGitReconciliationOperations.Apply,
+                true,
+                "Applied.",
+                new ReviewedReconciliationApplyReceipt(
+                    request.ReviewId,
+                    request.SourceRevision,
+                    request.Selections.Select(selection => selection.Path).ToArray(),
+                    request.Selections.Count)));
+        };
+
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewReconciliationAsync());
+        var metadata = manager.State.ReconciliationApply!;
+        var request = new WorkspaceReconciliationApplyRequest(
+            metadata.ReviewId,
+            metadata.SourceRevision,
+            [new WorkspaceReconciliationResolutionSelection(
+                "/remote.txt", WorkspaceReconciliationResolution.AcceptRemote)],
+            [new WorkspaceReconciliationRemotePrecondition("/remote.txt", remoteObjectId)],
+            ExplicitlyConfirmed: false);
+
+        Assert.True(manager.SelectReconciliationResolution(request));
+        Assert.False(await manager.ApplyReconciliationAsync());
+        Assert.Equal(0, applyCalls);
+        Assert.Equal(WorkspaceReconciliationFailureKind.ApplyRejected, manager.State.ReconciliationFailureKind);
+        Assert.True(manager.State.ReconciliationRetryable);
+
+        manager.ConfirmReconciliationApply(true);
+        Assert.True(await manager.ApplyReviewedReconciliationAsync());
+        Assert.Equal(1, applyCalls);
+        Assert.Equal(WorkspaceReconciliationStatus.Applied, manager.State.ReconciliationStatus);
+        Assert.False(manager.State.ReconciliationRetryable);
+    }
+
+    [Fact]
+    public async Task ReviewedReconciliationWriteFailurePreservesRetryableReview()
+    {
+        var remoteObjectId = new string('b', 40);
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Status ready.", [])),
+            RemoteSnapshotAsync = (_, _) => ValueTask.FromResult(new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                true,
+                "Remote snapshot ready.",
+                CreateRemoteSnapshot(new RemoteSnapshotBlob("/remote.txt", remoteObjectId, 12))))
+        };
+        var applyCalls = 0;
+        fake.ReviewedReconciliationApplyAsyncHandler = (request, _) =>
+        {
+            applyCalls++;
+            if (applyCalls == 1)
+            {
+                return ValueTask.FromResult(new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                    BrowserGitReconciliationOperations.Apply,
+                    false,
+                    "write failed: secret=do-not-leak",
+                    Value: default,
+                    Diagnostic: "secret=do-not-leak",
+                    FailureKind: GitOperationFailureKind.ReconciliationWriteFailed));
+            }
+
+            return ValueTask.FromResult(new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                BrowserGitReconciliationOperations.Apply,
+                true,
+                "Applied.",
+                new ReviewedReconciliationApplyReceipt(
+                    request.ReviewId,
+                    request.SourceRevision,
+                    request.Selections.Select(selection => selection.Path).ToArray(),
+                    request.Selections.Count)));
+        };
+
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewReconciliationAsync());
+        var metadata = manager.State.ReconciliationApply!;
+        var request = new WorkspaceReconciliationApplyRequest(
+            metadata.ReviewId,
+            metadata.SourceRevision,
+            [new WorkspaceReconciliationResolutionSelection(
+                "/remote.txt", WorkspaceReconciliationResolution.AcceptRemote)],
+            [new WorkspaceReconciliationRemotePrecondition("/remote.txt", remoteObjectId)],
+            ExplicitlyConfirmed: false);
+        Assert.True(manager.SelectReconciliationResolution(request));
+        manager.ConfirmReconciliationApply(true);
+
+        Assert.False(await manager.ApplyReviewedReconciliationAsync());
+        Assert.Equal(WorkspaceReconciliationFailureKind.WriteFailed, manager.State.ReconciliationFailureKind);
+        Assert.True(manager.State.ReconciliationRetryable);
+        Assert.Equal(metadata.ReviewId, manager.State.ReconciliationReviewId);
+        Assert.DoesNotContain("secret=do-not-leak", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
+
+        Assert.True(await manager.ApplyReviewedReconciliationAsync());
+        Assert.Equal(2, applyCalls);
+        Assert.Equal(WorkspaceReconciliationStatus.Applied, manager.State.ReconciliationStatus);
+    }
+
+    [Fact]
+    public async Task StaleRemoteInvalidatesReviewedPlanWithoutRetryingIt()
+    {
+        var remoteObjectId = new string('b', 40);
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Status ready.", [])),
+            RemoteSnapshotAsync = (_, _) => ValueTask.FromResult(new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                true,
+                "Remote snapshot ready.",
+                CreateRemoteSnapshot(new RemoteSnapshotBlob("/remote.txt", remoteObjectId, 12))))
+        };
+        var applyCalls = 0;
+        fake.ReviewedReconciliationApplyAsyncHandler = (_, _) =>
+        {
+            applyCalls++;
+            return ValueTask.FromResult(new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+                BrowserGitReconciliationOperations.Apply,
+                false,
+                "stale remote: secret=do-not-leak",
+                Value: default,
+                Diagnostic: "secret=do-not-leak",
+                FailureKind: GitOperationFailureKind.ReconciliationStaleRemote));
+        };
+
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewReconciliationAsync());
+        var metadata = manager.State.ReconciliationApply!;
+        Assert.True(manager.SelectReconciliationResolution(new WorkspaceReconciliationApplyRequest(
+            metadata.ReviewId,
+            metadata.SourceRevision,
+            [new WorkspaceReconciliationResolutionSelection(
+                "/remote.txt", WorkspaceReconciliationResolution.AcceptRemote)],
+            [new WorkspaceReconciliationRemotePrecondition("/remote.txt", remoteObjectId)],
+            ExplicitlyConfirmed: true)));
+        manager.ConfirmReconciliationApply(true);
+
+        Assert.False(await manager.ApplyReviewedReconciliationAsync());
+        Assert.Equal(1, applyCalls);
+        Assert.Equal(WorkspaceReconciliationFailureKind.StaleRemote, manager.State.ReconciliationFailureKind);
+        Assert.False(manager.State.ReconciliationRetryable);
+        Assert.Null(manager.State.ReconciliationApply);
+        Assert.DoesNotContain("secret=do-not-leak", JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
+
+        Assert.False(await manager.ApplyReviewedReconciliationAsync());
+        Assert.Equal(1, applyCalls);
+    }
+
+    [Fact]
+    public async Task CancelledReviewedApplySuppressesLateAccessorCompletion()
+    {
+        var remoteObjectId = new string('b', 40);
+        var started = new TaskCompletionSource<ReviewedReconciliationApplyRequest>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<GitOperationResult<ReviewedReconciliationApplyReceipt>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Status ready.", [])),
+            RemoteSnapshotAsync = (_, _) => ValueTask.FromResult(new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                true,
+                "Remote snapshot ready.",
+                CreateRemoteSnapshot(new RemoteSnapshotBlob("/remote.txt", remoteObjectId, 12))))
+        };
+        fake.ReviewedReconciliationApplyAsyncHandler = async (request, _) =>
+        {
+            started.TrySetResult(request);
+            return await release.Task;
+        };
+
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.ReviewReconciliationAsync());
+        var metadata = manager.State.ReconciliationApply!;
+        Assert.True(manager.SelectReconciliationResolution(new WorkspaceReconciliationApplyRequest(
+            metadata.ReviewId,
+            metadata.SourceRevision,
+            [new WorkspaceReconciliationResolutionSelection(
+                "/remote.txt", WorkspaceReconciliationResolution.AcceptRemote)],
+            [new WorkspaceReconciliationRemotePrecondition("/remote.txt", remoteObjectId)],
+            ExplicitlyConfirmed: true)));
+        manager.ConfirmReconciliationApply(true);
+
+        var applyTask = manager.ApplyReviewedReconciliationAsync();
+        var request = await started.Task;
+        manager.CancelCurrentOperation();
+        release.TrySetResult(new GitOperationResult<ReviewedReconciliationApplyReceipt>(
+            BrowserGitReconciliationOperations.Apply,
+            true,
+            "Applied.",
+            new ReviewedReconciliationApplyReceipt(
+                request.ReviewId,
+                request.SourceRevision,
+                request.Selections.Select(selection => selection.Path).ToArray(),
+                request.Selections.Count)));
+
+        Assert.False(await applyTask);
+        Assert.Equal(WorkspaceReconciliationStatus.Cancelled, manager.State.ReconciliationStatus);
+        Assert.True(manager.State.ReconciliationRetryable);
+        Assert.NotNull(manager.State.ReconciliationApply);
+    }
+
     private static Task<bool> InvokeReconciliationCore(WorkspaceManager manager, string remoteRef = "refs/remotes/origin/main")
     {
         var method = typeof(WorkspaceManager).GetMethod(

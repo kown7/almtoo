@@ -583,6 +583,11 @@ public sealed partial class WorkspaceManager : IDisposable
 
     public void CancelCurrentOperation()
     {
+        if (State.Operation is WorkspaceOperation.ReviewReconciliation or WorkspaceOperation.ApplyReconciliation)
+        {
+            Interlocked.Increment(ref reconciliationGeneration);
+        }
+
         activeOperation?.Cancel();
         CancelGitBugOperation();
     }
@@ -844,6 +849,25 @@ public sealed partial class WorkspaceManager : IDisposable
                 State.SynchronizationFailureCategory = SynchronizationFailureCategory.Cancelled;
                 State.SynchronizationDecision = SynchronizationDecisionState.Cancelled;
             }
+            else if (operation is WorkspaceOperation.ReviewReconciliation or WorkspaceOperation.ApplyReconciliation)
+            {
+                State.ReconciliationRetryable = operation == WorkspaceOperation.ApplyReconciliation;
+                State.Reconciliation = State.Reconciliation is { } reconciliation
+                    ? reconciliation with
+                    {
+                        Status = WorkspaceReconciliationStatus.Cancelled,
+                        Message = operation == WorkspaceOperation.ApplyReconciliation
+                            ? "The reconciliation apply was cancelled; the reviewed plan is available to retry."
+                            : "The reconciliation review was cancelled.",
+                        FailureKind = WorkspaceReconciliationFailureKind.Cancelled
+                    }
+                    : new WorkspaceReconciliationResult(
+                        WorkspaceReconciliationStatus.Cancelled,
+                        Array.Empty<WorkspaceReconciliationChange>(),
+                        "The reconciliation operation was cancelled.",
+                        RequiresExplicitApply: false,
+                        FailureKind: WorkspaceReconciliationFailureKind.Cancelled);
+            }
             State.Error = new(operation, "The repository operation was cancelled.", WasCancelled: true);
             State.Result = new(operation, false, State.Error.Message);
             return false;
@@ -920,6 +944,10 @@ public sealed partial class WorkspaceManager : IDisposable
         State.SynchronizationFailureCategory = null;
         State.Reconciliation = null;
         State.ReconciliationApply = null;
+        State.ReconciliationSelection = null;
+        State.ReconciliationRetryable = false;
+        lastValidReconciliationReview = null;
+        selectedReconciliationApply = null;
         State.Repository = null;
         SetRepository(null);
         State.Entries = Array.Empty<RepositoryFileEntry>();

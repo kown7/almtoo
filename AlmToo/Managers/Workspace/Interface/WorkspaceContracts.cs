@@ -125,7 +125,9 @@ public enum WorkspaceReconciliationFailureKind
     LocalUnavailable,
     RemoteUnavailable,
     StaleReview,
+    StaleRemote,
     ApplyRejected,
+    WriteFailed,
     Cancelled,
     Unknown
 }
