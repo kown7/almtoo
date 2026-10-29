@@ -404,13 +404,22 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 
 ## M015 cross-slice integration review
 
-**Status:** PENDING APPROVAL
+**Status:** APPROVED
 **Affected layers:** Client, Manager, Accessor, Resource (browser Git integration)
 **Dependency direction:** Client -> WorkspaceManager -> Browser Git Accessor contracts -> BrowserGitAccessor -> browser Git integration
 **Interfaces added or retained:** `IBrowserGitAccessor` and `IGitBugAccessor` retained as Accessor seams; no Engine interface or Git-Bug Engine proposed.
 **Interface justifications:** `IBrowserGitAccessor` isolates the browser Git platform dependency and supplies a Manager testing seam; `IGitBugAccessor` preserves the distinct Git-Bug integration contract within the same Accessor boundary.
 **Declared review scope:** Evaluate only the M015 boundary map and the supplied S01, S02, and S03 evidence for cross-slice integration. Do not require redundant direct dependencies or invent boundaries; transitive dependency chains are valid.
-**Ownership assertions to verify after approval:** WorkspaceManager owns application use-cases, workspace state, cancellation, and safe failures; BrowserGitAccessor owns Git and Git-Bug integration and DTO contracts; no Git-Bug Engine exists without separate deterministic policy justification.
+**Ownership assertions:** WorkspaceManager owns application use-cases, workspace state, cancellation, and safe failures; BrowserGitAccessor owns Git and Git-Bug integration and DTO contracts; no Git-Bug Engine exists without separate deterministic policy justification.
+
+- [x] **Client:** Home, Git-Bug, Program, imports, and repository child components consume Manager-owned, Client-safe contracts and do not depend directly on Accessor types or coordinate overlapping Managers.
+- [x] **Manager:** one sealed partial WorkspaceManager owns repository, VCS, synchronization, and Git-Bug use-cases, shared WorkspaceState, cancellation, and bounded safe failures.
+- [x] **Accessor:** IBrowserGitAccessor and IGitBugAccessor remain the justified integration seams; BrowserGitAccessor owns Git/Git-Bug integration and DTO contracts, with no unjustified Engine or legacy Services/Git wrapper.
+- [x] **Dependency direction:** Client -> WorkspaceManager -> Browser Git Accessor contracts -> BrowserGitAccessor -> browser Git integration is enforced by the focused architecture and design tests.
+- [x] **Verification:** `npm test --prefix AlmToo` (124 passed), `dotnet test AlmToo.sln --no-restore` (78 passed), repository browser acceptance (4 passed), and Git-Bug write/recovery/repeatability acceptance (5 passed).
+- [x] No architectural exception is required.
+
+**Result:** PASS
 
 ## M013 S04 T03 central publication acceptance review
 
