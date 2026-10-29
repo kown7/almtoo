@@ -432,3 +432,16 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 - [x] No architectural exception is required.
 
 **Result:** PASS
+
+## M016 S01-S04 conflict reconciliation planning review
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Engine, Accessor, Resource
+**Dependency direction:** Client -> WorkspaceManager -> ConflictReconciliationEngine and BrowserGitAccessor -> browser Git Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; add only typed Manager-owned reconciliation contracts if implementation requires a new boundary; no pass-through interface is planned.
+**Interface justifications:** `IBrowserGitAccessor` isolates browser Git transport and remote snapshot/ref access as the existing platform boundary; any new interface must protect a genuine substitution or platform dependency and must be justified again at the affected slice review stop.
+**Ownership decisions:** WorkspaceManager owns review/apply orchestration, lifecycle, cancellation, and safe Client state. A cohesive concrete Engine owns deterministic local-versus-remote comparison, conflict classification, and resolution policy. BrowserGitAccessor owns remote refs, snapshots, tree/blob access, and mutation integration. Clients render review and explicit confirmation only.
+**Safety constraints:** Remote inspection is non-mutating; apply requires explicit reviewed intent; cancellation, auth failure, stale remote state, malformed data, and partial write failures preserve or restore local workspace safety; raw Accessor diagnostics and credentials do not cross the Manager boundary.
+**Verification plan:** Contract and architecture tests enforce dependency direction and typed outcomes; Engine tests cover deterministic classifications and resolution policy; Manager tests cover state transitions, cancellation, stale-result protection, and failure recovery; controlled browser tests cover inspect -> review -> apply, conflict handling, retry, and no secret leakage.
+**Exceptions or risks:** A new Engine is justified because conflict classification is deterministic domain policy rather than browser integration. No other architectural exception is approved. Each slice must re-open this review before implementation if the service, contract, Accessor, Resource, or retained interface boundary materially changes.
+**Result:** PASS

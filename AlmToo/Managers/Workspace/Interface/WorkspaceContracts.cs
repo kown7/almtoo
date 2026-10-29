@@ -40,6 +40,8 @@ public enum WorkspaceOperation
     Push,
     ReviewSynchronization,
     ApplySynchronization,
+    ReviewReconciliation,
+    ApplyReconciliation,
     LoadGitBugIssues,
     OpenGitBugIssue,
     EditGitBugIssue,
@@ -67,3 +69,64 @@ public sealed record WorkspaceCommitInput(
     string Message,
     string AuthorName,
     string AuthorEmail);
+
+/// <summary>Client-safe lifecycle states for remote-change reconciliation.</summary>
+public enum WorkspaceReconciliationStatus
+{
+    Idle,
+    Inspecting,
+    Ready,
+    RequiresResolution,
+    Applying,
+    Applied,
+    Cancelled,
+    Unavailable,
+    Unsupported,
+    Failed
+}
+
+/// <summary>Deterministic classification of a path in a local-versus-remote comparison.</summary>
+public enum WorkspaceReconciliationChangeKind
+{
+    Unchanged,
+    LocalOnly,
+    RemoteOnly,
+    ModifiedLocally,
+    ModifiedRemotely,
+    Converged,
+    Divergent,
+    Unsupported,
+    Malformed
+}
+
+/// <summary>Bounded choices the Client may present for a supported reconciliation conflict.</summary>
+public enum WorkspaceReconciliationResolution
+{
+    KeepLocal,
+    AcceptRemote
+}
+
+/// <summary>One safe, path-scoped comparison input for deterministic reconciliation policy.</summary>
+public sealed record WorkspaceFileComparison(
+    string Path,
+    string? BaseObjectId,
+    string? LocalObjectId,
+    string? RemoteObjectId,
+    bool IsSupported = true);
+
+/// <summary>Typed input to the deterministic reconciliation policy; it contains no transport details.</summary>
+public sealed record WorkspaceReconciliationInput(
+    IReadOnlyList<WorkspaceFileComparison> Files);
+
+/// <summary>One path-scoped reconciliation classification exposed to Manager state and tests.</summary>
+public sealed record WorkspaceReconciliationChange(
+    string Path,
+    WorkspaceReconciliationChangeKind Kind,
+    IReadOnlyList<WorkspaceReconciliationResolution> AllowedResolutions);
+
+/// <summary>Client-safe deterministic reconciliation result.</summary>
+public sealed record WorkspaceReconciliationResult(
+    WorkspaceReconciliationStatus Status,
+    IReadOnlyList<WorkspaceReconciliationChange> Changes,
+    string Message,
+    bool RequiresExplicitApply);
