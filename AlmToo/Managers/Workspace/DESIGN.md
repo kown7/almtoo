@@ -142,3 +142,18 @@ The legacy service classification does not justify a Manager, Engine, or Accesso
 - No Manager-to-Manager calls.
 - No raw Accessor or browser integration dependency in Clients.
 - No recreation of the removed `AlmToo/Services/Git` service family.
+
+## M016 reconciliation policy boundary
+
+Conflict reconciliation extends the existing review-first synchronization boundary rather than creating a second workspace coordinator:
+
+```text
+Client -> WorkspaceManager -> ConflictReconciliationEngine
+                         -> IBrowserGitAccessor -> BrowserGitAccessor -> browser Git Resource
+```
+
+- `WorkspaceManager` owns inspect, review, explicit apply, cancellation, stale-result protection, and Client-safe state.
+- `ConflictReconciliationEngine` owns deterministic path classification and bounded resolution policy; it does not call browser APIs or render UI.
+- `IBrowserGitAccessor` remains the platform seam for remote refs, snapshots, tree/blob reads, and later mutation integration.
+- Reconciliation inputs and outputs must contain safe identifiers and paths only; credentials, raw provider diagnostics, and exception type names stay below the Manager boundary.
+- Any new interface requires a genuine platform, substitution, or testing-seam justification and a fresh iDesign review at the affected slice.
