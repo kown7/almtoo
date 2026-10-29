@@ -155,7 +155,8 @@ Client -> WorkspaceManager -> ConflictReconciliationEngine
 ```
 
 - `WorkspaceManager` owns inspect, review, explicit apply, cancellation, stale-result protection, and Client-safe state.
-- `ConflictReconciliationEngine` owns deterministic path classification and bounded resolution policy; it does not call browser APIs or render UI.
+- `ConflictReconciliationEngine` owns deterministic path classification and bounded resolution policy; it does not call browser APIs or render UI. It maps absent comparisons to `Unavailable`, malformed values to `Failed` with `MalformedInput`, and unsupported formats to `Unsupported` with `UnsupportedFormat`; only divergent supported paths expose both bounded resolution choices.
+- `ConflictReconciliationEngine` rejects oversized, duplicate, null, and unsafe path inputs without throwing, and returns only contract-valid, sanitized reconciliation state.
 - `IBrowserGitAccessor` remains the platform seam for remote refs, snapshots, tree/blob reads, and later mutation integration.
 - Reconciliation inputs and outputs must contain safe identifiers and paths only; credentials, raw provider diagnostics, and exception type names stay below the Manager boundary.
 - Any new interface requires a genuine platform, substitution, or testing-seam justification and a fresh iDesign review at the affected slice.
