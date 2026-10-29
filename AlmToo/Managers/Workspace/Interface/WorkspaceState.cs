@@ -65,6 +65,11 @@ public sealed record WorkspaceState
     public WorkspaceReconciliationResult? Reconciliation { get; internal set; }
     public WorkspaceReconciliationApplyMetadata? ReconciliationApply { get; internal set; }
     public WorkspaceReconciliationStatus ReconciliationStatus => Reconciliation?.Status ?? WorkspaceReconciliationStatus.Idle;
+    public WorkspaceReconciliationFailureKind? ReconciliationFailureKind => Reconciliation?.FailureKind;
+    public string? ReconciliationReviewId => ReconciliationApply?.ReviewId;
+    public string? ReconciliationSourceRevision => ReconciliationApply?.SourceRevision;
+    public int ReconciliationChangeCount => Reconciliation?.Changes.Count ?? 0;
+    public bool ReconciliationWasCancelled => ReconciliationStatus == WorkspaceReconciliationStatus.Cancelled;
     public bool ReconciliationRequiresApply => Reconciliation?.RequiresExplicitApply == true && !IsBusy;
     public bool ReconciliationApplyConfirmed => ReconciliationApply?.ExplicitlyConfirmed == true && !IsBusy;
     public string? SynchronizationFailureCode => SynchronizationFailureCategory switch

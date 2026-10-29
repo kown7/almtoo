@@ -918,6 +918,8 @@ public sealed partial class WorkspaceManager : IDisposable
         State.SynchronizationReview = null;
         State.SynchronizationDecision = null;
         State.SynchronizationFailureCategory = null;
+        State.Reconciliation = null;
+        State.ReconciliationApply = null;
         State.Repository = null;
         SetRepository(null);
         State.Entries = Array.Empty<RepositoryFileEntry>();

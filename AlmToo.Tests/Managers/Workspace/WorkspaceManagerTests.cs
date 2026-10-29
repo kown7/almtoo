@@ -55,6 +55,118 @@ public sealed class WorkspaceManagerTests
     }
 
     [Fact]
+    public async Task Reconciliation_review_maps_remote_snapshot_through_engine_without_write_operations()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Clean.", [])),
+            RemoteSnapshotAsync = (_, _) => ValueTask.FromResult(new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                true,
+                "Remote snapshot ready.",
+                CreateRemoteSnapshot(new RemoteSnapshotBlob("/remote.txt", new string('b', 40), 12))))
+        };
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        fake.Calls.Clear();
+
+        Assert.True(await manager.ReviewReconciliationAsync());
+
+        var change = Assert.Single(manager.State.Reconciliation!.Changes);
+        Assert.Equal(WorkspaceReconciliationChangeKind.RemoteOnly, change.Kind);
+        Assert.Equal(new string('b', 40), manager.State.ReconciliationApply!.SourceRevision);
+        Assert.Equal(WorkspaceReconciliationStatus.Ready, manager.State.ReconciliationStatus);
+        Assert.DoesNotContain("checkout", fake.Calls);
+        Assert.DoesNotContain("update", fake.Calls);
+        Assert.DoesNotContain("commit", fake.Calls);
+        Assert.DoesNotContain("push", fake.Calls);
+    }
+
+    [Fact]
+    public async Task Reconciliation_review_maps_local_only_and_divergent_status_safely()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            RemoteSnapshotAsync = (_, _) => ValueTask.FromResult(new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                true,
+                "Remote snapshot ready.",
+                CreateRemoteSnapshot(new RemoteSnapshotBlob("/remote.txt", new string('b', 40), 12))))
+        };
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+
+        fake.StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+            "status", true, "Local only.", [new("/local.txt", GitChangeKind.Added)]));
+        Assert.True(await manager.ReviewReconciliationAsync());
+        Assert.Equal(WorkspaceReconciliationChangeKind.LocalOnly,
+            Assert.Single(manager.State.Reconciliation!.Changes, change => change.Path == "/local.txt").Kind);
+
+        fake.StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+            "status", true, "Divergent.", [new("/remote.txt", GitChangeKind.Modified)]));
+        Assert.True(await manager.ReviewReconciliationAsync());
+        Assert.Equal(WorkspaceReconciliationStatus.RequiresResolution, manager.State.ReconciliationStatus);
+        Assert.Equal(WorkspaceReconciliationChangeKind.Divergent,
+            Assert.Single(manager.State.Reconciliation!.Changes).Kind);
+        Assert.True(manager.State.ReconciliationRequiresApply);
+    }
+
+    [Fact]
+    public async Task Reconciliation_review_maps_unavailable_remote_without_accessor_diagnostics()
+    {
+        const string secret = "PAT=remote-secret";
+        var fake = new FakeBrowserAccessor
+        {
+            StatusAsync = _ => Task.FromResult(new GitOperationResult<IReadOnlyList<ChangedFile>>(
+                "status", true, "Clean.", [])),
+            RemoteSnapshotAsync = (_, _) => ValueTask.FromResult(new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                false,
+                $"raw remote response {secret}",
+                Value: default,
+                Diagnostic: secret,
+                FailureKind: GitOperationFailureKind.RemoteSnapshotDataUnavailable))
+        };
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+
+        Assert.False(await manager.ReviewReconciliationAsync());
+
+        Assert.Equal(WorkspaceReconciliationStatus.Unavailable, manager.State.ReconciliationStatus);
+        Assert.Equal(WorkspaceReconciliationFailureKind.RemoteUnavailable, manager.State.Reconciliation!.FailureKind);
+        Assert.DoesNotContain(secret, JsonSerializer.Serialize(manager.State), StringComparison.Ordinal);
+        Assert.DoesNotContain("checkout", fake.Calls);
+        Assert.DoesNotContain("update", fake.Calls);
+        Assert.DoesNotContain("commit", fake.Calls);
+        Assert.DoesNotContain("push", fake.Calls);
+    }
+
+    [Fact]
+    public async Task Reconciliation_review_cancellation_preserves_cancelled_inspectable_state()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fake = new FakeBrowserAccessor();
+        using var manager = CreateManager(fake);
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        fake.StatusAsync = async token =>
+        {
+            entered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new GitOperationResult<IReadOnlyList<ChangedFile>>("status", true, "never", []);
+        };
+
+        var review = manager.ReviewReconciliationAsync();
+        await entered.Task;
+        manager.CancelCurrentOperation();
+
+        Assert.False(await review);
+        Assert.Equal(WorkspaceReconciliationStatus.Cancelled, manager.State.ReconciliationStatus);
+        Assert.True(manager.State.Error?.WasCancelled);
+        Assert.Equal(WorkspaceOperation.None, manager.State.Operation);
+    }
+
+    [Fact]
     public void Reconciliation_contracts_reject_unbounded_duplicate_unsafe_and_credential_shaped_values()
     {
         var duplicatePaths = new WorkspaceReconciliationInput(
@@ -521,6 +633,22 @@ public sealed class WorkspaceManagerTests
     }
 
     private static WorkspaceManager CreateManager(FakeBrowserAccessor fake) => new(fake, new NoOpGitBugAccessor());
+
+    private static RemoteSnapshot CreateRemoteSnapshot(params RemoteSnapshotBlob[] blobs)
+    {
+        var revision = new string('b', 40);
+        return new RemoteSnapshot(
+            new RemoteSnapshotRef("refs/remotes/origin/main", revision),
+            new RemoteSnapshotCommit(
+                revision,
+                new string('c', 40),
+                null,
+                "Remote review",
+                "Reviewer",
+                DateTimeOffset.UnixEpoch),
+            blobs,
+            blobs.Length);
+    }
 
     private static async Task PreparePushAsync(WorkspaceManager manager)
     {

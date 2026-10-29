@@ -456,3 +456,13 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Ownership decisions:** The Resource performs only non-mutating remote ref/commit/tree/blob reads through isomorphic-git. The Accessor normalizes and validates bounded DTOs and exposes only safe typed snapshot metadata; browser errors, credentials, tokens, URLs beyond the repository identity, and raw transport diagnostics remain below the boundary. WorkspaceManager and the reconciliation Engine consume the typed result without depending on browser or transport details.
 **Interface review:** PASS. No checkout, file write, commit, push, publication, or apply path is reachable from remote inspection. Existing `IGitBugAccessor` and publication/synchronization facets remain unchanged.
 
+## M016 S02 T02 WorkspaceManager remote review implementation review
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Engine, Accessor, Resource
+**Dependency direction:** Client -> WorkspaceManager -> ConflictReconciliationEngine and retained IBrowserGitAccessor -> BrowserGitAccessor -> browser Git Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; no new interface.
+**Interface justifications:** `IBrowserGitAccessor` remains the genuine browser/platform substitution seam, while the Manager facet is a cohesive partial implementation rather than a pass-through interface.
+**Ownership decisions:** WorkspaceManager owns repository-context validation, operation gating, cancellation, generation fencing, safe state publication, and mapping typed snapshot data to Engine input. ConflictReconciliationEngine remains deterministic and I/O-free; Accessor and Resource details remain hidden.
+**Interface review:** PASS. Review is read-only and cannot reach checkout, write, commit, push, publication, or apply paths.
+
