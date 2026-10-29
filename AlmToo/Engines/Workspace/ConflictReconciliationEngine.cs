@@ -75,6 +75,140 @@ public sealed class ConflictReconciliationEngine
             FailureKind: WorkspaceReconciliationFailureKind.None);
     }
 
+    /// <summary>
+    /// Validates one explicit selection against the exact review that produced it and returns a
+    /// deterministic, path-ordered plan. This method has no I/O and must run before an Accessor call.
+    /// </summary>
+    public WorkspaceReconciliationApplyPlanResult BuildApplyPlan(
+        WorkspaceReconciliationResult? review,
+        WorkspaceReconciliationApplyRequest? request)
+    {
+        if (!WorkspaceReconciliationContract.IsValidResult(review)
+            || !WorkspaceReconciliationContract.IsValidApplyRequest(request))
+        {
+            return Rejected(
+                "The reconciliation apply request is malformed.",
+                WorkspaceReconciliationFailureKind.MalformedInput);
+        }
+
+        if (review!.ApplyMetadata is null
+            || review.ApplyMetadata.BoundedChangeCount != review.Changes.Count)
+        {
+            return Rejected(
+                "The reconciliation review is missing valid apply metadata.",
+                WorkspaceReconciliationFailureKind.StaleReview);
+        }
+
+        if (!string.Equals(review.ApplyMetadata.ReviewId, request!.ReviewId, StringComparison.Ordinal)
+            || !string.Equals(review.ApplyMetadata.SourceRevision, request.SourceRevision, StringComparison.Ordinal))
+        {
+            return Rejected(
+                "The reconciliation review no longer matches the selected source.",
+                WorkspaceReconciliationFailureKind.StaleReview);
+        }
+
+        if (review.FailureKind is not null
+            && review.FailureKind != WorkspaceReconciliationFailureKind.None)
+        {
+            return Rejected(
+                "The reconciliation review is not applicable for apply.",
+                review.FailureKind.Value);
+        }
+
+        if (review.Status is not WorkspaceReconciliationStatus.Ready
+            and not WorkspaceReconciliationStatus.RequiresResolution)
+        {
+            return Rejected(
+                "The reconciliation review is not ready for apply.",
+                WorkspaceReconciliationFailureKind.ApplyRejected);
+        }
+
+        if (review.Changes.Any(change => !HasExpectedResolutions(change)))
+        {
+            return Rejected(
+                "The reconciliation review contains contradictory resolution choices.",
+                WorkspaceReconciliationFailureKind.StaleReview);
+        }
+
+        var applicable = review.Changes
+            .Where(change => change.AllowedResolutions.Count > 0)
+            .ToArray();
+        var applicableByPath = applicable.ToDictionary(change => change.Path, StringComparer.Ordinal);
+        var selectedByPath = request.Selections.ToDictionary(selection => selection.Path, StringComparer.Ordinal);
+
+        if (selectedByPath.Count != applicableByPath.Count
+            || applicableByPath.Keys.Any(path => !selectedByPath.ContainsKey(path)))
+        {
+            return Rejected(
+                "Select one supported resolution for every applicable change.",
+                WorkspaceReconciliationFailureKind.ApplyRejected);
+        }
+
+        foreach (var selection in selectedByPath.Values)
+        {
+            var change = applicableByPath[selection.Path];
+            if (!change.AllowedResolutions.Contains(selection.Resolution))
+            {
+                return Rejected(
+                    "One selected reconciliation resolution is not supported.",
+                    WorkspaceReconciliationFailureKind.ApplyRejected);
+            }
+        }
+
+        var preconditionsByPath = request.RemotePreconditions
+            .ToDictionary(precondition => precondition.Path, StringComparer.Ordinal);
+        if (preconditionsByPath.Count != applicableByPath.Count
+            || applicableByPath.Keys.Any(path => !preconditionsByPath.ContainsKey(path)))
+        {
+            return Rejected(
+                "Remote preconditions must cover every applicable change.",
+                WorkspaceReconciliationFailureKind.ApplyRejected);
+        }
+
+        if ((review.RequiresExplicitApply || request.Selections.Count > 0)
+            && !request.ExplicitlyConfirmed)
+        {
+            return Rejected(
+                "Explicit confirmation is required before applying reconciliation.",
+                WorkspaceReconciliationFailureKind.ApplyRejected);
+        }
+
+        var plan = new WorkspaceReconciliationApplyPlan(
+            review.ApplyMetadata with { ExplicitlyConfirmed = request.ExplicitlyConfirmed },
+            selectedByPath.Values.OrderBy(selection => selection.Path, StringComparer.Ordinal).ToArray(),
+            preconditionsByPath.Values.OrderBy(precondition => precondition.Path, StringComparer.Ordinal).ToArray());
+
+        return new WorkspaceReconciliationApplyPlanResult(
+            Succeeded: true,
+            "The reviewed reconciliation apply plan is ready.",
+            WorkspaceReconciliationFailureKind.None,
+            plan);
+    }
+
+    private static WorkspaceReconciliationApplyPlanResult Rejected(
+        string message,
+        WorkspaceReconciliationFailureKind failureKind) =>
+        new(
+            Succeeded: false,
+            message,
+            failureKind,
+            Plan: null);
+
+    private static bool HasExpectedResolutions(WorkspaceReconciliationChange change) =>
+        change.AllowedResolutions.SequenceEqual(
+            change.Kind switch
+            {
+                WorkspaceReconciliationChangeKind.LocalOnly or
+                    WorkspaceReconciliationChangeKind.ModifiedLocally =>
+                    [WorkspaceReconciliationResolution.KeepLocal],
+                WorkspaceReconciliationChangeKind.RemoteOnly or
+                    WorkspaceReconciliationChangeKind.ModifiedRemotely =>
+                    [WorkspaceReconciliationResolution.AcceptRemote],
+                WorkspaceReconciliationChangeKind.Divergent =>
+                    [WorkspaceReconciliationResolution.KeepLocal, WorkspaceReconciliationResolution.AcceptRemote],
+                _ => Array.Empty<WorkspaceReconciliationResolution>()
+            });
+
     private static WorkspaceReconciliationChange EvaluateFile(
         WorkspaceFileComparison? file,
         ISet<string> seenPaths)

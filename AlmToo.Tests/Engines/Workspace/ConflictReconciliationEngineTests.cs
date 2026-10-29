@@ -132,4 +132,168 @@ public sealed class ConflictReconciliationEngineTests
         Assert.True(WorkspaceReconciliationContract.IsValidResult(duplicate));
         Assert.True(WorkspaceReconciliationContract.IsValidResult(unsafePath));
     }
+
+    [Theory]
+    [InlineData(WorkspaceReconciliationResolution.KeepLocal)]
+    [InlineData(WorkspaceReconciliationResolution.AcceptRemote)]
+    public void Builds_a_deterministic_plan_for_each_supported_divergent_resolution(
+        WorkspaceReconciliationResolution resolution)
+    {
+        var review = CreateReview(
+            new WorkspaceFileComparison("/z.txt", "base-z", "local-z", "remote-z"),
+            new WorkspaceFileComparison("/a.txt", "base-a", "local-a", "remote-a"));
+        var request = new WorkspaceReconciliationApplyRequest(
+            "review-1",
+            "source-1",
+            [
+                new("/z.txt", resolution),
+                new("/a.txt", resolution)
+            ],
+            [
+                new("/z.txt", "remote-z"),
+                new("/a.txt", "remote-a")
+            ],
+            ExplicitlyConfirmed: true);
+
+        var result = engine.BuildApplyPlan(review, request);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(WorkspaceReconciliationFailureKind.None, result.FailureKind);
+        var plan = Assert.IsType<WorkspaceReconciliationApplyPlan>(result.Plan);
+        Assert.Equal(["/a.txt", "/z.txt"], plan.Selections.Select(selection => selection.Path));
+        Assert.Equal(["/a.txt", "/z.txt"], plan.RemotePreconditions.Select(precondition => precondition.Path));
+        Assert.All(plan.Selections, selection => Assert.Equal(resolution, selection.Resolution));
+        Assert.True(plan.Review.ExplicitlyConfirmed);
+        Assert.True(WorkspaceReconciliationContract.IsValidApplyPlan(plan));
+        Assert.True(WorkspaceReconciliationContract.IsValidApplyPlanResult(result));
+    }
+
+    [Fact]
+    public void Builds_a_plan_for_one_sided_changes_only_with_the_engine_supported_choices()
+    {
+        var review = CreateReview(
+            new WorkspaceFileComparison("/local.txt", "base", "local", "base"),
+            new WorkspaceFileComparison("/remote.txt", "base", "base", "remote"));
+        var request = new WorkspaceReconciliationApplyRequest(
+            "review-1",
+            "source-1",
+            [
+                new("/remote.txt", WorkspaceReconciliationResolution.AcceptRemote),
+                new("/local.txt", WorkspaceReconciliationResolution.KeepLocal)
+            ],
+            [new("/remote.txt", "remote"), new("/local.txt", "base")],
+            ExplicitlyConfirmed: true);
+
+        var result = engine.BuildApplyPlan(review, request);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(
+            [WorkspaceReconciliationResolution.KeepLocal, WorkspaceReconciliationResolution.AcceptRemote],
+            Assert.IsType<WorkspaceReconciliationApplyPlan>(result.Plan).Selections
+                .Select(selection => selection.Resolution));
+    }
+
+    [Fact]
+    public void Rejects_missing_confirmation_and_review_replays_without_an_accessor_plan()
+    {
+        var review = CreateReview(new WorkspaceFileComparison("/conflict.txt", "base", "local", "remote"));
+        var request = new WorkspaceReconciliationApplyRequest(
+            "review-1",
+            "source-1",
+            [new("/conflict.txt", WorkspaceReconciliationResolution.KeepLocal)],
+            [new("/conflict.txt", "remote")],
+            ExplicitlyConfirmed: false);
+
+        var missingConfirmation = engine.BuildApplyPlan(review, request);
+        var staleReview = engine.BuildApplyPlan(review, request with { ExplicitlyConfirmed = true, ReviewId = "review-2" });
+        var staleSource = engine.BuildApplyPlan(review, request with { ExplicitlyConfirmed = true, SourceRevision = "source-2" });
+
+        Assert.False(missingConfirmation.Succeeded);
+        Assert.Equal(WorkspaceReconciliationFailureKind.ApplyRejected, missingConfirmation.FailureKind);
+        Assert.False(staleReview.Succeeded);
+        Assert.Equal(WorkspaceReconciliationFailureKind.StaleReview, staleReview.FailureKind);
+        Assert.False(staleSource.Succeeded);
+        Assert.Equal(WorkspaceReconciliationFailureKind.StaleReview, staleSource.FailureKind);
+        Assert.Null(missingConfirmation.Plan);
+        Assert.All(new[] { missingConfirmation, staleReview, staleSource }, result =>
+        {
+            Assert.True(WorkspaceReconciliationContract.IsValidApplyPlanResult(result));
+            Assert.DoesNotContain("token", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("diagnostic", result.Message, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    [Fact]
+    public void Rejects_unknown_or_non_applicable_choices_and_missing_remote_preconditions()
+    {
+        var review = CreateReview(
+            new WorkspaceFileComparison("/local.txt", "base", "local", "base"),
+            new WorkspaceFileComparison("/unchanged.txt", "base", "base", "base"));
+        var unknown = new WorkspaceReconciliationApplyRequest(
+            "review-1",
+            "source-1",
+            [new("/local.txt", (WorkspaceReconciliationResolution)99)],
+            [new("/local.txt", "base")],
+            ExplicitlyConfirmed: true);
+        var nonApplicable = unknown with
+        {
+            Selections = [new("/unchanged.txt", WorkspaceReconciliationResolution.KeepLocal)],
+            RemotePreconditions = [new("/unchanged.txt", "base")]
+        };
+        var missingPrecondition = unknown with
+        {
+            Selections = [new("/local.txt", WorkspaceReconciliationResolution.KeepLocal)],
+            RemotePreconditions = []
+        };
+
+        var unknownResult = engine.BuildApplyPlan(review, unknown);
+        var nonApplicableResult = engine.BuildApplyPlan(review, nonApplicable);
+        var missingPreconditionResult = engine.BuildApplyPlan(review, missingPrecondition);
+
+        Assert.Equal(WorkspaceReconciliationFailureKind.MalformedInput, unknownResult.FailureKind);
+        Assert.Equal(WorkspaceReconciliationFailureKind.ApplyRejected, nonApplicableResult.FailureKind);
+        Assert.Equal(WorkspaceReconciliationFailureKind.ApplyRejected, missingPreconditionResult.FailureKind);
+        Assert.All(new[] { unknownResult, nonApplicableResult, missingPreconditionResult }, result =>
+            Assert.False(result.Succeeded));
+    }
+
+    [Fact]
+    public void Rejects_reviews_without_metadata_or_failed_review_states()
+    {
+        var evaluated = engine.Evaluate(new WorkspaceReconciliationInput(
+            [new WorkspaceFileComparison("/remote.txt", "base", "base", "remote")]));
+        var request = new WorkspaceReconciliationApplyRequest(
+            "review-1",
+            "source-1",
+            [new("/remote.txt", WorkspaceReconciliationResolution.AcceptRemote)],
+            [new("/remote.txt", "remote")],
+            ExplicitlyConfirmed: true);
+
+        var missingMetadata = engine.BuildApplyPlan(evaluated, request);
+        var failedReview = engine.BuildApplyPlan(
+            evaluated with
+            {
+                ApplyMetadata = new WorkspaceReconciliationApplyMetadata("review-1", "source-1", 1, DateTimeOffset.UtcNow),
+                FailureKind = WorkspaceReconciliationFailureKind.RemoteUnavailable,
+                Status = WorkspaceReconciliationStatus.Unavailable
+            },
+            request);
+
+        Assert.Equal(WorkspaceReconciliationFailureKind.StaleReview, missingMetadata.FailureKind);
+        Assert.Equal(WorkspaceReconciliationFailureKind.RemoteUnavailable, failedReview.FailureKind);
+        Assert.All(new[] { missingMetadata, failedReview }, result => Assert.False(result.Succeeded));
+    }
+
+    private WorkspaceReconciliationResult CreateReview(params WorkspaceFileComparison[] files)
+    {
+        var evaluated = engine.Evaluate(new WorkspaceReconciliationInput(files));
+        return evaluated with
+        {
+            ApplyMetadata = new WorkspaceReconciliationApplyMetadata(
+                "review-1",
+                "source-1",
+                evaluated.Changes.Count,
+                DateTimeOffset.UtcNow)
+        };
+    }
 }

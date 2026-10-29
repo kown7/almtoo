@@ -466,3 +466,16 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Ownership decisions:** WorkspaceManager owns repository-context validation, operation gating, cancellation, generation fencing, safe state publication, and mapping typed snapshot data to Engine input. ConflictReconciliationEngine remains deterministic and I/O-free; Accessor and Resource details remain hidden.
 **Interface review:** PASS. Review is read-only and cannot reach checkout, write, commit, push, publication, or apply paths.
 
+## M016 S03 T01 reviewed reconciliation Engine and contract review
+
+**Status:** APPROVED
+**Affected layers:** Manager contract boundary, Engine
+**Dependency direction:** WorkspaceManager -> ConflictReconciliationEngine through Workspace reconciliation contracts
+**Interfaces added or retained:** No interface added; existing `IBrowserGitAccessor` remains outside this pure policy change.
+**Interface justifications:** None; the reviewed apply records are passive contracts and do not introduce a service seam.
+**Ownership decisions:** `ConflictReconciliationEngine` remains stateless, deterministic, credential-free, and I/O-free. It validates exact review identity/source revision, supported path-scoped choices, bounded remote preconditions, and explicit confirmation before returning a deterministic apply plan. WorkspaceManager remains responsible for lifecycle and later Accessor orchestration.
+**Verification placement:** Focused Engine tests cover classifications, both supported divergent resolutions, one-sided choices, deterministic ordering, replay/source mismatch, confirmation, malformed or non-applicable selections, missing metadata, and failed review states.
+**Exceptions:** None.
+
+**Result:** PASS
+

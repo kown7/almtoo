@@ -106,6 +106,16 @@ public enum WorkspaceReconciliationResolution
     AcceptRemote
 }
 
+/// <summary>One explicit, path-scoped resolution selected from a reviewed reconciliation result.</summary>
+public sealed record WorkspaceReconciliationResolutionSelection(
+    string Path,
+    WorkspaceReconciliationResolution Resolution);
+
+/// <summary>Remote object state that must still match immediately before a reviewed apply.</summary>
+public sealed record WorkspaceReconciliationRemotePrecondition(
+    string Path,
+    string? ExpectedRemoteObjectId);
+
 /// <summary>Bounded failure categories that may cross the Manager reconciliation boundary.</summary>
 public enum WorkspaceReconciliationFailureKind
 {
@@ -146,6 +156,27 @@ public sealed record WorkspaceReconciliationApplyMetadata(
     DateTimeOffset ReviewedAt,
     bool ExplicitlyConfirmed = false);
 
+/// <summary>Explicit input for turning one exact review into a bounded apply plan.</summary>
+public sealed record WorkspaceReconciliationApplyRequest(
+    string ReviewId,
+    string SourceRevision,
+    IReadOnlyList<WorkspaceReconciliationResolutionSelection> Selections,
+    IReadOnlyList<WorkspaceReconciliationRemotePrecondition> RemotePreconditions,
+    bool ExplicitlyConfirmed);
+
+/// <summary>Deterministic, credential-free plan produced only after a reviewed request passes Engine policy.</summary>
+public sealed record WorkspaceReconciliationApplyPlan(
+    WorkspaceReconciliationApplyMetadata Review,
+    IReadOnlyList<WorkspaceReconciliationResolutionSelection> Selections,
+    IReadOnlyList<WorkspaceReconciliationRemotePrecondition> RemotePreconditions);
+
+/// <summary>Bounded result of reviewed apply-plan construction. Failure details never include Accessor diagnostics.</summary>
+public sealed record WorkspaceReconciliationApplyPlanResult(
+    bool Succeeded,
+    string Message,
+    WorkspaceReconciliationFailureKind FailureKind,
+    WorkspaceReconciliationApplyPlan? Plan = null);
+
 /// <summary>Client-safe deterministic reconciliation result.</summary>
 public sealed record WorkspaceReconciliationResult(
     WorkspaceReconciliationStatus Status,
@@ -165,6 +196,7 @@ public static class WorkspaceReconciliationContract
     public const int MaximumReviewIdLength = 128;
     public const int MaximumSourceRevisionLength = 128;
     public const int MaximumResolutions = 2;
+    public const int MaximumPreconditions = MaximumFiles;
 
     public static bool IsValidInput(WorkspaceReconciliationInput? input) =>
         input is not null
@@ -189,12 +221,56 @@ public static class WorkspaceReconciliationContract
         && change.AllowedResolutions.All(IsValidResolution)
         && change.AllowedResolutions.Distinct().Count() == change.AllowedResolutions.Count;
 
+    public static bool IsValidResolutionSelection(WorkspaceReconciliationResolutionSelection? selection) =>
+        selection is not null
+        && IsSafePath(selection.Path)
+        && IsValidResolution(selection.Resolution);
+
+    public static bool IsValidRemotePrecondition(WorkspaceReconciliationRemotePrecondition? precondition) =>
+        precondition is not null
+        && IsSafePath(precondition.Path)
+        && IsSafeObjectId(precondition.ExpectedRemoteObjectId);
+
     public static bool IsValidApplyMetadata(WorkspaceReconciliationApplyMetadata? metadata) =>
         metadata is not null
         && IsSafeText(metadata.ReviewId, MaximumReviewIdLength)
         && IsSafeText(metadata.SourceRevision, MaximumSourceRevisionLength)
         && metadata.BoundedChangeCount is >= 0 and <= MaximumFiles
         && metadata.ReviewedAt != default;
+
+    public static bool IsValidApplyRequest(WorkspaceReconciliationApplyRequest? request) =>
+        request is not null
+        && IsSafeText(request.ReviewId, MaximumReviewIdLength)
+        && IsSafeText(request.SourceRevision, MaximumSourceRevisionLength)
+        && request.Selections is not null
+        && request.Selections.Count <= MaximumFiles
+        && request.Selections.All(IsValidResolutionSelection)
+        && HasUniquePaths(request.Selections.Select(selection => selection.Path))
+        && request.RemotePreconditions is not null
+        && request.RemotePreconditions.Count <= MaximumPreconditions
+        && request.RemotePreconditions.All(IsValidRemotePrecondition)
+        && HasUniquePaths(request.RemotePreconditions.Select(precondition => precondition.Path));
+
+    public static bool IsValidApplyPlan(WorkspaceReconciliationApplyPlan? plan) =>
+        plan is not null
+        && IsValidApplyMetadata(plan.Review)
+        && plan.Selections is not null
+        && plan.Selections.Count <= MaximumFiles
+        && plan.Selections.All(IsValidResolutionSelection)
+        && HasUniquePaths(plan.Selections.Select(selection => selection.Path))
+        && plan.RemotePreconditions is not null
+        && plan.RemotePreconditions.Count <= MaximumPreconditions
+        && plan.RemotePreconditions.All(IsValidRemotePrecondition)
+        && HasUniquePaths(plan.RemotePreconditions.Select(precondition => precondition.Path));
+
+    public static bool IsValidApplyPlanResult(WorkspaceReconciliationApplyPlanResult? result) =>
+        result is not null
+        && IsSafeText(result.Message, MaximumMessageLength)
+        && IsValidFailure(result.FailureKind)
+        && (result.Plan is null || IsValidApplyPlan(result.Plan))
+        && (result.Succeeded
+            ? result.FailureKind == WorkspaceReconciliationFailureKind.None && result.Plan is not null
+            : result.Plan is null && result.FailureKind != WorkspaceReconciliationFailureKind.None);
 
     public static bool IsValidResult(WorkspaceReconciliationResult? result) =>
         result is not null
@@ -221,7 +297,7 @@ public static class WorkspaceReconciliationContract
             || path.Length > MaximumPathLength
             || !path.StartsWith("/", StringComparison.Ordinal)
             || path.Contains('\\')
-            || path.IndexOfAny(['\0', '\r', '\n']) >= 0
+            || path.Any(char.IsControl)
             || path.Contains("//", StringComparison.Ordinal))
         {
             return false;
