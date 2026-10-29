@@ -63,8 +63,10 @@ public sealed record WorkspaceState
     public SynchronizationDecisionState? SynchronizationDecision { get; internal set; }
     public SynchronizationFailureCategory? SynchronizationFailureCategory { get; internal set; }
     public WorkspaceReconciliationResult? Reconciliation { get; internal set; }
+    public WorkspaceReconciliationApplyMetadata? ReconciliationApply { get; internal set; }
     public WorkspaceReconciliationStatus ReconciliationStatus => Reconciliation?.Status ?? WorkspaceReconciliationStatus.Idle;
     public bool ReconciliationRequiresApply => Reconciliation?.RequiresExplicitApply == true && !IsBusy;
+    public bool ReconciliationApplyConfirmed => ReconciliationApply?.ExplicitlyConfirmed == true && !IsBusy;
     public string? SynchronizationFailureCode => SynchronizationFailureCategory switch
     {
         AlmToo.Accessor.BrowserGitAccessor.Interface.SynchronizationFailureCategory.UnsavedEditorChanges => "unsaved-editor-changes",

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Managers.Workspace.Interface;
 using Xunit;
 
 namespace AlmToo.Tests.Accessor.BrowserGitAccessor;
@@ -135,6 +136,44 @@ public sealed class BrowserGitContractsTests
                 name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
                 name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
         }
+    }
+
+    [Fact]
+    public void Reconciliation_contracts_expose_only_review_safe_metadata()
+    {
+        var contractTypes = new[]
+        {
+            typeof(WorkspaceFileComparison),
+            typeof(WorkspaceReconciliationInput),
+            typeof(WorkspaceReconciliationChange),
+            typeof(WorkspaceReconciliationApplyMetadata),
+            typeof(WorkspaceReconciliationResult)
+        };
+
+        foreach (var type in contractTypes)
+        {
+            var propertyNames = type.GetProperties().Select(property => property.Name);
+            Assert.DoesNotContain(propertyNames, name =>
+                name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("exception", StringComparison.OrdinalIgnoreCase));
+        }
+
+        var result = new WorkspaceReconciliationResult(
+            WorkspaceReconciliationStatus.Unavailable,
+            [],
+            "The remote comparison is unavailable.",
+            RequiresExplicitApply: false,
+            FailureKind: WorkspaceReconciliationFailureKind.RemoteUnavailable);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result));
+
+        Assert.Equal(
+            (int)WorkspaceReconciliationFailureKind.RemoteUnavailable,
+            json.RootElement.GetProperty("FailureKind").GetInt32());
+        Assert.DoesNotContain("token", json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("diagnostic", json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

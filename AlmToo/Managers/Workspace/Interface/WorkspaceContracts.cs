@@ -106,6 +106,20 @@ public enum WorkspaceReconciliationResolution
     AcceptRemote
 }
 
+/// <summary>Bounded failure categories that may cross the Manager reconciliation boundary.</summary>
+public enum WorkspaceReconciliationFailureKind
+{
+    None,
+    MalformedInput,
+    UnsupportedFormat,
+    LocalUnavailable,
+    RemoteUnavailable,
+    StaleReview,
+    ApplyRejected,
+    Cancelled,
+    Unknown
+}
+
 /// <summary>One safe, path-scoped comparison input for deterministic reconciliation policy.</summary>
 public sealed record WorkspaceFileComparison(
     string Path,
@@ -124,9 +138,109 @@ public sealed record WorkspaceReconciliationChange(
     WorkspaceReconciliationChangeKind Kind,
     IReadOnlyList<WorkspaceReconciliationResolution> AllowedResolutions);
 
+/// <summary>Credential-free coordinates that fence an explicit apply to the review that produced it.</summary>
+public sealed record WorkspaceReconciliationApplyMetadata(
+    string ReviewId,
+    string SourceRevision,
+    int BoundedChangeCount,
+    DateTimeOffset ReviewedAt,
+    bool ExplicitlyConfirmed = false);
+
 /// <summary>Client-safe deterministic reconciliation result.</summary>
 public sealed record WorkspaceReconciliationResult(
     WorkspaceReconciliationStatus Status,
     IReadOnlyList<WorkspaceReconciliationChange> Changes,
     string Message,
-    bool RequiresExplicitApply);
+    bool RequiresExplicitApply,
+    WorkspaceReconciliationFailureKind? FailureKind = null,
+    WorkspaceReconciliationApplyMetadata? ApplyMetadata = null);
+
+/// <summary>Pure bounds and safety checks for Manager-owned reconciliation contracts.</summary>
+public static class WorkspaceReconciliationContract
+{
+    public const int MaximumFiles = 1000;
+    public const int MaximumPathLength = 1024;
+    public const int MaximumObjectIdLength = 128;
+    public const int MaximumMessageLength = 512;
+    public const int MaximumReviewIdLength = 128;
+    public const int MaximumSourceRevisionLength = 128;
+    public const int MaximumResolutions = 2;
+
+    public static bool IsValidInput(WorkspaceReconciliationInput? input) =>
+        input is not null
+        && input.Files is not null
+        && input.Files.Count <= MaximumFiles
+        && input.Files.All(IsValidComparison)
+        && HasUniquePaths(input.Files.Select(file => file.Path));
+
+    public static bool IsValidComparison(WorkspaceFileComparison? comparison) =>
+        comparison is not null
+        && IsSafePath(comparison.Path)
+        && IsSafeObjectId(comparison.BaseObjectId)
+        && IsSafeObjectId(comparison.LocalObjectId)
+        && IsSafeObjectId(comparison.RemoteObjectId);
+
+    public static bool IsValidChange(WorkspaceReconciliationChange? change) =>
+        change is not null
+        && IsSafePath(change.Path)
+        && Enum.IsDefined(change.Kind)
+        && change.AllowedResolutions is not null
+        && change.AllowedResolutions.Count <= MaximumResolutions
+        && change.AllowedResolutions.All(IsValidResolution)
+        && change.AllowedResolutions.Distinct().Count() == change.AllowedResolutions.Count;
+
+    public static bool IsValidApplyMetadata(WorkspaceReconciliationApplyMetadata? metadata) =>
+        metadata is not null
+        && IsSafeText(metadata.ReviewId, MaximumReviewIdLength)
+        && IsSafeText(metadata.SourceRevision, MaximumSourceRevisionLength)
+        && metadata.BoundedChangeCount is >= 0 and <= MaximumFiles
+        && metadata.ReviewedAt != default;
+
+    public static bool IsValidResult(WorkspaceReconciliationResult? result) =>
+        result is not null
+        && Enum.IsDefined(result.Status)
+        && result.Changes is not null
+        && result.Changes.Count <= MaximumFiles
+        && result.Changes.All(IsValidChange)
+        && IsSafeText(result.Message, MaximumMessageLength)
+        && (result.FailureKind is null || Enum.IsDefined(result.FailureKind.Value))
+        && (result.ApplyMetadata is null || IsValidApplyMetadata(result.ApplyMetadata));
+
+    public static bool IsValidFailure(WorkspaceReconciliationFailureKind kind) =>
+        Enum.IsDefined(kind);
+
+    private static bool IsValidResolution(WorkspaceReconciliationResolution resolution) =>
+        Enum.IsDefined(resolution);
+
+    private static bool HasUniquePaths(IEnumerable<string> paths) =>
+        paths.Distinct(StringComparer.Ordinal).Count() == paths.Count();
+
+    private static bool IsSafePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)
+            || path.Length > MaximumPathLength
+            || !path.StartsWith("/", StringComparison.Ordinal)
+            || path.Contains('\\')
+            || path.IndexOfAny(['\0', '\r', '\n']) >= 0
+            || path.Contains("//", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var segments = path.Split('/');
+        return segments.Length > 1
+            && segments.Skip(1).All(segment => !string.IsNullOrWhiteSpace(segment) && segment is not "." and not "..");
+    }
+
+    private static bool IsSafeObjectId(string? objectId) =>
+        objectId is null
+        || (objectId.Length <= MaximumObjectIdLength
+            && !string.IsNullOrWhiteSpace(objectId)
+            && objectId.All(character => !char.IsWhiteSpace(character) && !char.IsControl(character)));
+
+    private static bool IsSafeText(string? value, int maximum) =>
+        value is not null
+        && value.Trim().Length > 0
+        && value.Length <= maximum
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+}

@@ -24,6 +24,75 @@ public sealed class WorkspaceManagerTests
         1);
 
     [Fact]
+    public void Reconciliation_contracts_accept_bounded_review_shape_and_passive_state_defaults()
+    {
+        var input = new WorkspaceReconciliationInput(
+        [new("/src/README.md", "base", "local", "remote")]);
+        var change = new WorkspaceReconciliationChange(
+            "/src/README.md",
+            WorkspaceReconciliationChangeKind.Divergent,
+            [WorkspaceReconciliationResolution.KeepLocal, WorkspaceReconciliationResolution.AcceptRemote]);
+        var metadata = new WorkspaceReconciliationApplyMetadata(
+            "review-1",
+            "remote-revision-1",
+            1,
+            DateTimeOffset.UtcNow,
+            ExplicitlyConfirmed: true);
+        var result = new WorkspaceReconciliationResult(
+            WorkspaceReconciliationStatus.RequiresResolution,
+            [change],
+            "Review the divergent file before applying reconciliation.",
+            RequiresExplicitApply: true,
+            ApplyMetadata: metadata);
+        var state = new WorkspaceState();
+
+        Assert.True(WorkspaceReconciliationContract.IsValidInput(input));
+        Assert.True(WorkspaceReconciliationContract.IsValidResult(result));
+        Assert.True(WorkspaceReconciliationContract.IsValidApplyMetadata(metadata));
+        Assert.Equal(WorkspaceReconciliationStatus.Idle, state.ReconciliationStatus);
+        Assert.False(state.ReconciliationRequiresApply);
+        Assert.False(state.ReconciliationApplyConfirmed);
+    }
+
+    [Fact]
+    public void Reconciliation_contracts_reject_unbounded_duplicate_unsafe_and_credential_shaped_values()
+    {
+        var duplicatePaths = new WorkspaceReconciliationInput(
+        [
+            new("/same.txt", "base", "local", "remote"),
+            new("/same.txt", "base", "local", "remote")
+        ]);
+        var unsafeComparison = new WorkspaceFileComparison(
+            "/../secrets.txt",
+            "revision\nwith-control",
+            "local",
+            "remote");
+        var tooManyResolutions = new WorkspaceReconciliationChange(
+            "/file.txt",
+            WorkspaceReconciliationChangeKind.Divergent,
+            [
+                WorkspaceReconciliationResolution.KeepLocal,
+                WorkspaceReconciliationResolution.AcceptRemote,
+                WorkspaceReconciliationResolution.KeepLocal
+            ]);
+        var unsafeMetadata = new WorkspaceReconciliationApplyMetadata(
+            "review\nwith-control",
+            "revision",
+            WorkspaceReconciliationContract.MaximumFiles + 1,
+            DateTimeOffset.UtcNow);
+
+        Assert.False(WorkspaceReconciliationContract.IsValidInput(duplicatePaths));
+        Assert.False(WorkspaceReconciliationContract.IsValidComparison(unsafeComparison));
+        Assert.False(WorkspaceReconciliationContract.IsValidChange(tooManyResolutions));
+        Assert.False(WorkspaceReconciliationContract.IsValidApplyMetadata(unsafeMetadata));
+        Assert.DoesNotContain(typeof(WorkspaceReconciliationResult).GetProperties(), property =>
+            property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task OpenRepository_sequences_open_directory_and_status_into_coherent_state()
     {
         var fake = new FakeBrowserAccessor();
