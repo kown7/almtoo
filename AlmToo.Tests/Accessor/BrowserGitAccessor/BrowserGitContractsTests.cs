@@ -312,6 +312,66 @@ public sealed class BrowserGitContractsTests
     }
 
     [Fact]
+    public void Remote_snapshot_contract_accepts_stable_path_scoped_metadata_without_secrets()
+    {
+        var commitId = new string('a', 40);
+        var treeId = new string('b', 40);
+        var blobId = new string('c', 40);
+        var snapshot = new RemoteSnapshot(
+            new RemoteSnapshotRef("refs/remotes/origin/main", commitId),
+            new RemoteSnapshotCommit(
+                commitId,
+                treeId,
+                new string('d', 40),
+                "Remote review",
+                "Example Author",
+                DateTimeOffset.Parse("2026-09-28T12:00:00Z")),
+            [new RemoteSnapshotBlob("/README.md", blobId, 12)],
+            1);
+
+        Assert.True(BrowserGitRemoteSnapshotContract.IsValidRequest(new RemoteSnapshotRequest("refs/remotes/origin/main")));
+        Assert.True(BrowserGitRemoteSnapshotContract.IsValidSnapshot(snapshot));
+        Assert.Equal("refs/remotes/origin/main", snapshot.RemoteRef);
+        Assert.Equal(commitId, snapshot.SourceRevision);
+        Assert.Equal("git.remote.snapshot", BrowserGitRemoteSnapshotOperations.Read);
+        Assert.DoesNotContain(typeof(RemoteSnapshot).GetProperties(), property =>
+            property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Remote_snapshot_contract_rejects_malformed_duplicate_unsafe_oversized_and_secret_shaped_values()
+    {
+        var commitId = new string('a', 40);
+        var treeId = new string('b', 40);
+        var validCommit = new RemoteSnapshotCommit(commitId, treeId, null, "Message", "Author", DateTimeOffset.UtcNow);
+        var validRef = new RemoteSnapshotRef("refs/remotes/origin/main", commitId);
+        var validBlob = new RemoteSnapshotBlob("/README.md", new string('c', 40), 12);
+
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidRequest(new RemoteSnapshotRequest("refs/remotes/origin/main?token=secret")));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidRequest(new RemoteSnapshotRequest("refs/remotes/origin/main", BrowserGitRemoteSnapshotContract.MaximumEntries + 1)));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidSnapshot(new RemoteSnapshot(
+            validRef,
+            validCommit,
+            [validBlob, validBlob],
+            2)));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidSnapshot(new RemoteSnapshot(
+            validRef,
+            validCommit,
+            [new RemoteSnapshotBlob("/../secrets.txt", validBlob.ObjectId, validBlob.SizeBytes)],
+            1)));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidBlob(validBlob with
+        {
+            SizeBytes = BrowserGitRemoteSnapshotContract.MaximumBlobSizeBytes + 1
+        }));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidCommit(validCommit with { CommitId = "malformed" }));
+        Assert.True(BrowserGitRemoteSnapshotContract.IsValidFailure(GitOperationFailureKind.RemoteSnapshotDataMalformed));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidFailure(GitOperationFailureKind.Unknown));
+    }
+
+    [Fact]
     public void Publication_contract_rejects_unsupported_namespaces_deletes_malformed_refs_and_unbounded_sets()
     {
         var objectId = new string('a', 40);

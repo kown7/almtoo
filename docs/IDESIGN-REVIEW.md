@@ -445,3 +445,14 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Verification plan:** Contract and architecture tests enforce dependency direction and typed outcomes; Engine tests cover deterministic classifications and resolution policy; Manager tests cover state transitions, cancellation, stale-result protection, and failure recovery; controlled browser tests cover inspect -> review -> apply, conflict handling, retry, and no secret leakage.
 **Exceptions or risks:** A new Engine is justified because conflict classification is deterministic domain policy rather than browser integration. No other architectural exception is approved. Each slice must re-open this review before implementation if the service, contract, Accessor, Resource, or retained interface boundary materially changes.
 **Result:** PASS
+
+## M016 S02 T01 remote snapshot Accessor review
+
+**Status:** APPROVED
+**Affected layers:** Accessor, Resource (browser Git integration)
+**Dependency direction:** WorkspaceManager -> `IBrowserGitAccessor` -> `BrowserGitAccessor` -> `browserGitEngine.js` Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; extend its existing typed contract with credential-free remote snapshot acquisition. No new pass-through interface.
+**Interface justifications:** `IBrowserGitAccessor` is the existing platform substitution seam for browser Git and remote transport; the snapshot operation belongs on that cohesive boundary because it must own browser cancellation, response validation, bounded failures, and redaction.
+**Ownership decisions:** The Resource performs only non-mutating remote ref/commit/tree/blob reads through isomorphic-git. The Accessor normalizes and validates bounded DTOs and exposes only safe typed snapshot metadata; browser errors, credentials, tokens, URLs beyond the repository identity, and raw transport diagnostics remain below the boundary. WorkspaceManager and the reconciliation Engine consume the typed result without depending on browser or transport details.
+**Interface review:** PASS. No checkout, file write, commit, push, publication, or apply path is reachable from remote inspection. Existing `IGitBugAccessor` and publication/synchronization facets remain unchanged.
+

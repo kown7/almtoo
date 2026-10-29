@@ -154,6 +154,32 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
                 FailureKind: GitOperationFailureKind.BranchHistoryDataMalformed);
     }
 
+    public async ValueTask<GitOperationResult<RemoteSnapshot>> GetRemoteSnapshotAsync(
+        RemoteSnapshotRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = BrowserGitRemoteSnapshotOperations.Read;
+        if (!BrowserGitRemoteSnapshotContract.IsValidRequest(request))
+        {
+            return new GitOperationResult<RemoteSnapshot>(
+                operation,
+                false,
+                "The remote snapshot request is not valid.",
+                Value: default,
+                Diagnostic: null,
+                FailureKind: GitOperationFailureKind.RemoteSnapshotInvalidRequest);
+        }
+
+        var result = await InvokeWithValueAsync<RemoteSnapshotDto, RemoteSnapshot>(
+            operation,
+            "getRemoteSnapshot",
+            value => value.ToContract(),
+            cancellationToken,
+            request);
+
+        return SanitizeRemoteSnapshotResult(result);
+    }
+
     public async ValueTask<GitOperationResult> CheckoutBranchAsync(
         CheckoutBranchRequest request,
         CancellationToken cancellationToken = default)
@@ -773,6 +799,49 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             FailureKind: failureKind);
     }
 
+    private static GitOperationResult<RemoteSnapshot> SanitizeRemoteSnapshotResult(
+        GitOperationResult<RemoteSnapshot> result)
+    {
+        if (!result.Succeeded)
+        {
+            var failureKind = result.FailureKind is { } kind && BrowserGitRemoteSnapshotContract.IsValidFailure(kind)
+                ? kind
+                : result.Message.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+                    ? GitOperationFailureKind.RemoteSnapshotCancelled
+                    : GitOperationFailureKind.RemoteSnapshotUnknown;
+            var message = failureKind switch
+            {
+                GitOperationFailureKind.RemoteSnapshotInvalidRequest => "The remote snapshot request is not valid.",
+                GitOperationFailureKind.RemoteSnapshotUnsupportedReference => "The requested remote ref is not available.",
+                GitOperationFailureKind.RemoteSnapshotLimitExceeded => "The remote snapshot is too large to review safely.",
+                GitOperationFailureKind.RemoteSnapshotDataMalformed => "The remote snapshot could not be read safely.",
+                GitOperationFailureKind.RemoteSnapshotDataUnavailable => "The remote snapshot is unavailable.",
+                GitOperationFailureKind.RemoteSnapshotCancelled => "The remote snapshot was canceled.",
+                _ => "The remote snapshot could not be acquired."
+            };
+            return new GitOperationResult<RemoteSnapshot>(
+                BrowserGitRemoteSnapshotOperations.Read,
+                false,
+                message,
+                Value: default,
+                Diagnostic: null,
+                FailureKind: failureKind);
+        }
+
+        if (result.Value is not null && BrowserGitRemoteSnapshotContract.IsValidSnapshot(result.Value))
+        {
+            return result with { Diagnostic = null, FailureKind = null };
+        }
+
+        return new GitOperationResult<RemoteSnapshot>(
+            BrowserGitRemoteSnapshotOperations.Read,
+            false,
+            "The remote snapshot could not be read safely.",
+            Value: default,
+            Diagnostic: null,
+            FailureKind: GitOperationFailureKind.RemoteSnapshotDataMalformed);
+    }
+
     private async Task<GitOperationResult<TValue>> InvokeWithValueAsync<TInteropValue, TValue>(
         string operation,
         string identifier,
@@ -817,6 +886,13 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
 
     private static GitOperationFailureKind? ParseFailureKind(string? failureKind) => failureKind switch
     {
+        "remoteSnapshotDataUnavailable" => GitOperationFailureKind.RemoteSnapshotDataUnavailable,
+        "remoteSnapshotDataMalformed" => GitOperationFailureKind.RemoteSnapshotDataMalformed,
+        "remoteSnapshotInvalidRequest" => GitOperationFailureKind.RemoteSnapshotInvalidRequest,
+        "remoteSnapshotUnsupportedReference" => GitOperationFailureKind.RemoteSnapshotUnsupportedReference,
+        "remoteSnapshotLimitExceeded" => GitOperationFailureKind.RemoteSnapshotLimitExceeded,
+        "remoteSnapshotCancelled" => GitOperationFailureKind.RemoteSnapshotCancelled,
+        "remoteSnapshotUnknown" => GitOperationFailureKind.RemoteSnapshotUnknown,
         "credentialRejected" => GitOperationFailureKind.CredentialRejected,
         "remoteAhead" => GitOperationFailureKind.RemoteAhead,
         "networkUnavailable" => GitOperationFailureKind.NetworkUnavailable,
@@ -1605,6 +1681,47 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
 
             return incoming;
         }
+    }
+
+    private sealed record RemoteSnapshotRefDto
+    {
+        [JsonPropertyName("name")] public string Name { get; init; } = string.Empty;
+        [JsonPropertyName("objectId")] public string ObjectId { get; init; } = string.Empty;
+
+        public RemoteSnapshotRef ToContract() => new(Name, ObjectId);
+    }
+
+    private sealed record RemoteSnapshotCommitDto
+    {
+        [JsonPropertyName("commitId")] public string CommitId { get; init; } = string.Empty;
+        [JsonPropertyName("treeId")] public string TreeId { get; init; } = string.Empty;
+        [JsonPropertyName("parentCommitId")] public string? ParentCommitId { get; init; }
+        [JsonPropertyName("message")] public string Message { get; init; } = string.Empty;
+        [JsonPropertyName("authorName")] public string AuthorName { get; init; } = string.Empty;
+        [JsonPropertyName("authoredAt")] public DateTimeOffset AuthoredAt { get; init; }
+
+        public RemoteSnapshotCommit ToContract() =>
+            new(CommitId, TreeId, ParentCommitId, Message, AuthorName, AuthoredAt);
+    }
+
+    private sealed record RemoteSnapshotBlobDto
+    {
+        [JsonPropertyName("path")] public string Path { get; init; } = string.Empty;
+        [JsonPropertyName("objectId")] public string ObjectId { get; init; } = string.Empty;
+        [JsonPropertyName("sizeBytes")] public long SizeBytes { get; init; }
+
+        public RemoteSnapshotBlob ToContract() => new(Path, ObjectId, SizeBytes);
+    }
+
+    private sealed record RemoteSnapshotDto
+    {
+        [JsonPropertyName("ref")] public RemoteSnapshotRefDto Ref { get; init; } = new();
+        [JsonPropertyName("commit")] public RemoteSnapshotCommitDto Commit { get; init; } = new();
+        [JsonPropertyName("blobs")] public IReadOnlyList<RemoteSnapshotBlobDto> Blobs { get; init; } = [];
+        [JsonPropertyName("boundedBlobCount")] public int BoundedBlobCount { get; init; }
+
+        public RemoteSnapshot ToContract() =>
+            new(Ref.ToContract(), Commit.ToContract(), Blobs.Select(blob => blob.ToContract()).ToArray(), BoundedBlobCount);
     }
 
     private sealed record ChangedFileSummaryDto

@@ -422,6 +422,168 @@ export async function getBranches() {
   }
 }
 
+const remoteSnapshotLimits = Object.freeze({
+  maximumEntries: 1000,
+  maximumRefLength: 256,
+  maximumObjectIdLength: 64,
+  maximumPathLength: 1024,
+  maximumCommitMessageLength: 4096,
+  maximumAuthorLength: 512,
+  maximumBlobBytes: 2 * 1024 * 1024
+});
+
+function isSafeRemoteSnapshotRef(value) {
+  return isSafeBranchName(value)
+    && value.length <= remoteSnapshotLimits.maximumRefLength;
+}
+
+function isSafeRemoteSnapshotObjectId(value) {
+  return typeof value === 'string'
+    && (value.length === 40 || value.length === 64)
+    && value.length <= remoteSnapshotLimits.maximumObjectIdLength
+    && /^[0-9a-f]+$/i.test(value);
+}
+
+function normalizeRemoteSnapshotPath(parentPath, entryPath) {
+  if (typeof entryPath !== 'string' || entryPath.length === 0 || entryPath.includes('/')) {
+    throw new TypeError('The repository returned an unsafe remote snapshot path.');
+  }
+  const path = parentPath === '/' ? `/${entryPath}` : `${parentPath}/${entryPath}`;
+  if (path.length > remoteSnapshotLimits.maximumPathLength
+      || path.includes('//')
+      || path.includes('/../')
+      || path.endsWith('/..')
+      || /[\\\0\r\n]/.test(path)) {
+    throw new TypeError('The repository returned an unsafe remote snapshot path.');
+  }
+  return path;
+}
+
+async function readRemoteSnapshotTree({ fs, dir, git, treeId, parentPath, blobs, paths, maximumEntries }) {
+  if (!isSafeRemoteSnapshotObjectId(treeId)) {
+    throw new TypeError('The repository returned malformed remote tree metadata.');
+  }
+  const treeResult = await git.readTree({ fs, dir, oid: treeId });
+  if (!Array.isArray(treeResult?.tree)) {
+    throw new TypeError('The repository returned malformed remote tree metadata.');
+  }
+
+  for (const entry of treeResult.tree) {
+    if (blobs.length >= maximumEntries) {
+      throw new RangeError('The remote snapshot contains too many entries.');
+    }
+    if (!isSafeRemoteSnapshotObjectId(entry?.oid) || typeof entry?.type !== 'string') {
+      throw new TypeError('The repository returned malformed remote tree entries.');
+    }
+    const path = normalizeRemoteSnapshotPath(parentPath, entry.path);
+    if (paths.has(path)) {
+      throw new TypeError('The repository returned duplicate remote snapshot paths.');
+    }
+    paths.add(path);
+    if (entry.type === 'tree') {
+      await readRemoteSnapshotTree({ fs, dir, git, treeId: entry.oid, parentPath: path, blobs, paths, maximumEntries });
+      continue;
+    }
+    if (entry.type !== 'blob') {
+      throw new TypeError('The repository returned an unsupported remote tree entry.');
+    }
+
+    const blobResult = await git.readBlob({ fs, dir, oid: entry.oid });
+    const blob = blobResult?.blob;
+    const sizeBytes = blob?.byteLength;
+    if (!Number.isInteger(sizeBytes) || sizeBytes < 0) {
+      throw new TypeError('The repository returned malformed remote blob metadata.');
+    }
+    if (sizeBytes > remoteSnapshotLimits.maximumBlobBytes) {
+      throw new RangeError('The remote snapshot contains an oversized blob.');
+    }
+    blobs.push({ path, objectId: entry.oid, sizeBytes });
+  }
+}
+
+export async function getRemoteSnapshot(request) {
+  const operation = 'git.remote.snapshot';
+  const remoteRef = request?.remoteRef;
+  const maximumEntries = request?.maximumEntries;
+
+  if (!isSafeRemoteSnapshotRef(remoteRef)
+      || !Number.isInteger(maximumEntries)
+      || maximumEntries < 1
+      || maximumEntries > remoteSnapshotLimits.maximumEntries) {
+    return failureWithKind(operation, 'The remote snapshot request is not valid.', 'remoteSnapshotInvalidRequest');
+  }
+
+  try {
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    const resolvedRef = remoteRef.startsWith('refs/') ? remoteRef : `refs/remotes/${remoteRef}`;
+    const commitId = await git.resolveRef({ fs, dir, ref: resolvedRef });
+    if (!isSafeRemoteSnapshotObjectId(commitId)) {
+      return failureWithKind(operation, 'The requested remote ref is not available.', 'remoteSnapshotUnsupportedReference');
+    }
+
+    const commitResult = await git.readCommit({ fs, dir, oid: commitId });
+    const commit = commitResult?.commit;
+    const author = commit?.author;
+    const treeId = commit?.tree;
+    const parents = commit?.parent;
+    if (!isSafeRemoteSnapshotObjectId(treeId)
+        || !Array.isArray(parents)
+        || parents.some(parent => !isSafeRemoteSnapshotObjectId(parent))
+        || !isSafeText(commit?.message, remoteSnapshotLimits.maximumCommitMessageLength, { allowEmpty: true, allowLineFeeds: true })
+        || !isSafeText(author?.name, remoteSnapshotLimits.maximumAuthorLength)
+        || !Number.isInteger(author?.timestamp)) {
+      return failureWithKind(operation, 'The remote snapshot could not be read safely.', 'remoteSnapshotDataMalformed');
+    }
+
+    const authoredAt = new Date(author.timestamp * 1000);
+    if (Number.isNaN(authoredAt.valueOf())) {
+      return failureWithKind(operation, 'The remote snapshot could not be read safely.', 'remoteSnapshotDataMalformed');
+    }
+
+    const blobs = [];
+    await readRemoteSnapshotTree({
+      fs,
+      dir,
+      git,
+      treeId,
+      parentPath: '/',
+      blobs,
+      paths: new Set(),
+      maximumEntries
+    });
+    blobs.sort((left, right) => left.path.localeCompare(right.path));
+
+    return success(operation, 'The remote snapshot was read without changing the browser-local workspace.', {
+      ref: { name: resolvedRef, objectId: commitId },
+      commit: {
+        commitId,
+        treeId,
+        parentCommitId: parents.length > 0 ? parents[0] : null,
+        message: commit.message,
+        authorName: author.name,
+        authoredAt: authoredAt.toISOString()
+      },
+      blobs,
+      boundedBlobCount: blobs.length
+    });
+  } catch (error) {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    const failureKind = error instanceof RangeError
+      ? 'remoteSnapshotLimitExceeded'
+      : error instanceof TypeError
+        ? 'remoteSnapshotDataMalformed'
+        : /NotFoundError|ResolveRefError|NoRefFound/i.test(code)
+          ? 'remoteSnapshotUnsupportedReference'
+          : 'remoteSnapshotDataUnavailable';
+    return failureWithKind(
+      operation,
+      'The remote snapshot could not be acquired.',
+      failureKind,
+      null);
+  }
+}
+
 export async function checkoutBranch(request) {
   const operation = 'git.branch.checkout';
 

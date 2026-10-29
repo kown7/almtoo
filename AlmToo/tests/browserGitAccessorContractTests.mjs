@@ -153,3 +153,34 @@ test('publication contracts allow only reviewed branch and Git-Bug refs with bou
   assert.match(engine, /networkUnavailable/);
   assert.match(engine, /diagnostic: null/);
 });
+
+test('remote snapshot boundary is typed, bounded, and strictly read-only', async () => {
+  const [facet, contracts, service, engine] = await Promise.all([
+    source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'),
+    source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
+    source('wwwroot/js/browserGitEngine.js')
+  ]);
+
+  assert.match(facet, /GetRemoteSnapshotAsync\(RemoteSnapshotRequest request, CancellationToken cancellationToken/);
+  for (const record of ['RemoteSnapshotRequest', 'RemoteSnapshotRef', 'RemoteSnapshotCommit', 'RemoteSnapshotBlob', 'RemoteSnapshot']) {
+    assert.match(contracts, new RegExp(`record ${record}\\b`));
+  }
+  assert.match(contracts, /MaximumEntries = 1000/);
+  assert.match(contracts, /Distinct\(StringComparer\.Ordinal\)/);
+  assert.match(service, /InvokeWithValueAsync<RemoteSnapshotDto, RemoteSnapshot>/);
+  assert.match(service, /BrowserGitRemoteSnapshotContract\.IsValidSnapshot/);
+  assert.match(service, /Diagnostic: null/);
+
+  const remoteSurface = engine.slice(
+    engine.indexOf('export async function getRemoteSnapshot'),
+    engine.indexOf('export async function checkoutBranch'));
+  assert.match(remoteSurface, /resolveRef\(\{ fs, dir, ref: resolvedRef \}\)/);
+  assert.match(remoteSurface, /readCommit/);
+  assert.match(remoteSurface, /readRemoteSnapshotTree/);
+  assert.match(engine, /git\.readTree/);
+  assert.match(engine, /git\.readBlob/);
+  assert.match(remoteSurface, /remoteSnapshotLimitExceeded/);
+  assert.match(remoteSurface, /failureKind,[\s\S]*?null\);/);
+  assert.doesNotMatch(remoteSurface, /fetch\(|checkout\(|writeFile\(|commit\(|push\(|persistFilesystem\(/);
+});

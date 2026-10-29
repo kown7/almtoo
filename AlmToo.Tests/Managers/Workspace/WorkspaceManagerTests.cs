@@ -552,6 +552,7 @@ public sealed class WorkspaceManagerTests
         public Func<CancellationToken, Task<GitOperationResult<IReadOnlyList<ChangedFile>>>>? StatusAsync { get; set; }
         public Func<CancellationToken, ValueTask<GitOperationResult<GitPublicationReview>>>? PublicationReviewAsync { get; set; }
         public Func<CancellationToken, ValueTask<GitOperationResult<BranchSnapshot>>>? BranchesAsync { get; set; }
+        public Func<RemoteSnapshotRequest, CancellationToken, ValueTask<GitOperationResult<RemoteSnapshot>>>? RemoteSnapshotAsync { get; set; }
         public Func<BranchHistoryRequest, CancellationToken, ValueTask<GitOperationResult<CommitHistory>>>? HistoryAsync { get; set; }
         public Func<CheckoutBranchRequest, CancellationToken, ValueTask<GitOperationResult>>? CheckoutAsync { get; set; }
         public Func<CancellationToken, Task<GitOperationResult<SynchronizationReview>>>? SynchronizeHandler { get; set; }
@@ -614,6 +615,16 @@ public sealed class WorkspaceManagerTests
                     "No branches loaded in this test double.",
                     new BranchSnapshot(null, [], 0))
                 : await BranchesAsync(cancellationToken);
+
+        public async ValueTask<GitOperationResult<RemoteSnapshot>> GetRemoteSnapshotAsync(RemoteSnapshotRequest request, CancellationToken cancellationToken = default) =>
+            RemoteSnapshotAsync is null
+                ? new GitOperationResult<RemoteSnapshot>(
+                    BrowserGitRemoteSnapshotOperations.Read,
+                    false,
+                    "Remote snapshot is not configured in this test double.",
+                    Value: default,
+                    FailureKind: GitOperationFailureKind.RemoteSnapshotDataUnavailable)
+                : await RemoteSnapshotAsync(request, cancellationToken);
 
         public async ValueTask<GitOperationResult> CheckoutBranchAsync(CheckoutBranchRequest request, CancellationToken cancellationToken = default)
         {
