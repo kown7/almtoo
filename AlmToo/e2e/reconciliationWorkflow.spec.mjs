@@ -221,9 +221,20 @@ async function openRecoveryRepository(page, scenario) {
       listFiles: () => ok('listFiles', 'The controlled file list was read.', [
         { path: reviewedPath, name: 'README.md', kind: 'file', sizeBytes: 27, isEditableText: true }
       ]),
-      getStatus: () => scenario === 'cancel-inspect'
-        ? delayed(ok('getStatus', 'The controlled status was read.', [{ path: reviewedPath, changeKind: 'modified' }]))
-        : ok('getStatus', 'The controlled status was read.', [{ path: reviewedPath, changeKind: 'modified' }]),
+      getStatus: () => {
+        if (scenario === 'cancel-inspect' && globalThis.__delayNextStatus) {
+          globalThis.__delayNextStatus = false;
+          return new Promise(resolve => {
+            globalThis.__releaseCancelledInspection = () => resolve(ok(
+              'getStatus',
+              'The controlled status was read.',
+              [{ path: reviewedPath, changeKind: 'modified' }]
+            ));
+          });
+        }
+
+        return ok('getStatus', 'The controlled status was read.', [{ path: reviewedPath, changeKind: 'modified' }]);
+      },
       getRemoteSnapshot: () => {
         calls.snapshots += 1;
         if (scenario === 'safe-failure') {
@@ -304,11 +315,14 @@ test('cancels inspection without allowing a delayed result to overwrite cancelle
   const diagnostics = observeBrowserDiagnostics(page);
   await openRecoveryRepository(page, 'cancel-inspect');
 
+  await page.evaluate(() => { globalThis.__delayNextStatus = true; });
   await page.getByRole('button', { name: 'Inspect remote changes' }).click();
   await expect(page.locator('[data-reconciliation-progress="ReviewReconciliation"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => typeof globalThis.__releaseCancelledInspection)).toBe('function');
   await page.getByRole('button', { name: 'Cancel current operation' }).click();
   await expect(page.locator('[data-reconciliation-phase="None"]')).toBeVisible();
   await expect(page.locator('[data-reconciliation-status="Inspecting"]')).toBeVisible();
+  await page.evaluate(() => globalThis.__releaseCancelledInspection());
   await page.waitForTimeout(1_500);
 
   expect(await page.evaluate(() => globalThis.__reconciliationCalls.snapshots)).toBe(0);
