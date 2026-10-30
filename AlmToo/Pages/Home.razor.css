@@ -13,7 +13,8 @@
 .repository-status h2,
 .file-preview h2,
 .push-panel h2,
-.synchronization-panel h2 {
+.synchronization-panel h2,
+.reconciliation-panel h2 {
     margin: 0;
 }
 
@@ -32,12 +33,115 @@
 .file-preview,
 .push-panel,
 .synchronization-panel,
+.reconciliation-panel,
 .credential-reload-state {
     border: 1px solid #dbe3ef;
     border-radius: 1rem;
     background: #ffffff;
     box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.08);
     padding: 1.25rem;
+}
+
+.repository-form,
+.repository-status,
+.file-preview,
+.push-panel,
+.synchronization-panel,
+.reconciliation-panel {
+    display: grid;
+    gap: 1rem;
+}
+
+.reconciliation-panel__heading,
+.reconciliation-state,
+.reconciliation-metadata,
+.reconciliation-form,
+.reconciliation-confirmation {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.reconciliation-panel__heading {
+    justify-content: space-between;
+}
+
+.reconciliation-state {
+    color: #475569;
+    font-size: 0.9rem;
+}
+
+.reconciliation-state span + span {
+    color: #166534;
+    font-weight: 700;
+}
+
+.reconciliation-metadata {
+    margin: 0;
+}
+
+.reconciliation-metadata div {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 10rem;
+}
+
+.reconciliation-metadata dt {
+    color: #64748b;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.reconciliation-metadata dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.reconciliation-changes {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.reconciliation-changes li {
+    display: grid;
+    grid-template-columns: minmax(8rem, auto) minmax(10rem, 1fr) minmax(12rem, auto);
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+}
+
+.reconciliation-changes label {
+    display: grid;
+    gap: 0.25rem;
+    color: #475569;
+    font-size: 0.85rem;
+}
+
+.reconciliation-changes select {
+    min-height: 2.25rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    background: #fff;
+}
+
+.reconciliation-panel__placeholder,
+.reconciliation-message {
+    margin: 0;
+    color: #475569;
+}
+
+@media (max-width: 48rem) {
+    .reconciliation-changes li {
+        grid-template-columns: 1fr;
+    }
 }
 
 .repository-form,

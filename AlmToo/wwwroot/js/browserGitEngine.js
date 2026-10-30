@@ -117,7 +117,19 @@ async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
   return fetchedCount;
 }
 
+async function getControlledResourceResponse(operation, request) {
+  const adapter = globalThis.__almTooBrowserGitTestAdapter;
+  if (!adapter || adapter.enabled !== true || typeof adapter[operation] !== 'function') {
+    return null;
+  }
+
+  return await adapter[operation](request);
+}
+
 export async function initialize() {
+  const controlled = await getControlledResourceResponse('initialize');
+  if (controlled) return controlled;
+
   try {
     await ensureDependencies();
     await ensureFilesystem();
@@ -134,6 +146,9 @@ export async function initialize() {
 }
 
 export async function cloneOrOpen(request) {
+  const controlled = await getControlledResourceResponse('cloneOrOpen', request);
+  if (controlled) return controlled;
+
   const operation = 'cloneOrOpen';
 
   try {
@@ -196,6 +211,9 @@ export async function cloneOrOpen(request) {
 }
 
 export async function listFiles(path = '/') {
+  const controlled = await getControlledResourceResponse('listFiles', path);
+  if (controlled) return controlled;
+
   const operation = 'listFiles';
 
   try {
@@ -233,6 +251,9 @@ export async function listFiles(path = '/') {
 }
 
 export async function readTextFile(path) {
+  const controlled = await getControlledResourceResponse('readTextFile', path);
+  if (controlled) return controlled;
+
   const operation = 'readTextFile';
 
   try {
@@ -285,6 +306,9 @@ export async function writeTextFile(path, content) {
 }
 
 export async function getStatus() {
+  const controlled = await getControlledResourceResponse('getStatus');
+  if (controlled) return controlled;
+
   const operation = 'getStatus';
 
   try {
@@ -502,6 +526,9 @@ async function readRemoteSnapshotTree({ fs, dir, git, treeId, parentPath, blobs,
 }
 
 export async function getRemoteSnapshot(request) {
+  const controlled = await getControlledResourceResponse('getRemoteSnapshot', request);
+  if (controlled) return controlled;
+
   const operation = 'git.remote.snapshot';
   const remoteRef = request?.remoteRef;
   const maximumEntries = request?.maximumEntries;
@@ -918,6 +945,9 @@ export async function synchronize(request) {
 }
 
 export async function applyReviewedReconciliation(request) {
+  const controlled = await getControlledResourceResponse('applyReviewedReconciliation', request);
+  if (controlled) return controlled;
+
   const operation = 'git.reconciliation.apply';
   let fileBackups = [];
   let hasWritten = false;
