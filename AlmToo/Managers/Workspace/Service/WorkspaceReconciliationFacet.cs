@@ -31,13 +31,13 @@ public sealed partial class WorkspaceManager
         var review = State.ReconciliationRetryable && lastValidReconciliationReview is not null
             ? lastValidReconciliationReview
             : State.Reconciliation;
-        if (review is null || request is null)
+        if (review is not { ApplyMetadata: { } applyMetadata } currentReview || request is null)
         {
             return RejectReconciliationSelection("Review the current reconciliation before selecting resolutions.");
         }
 
         var confirmedRequest = request with { ExplicitlyConfirmed = true };
-        var validation = reconciliationEngine.BuildApplyPlan(review, confirmedRequest);
+        var validation = reconciliationEngine.BuildApplyPlan(currentReview, confirmedRequest);
         if (!validation.Succeeded || validation.Plan is null)
         {
             return RejectReconciliationSelection(GetApplyRejectionMessage(validation.FailureKind));
@@ -45,7 +45,7 @@ public sealed partial class WorkspaceManager
 
         selectedReconciliationApply = request with { ExplicitlyConfirmed = false };
         State.ReconciliationSelection = selectedReconciliationApply;
-        State.ReconciliationApply = review.ApplyMetadata with { ExplicitlyConfirmed = false };
+        State.ReconciliationApply = applyMetadata with { ExplicitlyConfirmed = false };
         State.ReconciliationRetryable = false;
         State.Error = null;
         NotifyChanged();
@@ -59,14 +59,14 @@ public sealed partial class WorkspaceManager
     /// <summary>Confirms or withdraws the selected reconciliation without performing a write.</summary>
     public void ConfirmReconciliationApply(bool confirmed)
     {
-        if (selectedReconciliationApply is null || State.Reconciliation is null)
+        if (selectedReconciliationApply is null || State.Reconciliation is not { ApplyMetadata: { } applyMetadata })
         {
             return;
         }
 
         selectedReconciliationApply = selectedReconciliationApply with { ExplicitlyConfirmed = confirmed };
         State.ReconciliationSelection = selectedReconciliationApply;
-        State.ReconciliationApply = State.Reconciliation.ApplyMetadata with { ExplicitlyConfirmed = confirmed };
+        State.ReconciliationApply = applyMetadata with { ExplicitlyConfirmed = confirmed };
         State.Error = null;
         NotifyChanged();
     }
