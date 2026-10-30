@@ -117,7 +117,19 @@ async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
   return fetchedCount;
 }
 
+async function getControlledResourceResponse(operation, request) {
+  const adapter = globalThis.__almTooBrowserGitTestAdapter;
+  if (!adapter || adapter.enabled !== true || typeof adapter[operation] !== 'function') {
+    return null;
+  }
+
+  return await adapter[operation](request);
+}
+
 export async function initialize() {
+  const controlled = await getControlledResourceResponse('initialize');
+  if (controlled) return controlled;
+
   try {
     await ensureDependencies();
     await ensureFilesystem();
@@ -134,6 +146,9 @@ export async function initialize() {
 }
 
 export async function cloneOrOpen(request) {
+  const controlled = await getControlledResourceResponse('cloneOrOpen', request);
+  if (controlled) return controlled;
+
   const operation = 'cloneOrOpen';
 
   try {
@@ -196,6 +211,9 @@ export async function cloneOrOpen(request) {
 }
 
 export async function listFiles(path = '/') {
+  const controlled = await getControlledResourceResponse('listFiles', path);
+  if (controlled) return controlled;
+
   const operation = 'listFiles';
 
   try {
@@ -233,6 +251,9 @@ export async function listFiles(path = '/') {
 }
 
 export async function readTextFile(path) {
+  const controlled = await getControlledResourceResponse('readTextFile', path);
+  if (controlled) return controlled;
+
   const operation = 'readTextFile';
 
   try {
@@ -285,6 +306,9 @@ export async function writeTextFile(path, content) {
 }
 
 export async function getStatus() {
+  const controlled = await getControlledResourceResponse('getStatus');
+  if (controlled) return controlled;
+
   const operation = 'getStatus';
 
   try {
@@ -419,6 +443,171 @@ export async function getBranches() {
         ? 'branchHistoryDataMalformed'
         : 'branchHistoryDataUnavailable';
     return failureWithKind(operation, 'Branches could not be read from the browser-local repository.', failureKind, getDiagnostic(error));
+  }
+}
+
+const remoteSnapshotLimits = Object.freeze({
+  maximumEntries: 1000,
+  maximumRefLength: 256,
+  maximumObjectIdLength: 64,
+  maximumPathLength: 1024,
+  maximumCommitMessageLength: 4096,
+  maximumAuthorLength: 512,
+  maximumBlobBytes: 2 * 1024 * 1024
+});
+
+function isSafeRemoteSnapshotRef(value) {
+  return isSafeBranchName(value)
+    && value.length <= remoteSnapshotLimits.maximumRefLength;
+}
+
+function isSafeRemoteSnapshotObjectId(value) {
+  return typeof value === 'string'
+    && (value.length === 40 || value.length === 64)
+    && value.length <= remoteSnapshotLimits.maximumObjectIdLength
+    && /^[0-9a-f]+$/i.test(value);
+}
+
+function normalizeRemoteSnapshotPath(parentPath, entryPath) {
+  if (typeof entryPath !== 'string' || entryPath.length === 0 || entryPath.includes('/')) {
+    throw new TypeError('The repository returned an unsafe remote snapshot path.');
+  }
+  const path = parentPath === '/' ? `/${entryPath}` : `${parentPath}/${entryPath}`;
+  if (path.length > remoteSnapshotLimits.maximumPathLength
+      || path.includes('//')
+      || path.includes('/../')
+      || path.endsWith('/..')
+      || /[\\\0\r\n]/.test(path)) {
+    throw new TypeError('The repository returned an unsafe remote snapshot path.');
+  }
+  return path;
+}
+
+async function readRemoteSnapshotTree({ fs, dir, git, treeId, parentPath, blobs, paths, maximumEntries }) {
+  if (!isSafeRemoteSnapshotObjectId(treeId)) {
+    throw new TypeError('The repository returned malformed remote tree metadata.');
+  }
+  const treeResult = await git.readTree({ fs, dir, oid: treeId });
+  if (!Array.isArray(treeResult?.tree)) {
+    throw new TypeError('The repository returned malformed remote tree metadata.');
+  }
+
+  for (const entry of treeResult.tree) {
+    if (blobs.length >= maximumEntries) {
+      throw new RangeError('The remote snapshot contains too many entries.');
+    }
+    if (!isSafeRemoteSnapshotObjectId(entry?.oid) || typeof entry?.type !== 'string') {
+      throw new TypeError('The repository returned malformed remote tree entries.');
+    }
+    const path = normalizeRemoteSnapshotPath(parentPath, entry.path);
+    if (paths.has(path)) {
+      throw new TypeError('The repository returned duplicate remote snapshot paths.');
+    }
+    paths.add(path);
+    if (entry.type === 'tree') {
+      await readRemoteSnapshotTree({ fs, dir, git, treeId: entry.oid, parentPath: path, blobs, paths, maximumEntries });
+      continue;
+    }
+    if (entry.type !== 'blob') {
+      throw new TypeError('The repository returned an unsupported remote tree entry.');
+    }
+
+    const blobResult = await git.readBlob({ fs, dir, oid: entry.oid });
+    const blob = blobResult?.blob;
+    const sizeBytes = blob?.byteLength;
+    if (!Number.isInteger(sizeBytes) || sizeBytes < 0) {
+      throw new TypeError('The repository returned malformed remote blob metadata.');
+    }
+    if (sizeBytes > remoteSnapshotLimits.maximumBlobBytes) {
+      throw new RangeError('The remote snapshot contains an oversized blob.');
+    }
+    blobs.push({ path, objectId: entry.oid, sizeBytes });
+  }
+}
+
+export async function getRemoteSnapshot(request) {
+  const controlled = await getControlledResourceResponse('getRemoteSnapshot', request);
+  if (controlled) return controlled;
+
+  const operation = 'git.remote.snapshot';
+  const remoteRef = request?.remoteRef;
+  const maximumEntries = request?.maximumEntries;
+
+  if (!isSafeRemoteSnapshotRef(remoteRef)
+      || !Number.isInteger(maximumEntries)
+      || maximumEntries < 1
+      || maximumEntries > remoteSnapshotLimits.maximumEntries) {
+    return failureWithKind(operation, 'The remote snapshot request is not valid.', 'remoteSnapshotInvalidRequest');
+  }
+
+  try {
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    const resolvedRef = remoteRef.startsWith('refs/') ? remoteRef : `refs/remotes/${remoteRef}`;
+    const commitId = await git.resolveRef({ fs, dir, ref: resolvedRef });
+    if (!isSafeRemoteSnapshotObjectId(commitId)) {
+      return failureWithKind(operation, 'The requested remote ref is not available.', 'remoteSnapshotUnsupportedReference');
+    }
+
+    const commitResult = await git.readCommit({ fs, dir, oid: commitId });
+    const commit = commitResult?.commit;
+    const author = commit?.author;
+    const treeId = commit?.tree;
+    const parents = commit?.parent;
+    if (!isSafeRemoteSnapshotObjectId(treeId)
+        || !Array.isArray(parents)
+        || parents.some(parent => !isSafeRemoteSnapshotObjectId(parent))
+        || !isSafeText(commit?.message, remoteSnapshotLimits.maximumCommitMessageLength, { allowEmpty: true, allowLineFeeds: true })
+        || !isSafeText(author?.name, remoteSnapshotLimits.maximumAuthorLength)
+        || !Number.isInteger(author?.timestamp)) {
+      return failureWithKind(operation, 'The remote snapshot could not be read safely.', 'remoteSnapshotDataMalformed');
+    }
+
+    const authoredAt = new Date(author.timestamp * 1000);
+    if (Number.isNaN(authoredAt.valueOf())) {
+      return failureWithKind(operation, 'The remote snapshot could not be read safely.', 'remoteSnapshotDataMalformed');
+    }
+
+    const blobs = [];
+    await readRemoteSnapshotTree({
+      fs,
+      dir,
+      git,
+      treeId,
+      parentPath: '/',
+      blobs,
+      paths: new Set(),
+      maximumEntries
+    });
+    blobs.sort((left, right) => left.path.localeCompare(right.path));
+
+    return success(operation, 'The remote snapshot was read without changing the browser-local workspace.', {
+      ref: { name: resolvedRef, objectId: commitId },
+      commit: {
+        commitId,
+        treeId,
+        parentCommitId: parents.length > 0 ? parents[0] : null,
+        message: commit.message,
+        authorName: author.name,
+        authoredAt: authoredAt.toISOString()
+      },
+      blobs,
+      boundedBlobCount: blobs.length
+    });
+  } catch (error) {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    const failureKind = error instanceof RangeError
+      ? 'remoteSnapshotLimitExceeded'
+      : error instanceof TypeError
+        ? 'remoteSnapshotDataMalformed'
+        : /NotFoundError|ResolveRefError|NoRefFound/i.test(code)
+          ? 'remoteSnapshotUnsupportedReference'
+          : 'remoteSnapshotDataUnavailable';
+    return failureWithKind(
+      operation,
+      'The remote snapshot could not be acquired.',
+      failureKind,
+      null);
   }
 }
 
@@ -753,6 +942,240 @@ export async function synchronize(request) {
     }
     return failureWithKind(operation, 'Repository synchronization could not be completed.', classifyPushFailure(error));
   }
+}
+
+export async function applyReviewedReconciliation(request) {
+  const controlled = await getControlledResourceResponse('applyReviewedReconciliation', request);
+  if (controlled) return controlled;
+
+  const operation = 'git.reconciliation.apply';
+  let fileBackups = [];
+  let hasWritten = false;
+
+  try {
+    const validationFailure = validateReviewedReconciliationRequest(request);
+    if (validationFailure) {
+      return failureWithKind(operation, validationFailure.message, validationFailure.kind, null);
+    }
+
+    const { fs, dir } = await getActiveWorkspace(operation);
+    const git = getGit();
+    const branch = parseLocalBranchRef(await git.currentBranch({ fs, dir, fullname: true }));
+    const remoteRef = `refs/remotes/origin/${branch}`;
+    const currentRemoteRevision = await git.resolveRef({ fs, dir, ref: remoteRef });
+    if (currentRemoteRevision !== request.sourceRevision) {
+      return failureWithKind(operation, 'The reviewed remote state is stale; review it again before applying.', 'reconciliationStaleRemote', null);
+    }
+
+    const remoteEntries = await readReviewedReconciliationEntries(git, fs, dir, remoteRef);
+    const selections = new Map(request.selections.map(selection => [selection.path, selection]));
+    const preconditions = new Map(request.remotePreconditions.map(precondition => [precondition.path, precondition]));
+    const operations = [];
+
+    for (const selection of request.selections) {
+      const precondition = preconditions.get(selection.path);
+      const remoteEntry = remoteEntries.get(selection.path) ?? null;
+      const actualRemoteObjectId = remoteEntry?.type === 'blob' ? remoteEntry.oid : null;
+      if (actualRemoteObjectId !== precondition.expectedRemoteObjectId) {
+        return failureWithKind(operation, 'The reviewed remote state is stale; review it again before applying.', 'reconciliationStaleRemote', null);
+      }
+      if (selection.resolution === 'KeepLocal') {
+        continue;
+      }
+      if (selection.resolution !== 'AcceptRemote') {
+        return failureWithKind(operation, 'The selected reconciliation resolution is not supported.', 'reconciliationUnsupportedResolution', null);
+      }
+      if (remoteEntry && remoteEntry.type !== 'blob') {
+        return failureWithKind(operation, 'The reviewed remote entry is not a supported text file.', 'reconciliationUnsupportedResolution', null);
+      }
+
+      let content = null;
+      if (remoteEntry) {
+        const blobResult = await git.readBlob({ fs, dir, oid: remoteEntry.oid });
+        content = blobResult?.blob;
+        if (!(content instanceof Uint8Array)
+            || content.byteLength > maxEditableTextBytes
+            || !isEditableTextPath(selection.path, content.byteLength)) {
+          return failureWithKind(operation, 'The reviewed remote file is not a supported bounded text file.', 'reconciliationUnsupportedResolution', null);
+        }
+      }
+
+      fileBackups.push(await captureReviewedReconciliationFile(fs, dir, selection.path));
+      operations.push({ path: selection.path, content });
+    }
+
+    for (const operationToApply of operations) {
+      const filePath = joinRepositoryPath(dir, operationToApply.path);
+      if (operationToApply.content === null) {
+        await unlinkReviewedReconciliationFile(fs, filePath);
+      } else {
+        await mkdirp(fs, filePath.slice(0, filePath.lastIndexOf('/')));
+        await fs.promises.writeFile(filePath, operationToApply.content);
+      }
+      hasWritten = true;
+    }
+    await persistFilesystem(fs);
+
+    const appliedPaths = operations.map(operationToApply => operationToApply.path);
+    return success(operation, operations.length === 0
+      ? 'The reviewed reconciliation had no remote files to apply.'
+      : 'The reviewed reconciliation was applied safely.', {
+      reviewId: request.reviewId,
+      sourceRevision: request.sourceRevision,
+      appliedPaths,
+      boundedAppliedPathCount: appliedPaths.length
+    });
+  } catch (error) {
+    if (hasWritten || fileBackups.length > 0) {
+      try {
+        const { fs, dir } = await getActiveWorkspace(operation);
+        await restoreReviewedReconciliationFiles(fs, dir, fileBackups);
+        await persistFilesystem(fs);
+      } catch {
+        // Preserve the fixed safe failure category; raw rollback diagnostics stay in the Resource.
+      }
+    }
+
+    const code = typeof error?.code === 'string' ? error.code : '';
+    const kind = error?.reconciliationKind
+      || (error?.name === 'AbortError' ? 'reconciliationCancelled'
+        : /NotFoundError|ResolveRefError|NoRefFound/i.test(code)
+          ? 'reconciliationDataUnavailable'
+          : 'reconciliationWriteFailed');
+    const message = kind === 'reconciliationCancelled'
+      ? 'The reviewed reconciliation was canceled safely.'
+      : kind === 'reconciliationDataMalformed'
+        ? 'The reviewed reconciliation data could not be read safely.'
+        : 'The reviewed reconciliation could not be applied; local files were restored when possible.';
+    return failureWithKind(operation, message, kind, null);
+  }
+}
+
+function validateReviewedReconciliationRequest(request) {
+  if (!request
+      || typeof request.reviewId !== 'string'
+      || request.reviewId.trim().length === 0
+      || request.reviewId.length > 128
+      || typeof request.sourceRevision !== 'string'
+      || !isSafeRemoteSnapshotObjectId(request.sourceRevision)
+      || !Number.isInteger(request.boundedChangeCount)
+      || request.boundedChangeCount < 0
+      || request.boundedChangeCount > gitBugLimits.changedFiles
+      || !Array.isArray(request.selections)
+      || !Array.isArray(request.remotePreconditions)
+      || request.selections.length !== request.remotePreconditions.length
+      || request.selections.length !== request.boundedChangeCount
+      || request.selections.length > gitBugLimits.changedFiles) {
+    return { kind: 'reconciliationInvalidRequest', message: 'The reviewed reconciliation request is not valid.' };
+  }
+
+  const paths = new Set();
+  for (const selection of request.selections) {
+    if (!selection || typeof selection.path !== 'string' || paths.has(selection.path)) {
+      return { kind: 'reconciliationInvalidRequest', message: 'The reviewed reconciliation request contains an unsafe or duplicate path.' };
+    }
+    paths.add(selection.path);
+    try {
+      if (normalizeRepositoryPath(selection.path) !== selection.path) {
+        return { kind: 'reconciliationInvalidRequest', message: 'The reviewed reconciliation request contains an unsafe path.' };
+      }
+    } catch {
+      return { kind: 'reconciliationInvalidRequest', message: 'The reviewed reconciliation request contains an unsafe path.' };
+    }
+    if (selection.resolution !== 'KeepLocal' && selection.resolution !== 'AcceptRemote') {
+      return { kind: 'reconciliationUnsupportedResolution', message: 'The selected reconciliation resolution is not supported.' };
+    }
+  }
+
+  const preconditionPaths = new Set();
+  for (const precondition of request.remotePreconditions) {
+    if (!precondition
+        || typeof precondition.path !== 'string'
+        || preconditionPaths.has(precondition.path)
+        || !paths.has(precondition.path)
+        || (precondition.expectedRemoteObjectId !== null
+          && !isSafeRemoteSnapshotObjectId(precondition.expectedRemoteObjectId))) {
+      return { kind: 'reconciliationInvalidRequest', message: 'The reviewed reconciliation preconditions are not valid.' };
+    }
+    preconditionPaths.add(precondition.path);
+  }
+
+  return null;
+}
+
+async function readReviewedReconciliationEntries(git, fs, dir, remoteRef) {
+  const entries = new Map();
+  const pending = [];
+  await git.walk({
+    fs,
+    dir,
+    trees: [git.TREE({ ref: remoteRef })],
+    map: (filepath, treeEntries) => {
+      const pendingEntry = (async () => {
+        if (!filepath || filepath === '.') {
+          return;
+        }
+        const entry = treeEntries[0];
+        const type = entry ? await entry.type() : 'absent';
+        if (type !== 'blob' && type !== 'tree' && type !== 'absent') {
+          throw reconciliationError('reconciliationDataMalformed');
+        }
+        const oid = type === 'absent' ? null : await entry.oid();
+        if (type === 'blob' && !isSafeRemoteSnapshotObjectId(oid)) {
+          throw reconciliationError('reconciliationDataMalformed');
+        }
+        entries.set(`/${filepath}`, { type, oid });
+      })();
+      pending.push(pendingEntry);
+      return pendingEntry;
+    }
+  });
+  await Promise.all(pending);
+  return entries;
+}
+
+async function captureReviewedReconciliationFile(fs, dir, path) {
+  const filePath = joinRepositoryPath(dir, path);
+  try {
+    const content = await fs.promises.readFile(filePath);
+    if (!(content instanceof Uint8Array) || content.byteLength > maxEditableTextBytes) {
+      throw reconciliationError('reconciliationUnsupportedResolution');
+    }
+    return { path, exists: true, content };
+  } catch (error) {
+    if (error?.code === 'ENOENT' || /NotFoundError/i.test(error?.name || '')) {
+      return { path, exists: false, content: null };
+    }
+    throw error;
+  }
+}
+
+async function unlinkReviewedReconciliationFile(fs, filePath) {
+  try {
+    await fs.promises.unlink(filePath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT' && !/NotFoundError/i.test(error?.name || '')) {
+      throw error;
+    }
+  }
+}
+
+async function restoreReviewedReconciliationFiles(fs, dir, backups) {
+  for (const backup of backups.reverse()) {
+    const filePath = joinRepositoryPath(dir, backup.path);
+    if (!backup.exists) {
+      await unlinkReviewedReconciliationFile(fs, filePath);
+      continue;
+    }
+    await mkdirp(fs, filePath.slice(0, filePath.lastIndexOf('/')));
+    await fs.promises.writeFile(filePath, backup.content);
+  }
+}
+
+function reconciliationError(kind) {
+  const error = new Error('Reviewed reconciliation operation failed.');
+  error.reconciliationKind = kind;
+  return error;
 }
 
 async function captureSynchronizationRefs(git, fs, dir, branch, remoteRef) {

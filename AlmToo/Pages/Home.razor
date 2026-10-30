@@ -238,6 +238,105 @@
             }
         </section>
 
+        <section class="reconciliation-panel" aria-labelledby="reconciliation-heading">
+            <div class="reconciliation-panel__heading">
+                <div><p class="helper-text">Conflict safety</p><h2 id="reconciliation-heading">Review remote changes</h2></div>
+                <button class="secondary-action" type="button" @onclick="ReviewReconciliationAsync" disabled="@State.IsBusy">
+                    @(IsOperation(WorkspaceOperation.ReviewReconciliation) ? "Inspecting..." : "Inspect remote changes")
+                </button>
+            </div>
+
+            <div class="reconciliation-state" data-reconciliation-status="@State.ReconciliationStatus" data-reconciliation-phase="@State.Operation" aria-live="polite">
+                <span>Phase: @State.ReconciliationStatus</span>
+                @if (State.ReconciliationRetryable)
+                {
+                    <span data-reconciliation-retryable="true">Retry available</span>
+                }
+            </div>
+
+            @if (IsOperation(WorkspaceOperation.ReviewReconciliation) || IsOperation(WorkspaceOperation.ApplyReconciliation))
+            {
+                <p class="status-message info" data-reconciliation-progress="@State.Operation" role="status" aria-live="polite">
+                    @(IsOperation(WorkspaceOperation.ApplyReconciliation) ? "Applying the explicitly confirmed reconciliation..." : "Inspecting remote changes without modifying this workspace...")
+                </p>
+            }
+
+            @if (State.Reconciliation is { } reconciliation)
+            {
+                <p class="reconciliation-message" data-reconciliation-message="true">@reconciliation.Message</p>
+                @if (reconciliation.ApplyMetadata is { } metadata)
+                {
+                    <dl class="reconciliation-metadata" aria-label="Reconciliation review metadata">
+                        <div><dt>Review</dt><dd data-reconciliation-review-id="true">@metadata.ReviewId</dd></div>
+                        <div><dt>Source revision</dt><dd data-reconciliation-source-revision="true">@metadata.SourceRevision</dd></div>
+                        <div><dt>Changed paths</dt><dd data-reconciliation-change-count="true">@metadata.BoundedChangeCount</dd></div>
+                    </dl>
+                }
+
+                @if (reconciliation.Changes.Count > 0)
+                {
+                    <ul class="reconciliation-changes" aria-label="Remote reconciliation changes">
+                        @foreach (var change in reconciliation.Changes)
+                        {
+                            <li data-reconciliation-change="@change.Path">
+                                <span data-reconciliation-change-kind="@change.Kind">@change.Kind</span>
+                                <code>@change.Path</code>
+                                @if (change.AllowedResolutions.Count > 0)
+                                {
+                                    <label>
+                                        Resolution for @change.Path
+                                        <select aria-label="Resolution for @change.Path"
+                                                value="@GetReconciliationSelection(change.Path)"
+                                                @onchange="@(args => SetReconciliationSelection(change, args))"
+                                                disabled="@(State.ReconciliationSelection is not null || State.IsBusy)">
+                                            <option value="">Choose resolution</option>
+                                            @foreach (var resolution in change.AllowedResolutions)
+                                            {
+                                                <option value="@resolution">@resolution</option>
+                                            }
+                                        </select>
+                                    </label>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <p class="reconciliation-panel__placeholder">No changed paths were reported by the bounded remote snapshot.</p>
+                }
+
+                @if (State.ReconciliationSelection is null && CanSelectReconciliation)
+                {
+                    <form class="reconciliation-form" @onsubmit="SelectReconciliationAsync" @onsubmit:preventDefault="true">
+                        <button class="secondary-action" type="submit">Review selected resolutions</button>
+                    </form>
+                }
+                else if (State.ReconciliationSelection is { } selection)
+                {
+                    <form class="reconciliation-form" @onsubmit="ApplyReconciliationAsync" @onsubmit:preventDefault="true">
+                        <label class="reconciliation-confirmation" for="confirm-reconciliation">
+                            <input id="confirm-reconciliation" type="checkbox" checked="@State.ReconciliationApplyConfirmed" @onchange="ConfirmReconciliationApply" disabled="@State.IsBusy" />
+                            <span>I confirm these exact resolutions may be applied to this browser-local workspace.</span>
+                        </label>
+                        <p class="field-help" data-reconciliation-selected-count="true">@selection.Selections.Count selected resolution(s); no remote write occurs until confirmation.</p>
+                        <button class="primary-action" type="submit" disabled="@(!CanApplyReconciliation)">
+                            @(IsOperation(WorkspaceOperation.ApplyReconciliation) ? "Applying..." : "Apply reviewed reconciliation")
+                        </button>
+                    </form>
+                }
+            }
+            else
+            {
+                <p class="reconciliation-panel__placeholder">Inspect remote changes before selecting a bounded resolution. Inspection does not modify local files.</p>
+            }
+
+            @if (State.Result is { Operation: WorkspaceOperation.ReviewReconciliation or WorkspaceOperation.ApplyReconciliation } && State.ReconciliationFailureKind is not null)
+            {
+                <p class="status-message error" data-reconciliation-failure="@State.ReconciliationFailureKind" role="alert" aria-live="assertive">@State.Result.Message</p>
+            }
+        </section>
+
         <section class="file-preview file-editor" aria-labelledby="file-editor-heading">
             <div><p class="helper-text">Selected file path</p><h2 id="file-editor-heading">@(State.SelectedFilePath ?? "No file selected")</h2></div>
             @if (IsOperation(WorkspaceOperation.LoadFile))
@@ -274,10 +373,15 @@
     private string repositoryUrl = string.Empty;
     private string credentialInput = string.Empty;
     private bool synchronizationConfirmed;
+    private readonly Dictionary<string, WorkspaceReconciliationResolution> reconciliationSelections = new(StringComparer.Ordinal);
     private WorkspaceState State => Workspace.State;
     private bool IsOperation(WorkspaceOperation operation) => State.Operation == operation;
     private bool CanPush => State.PushReview is not null && State.PushConfirmed && State.HasCredential && !State.IsBusy;
     private bool CanApplySynchronization => State.SynchronizationReview is not null && IsSynchronizationDecision("ReadyToApply") && synchronizationConfirmed && !State.IsBusy;
+    private bool CanSelectReconciliation => State.Reconciliation is { Status: WorkspaceReconciliationStatus.Ready or WorkspaceReconciliationStatus.RequiresResolution, ApplyMetadata: not null } reconciliation
+        && reconciliation.Changes.Where(change => change.AllowedResolutions.Count > 0).All(change => reconciliationSelections.ContainsKey(change.Path))
+        && !State.IsBusy;
+    private bool CanApplyReconciliation => State.ReconciliationSelection is not null && State.ReconciliationApplyConfirmed && !State.IsBusy;
     private string? SynchronizationDecisionCode => State.SynchronizationDecision?.ToString();
     private string SynchronizationStatusCssClass => $"status-message {(State.SynchronizationFailureCode is null ? "success" : "error")}";
     private string? SynchronizationMessage => State.SynchronizationFailureCode switch
@@ -333,6 +437,55 @@
     {
         synchronizationConfirmed = false;
         await Workspace.ReviewSynchronizationAsync();
+    }
+
+    private string GetReconciliationSelection(string path) => reconciliationSelections.TryGetValue(path, out var resolution) ? resolution.ToString() : string.Empty;
+
+    private void SetReconciliationSelection(WorkspaceReconciliationChange change, ChangeEventArgs args)
+    {
+        if (Enum.TryParse<WorkspaceReconciliationResolution>(args.Value?.ToString(), out var resolution)
+            && change.AllowedResolutions.Contains(resolution))
+        {
+            reconciliationSelections[change.Path] = resolution;
+        }
+        else
+        {
+            reconciliationSelections.Remove(change.Path);
+        }
+    }
+
+    private async Task ReviewReconciliationAsync()
+    {
+        reconciliationSelections.Clear();
+        await Workspace.ReviewReconciliationAsync("origin/main");
+    }
+
+    private async Task SelectReconciliationAsync()
+    {
+        if (!CanSelectReconciliation || State.Reconciliation?.ApplyMetadata is not { } metadata)
+        {
+            return;
+        }
+
+        var applicable = State.Reconciliation.Changes.Where(change => change.AllowedResolutions.Count > 0).ToArray();
+        var request = new WorkspaceReconciliationApplyRequest(
+            metadata.ReviewId,
+            metadata.SourceRevision,
+            applicable.Select(change => new WorkspaceReconciliationResolutionSelection(change.Path, reconciliationSelections[change.Path])).ToArray(),
+            applicable.Select(change => new WorkspaceReconciliationRemotePrecondition(change.Path, null)).ToArray(),
+            ExplicitlyConfirmed: false);
+        Workspace.SelectReconciliationResolutions(request);
+        await Task.CompletedTask;
+    }
+
+    private void ConfirmReconciliationApply(ChangeEventArgs args) => Workspace.ConfirmReconciliationApply(args.Value is true || string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase));
+
+    private async Task ApplyReconciliationAsync()
+    {
+        if (CanApplyReconciliation)
+        {
+            await Workspace.ApplyReviewedReconciliationAsync();
+        }
     }
 
     private async Task ApplySynchronizationAsync()

@@ -1157,6 +1157,106 @@ test('Git-Bug write requests fail closed for invalid format and revision conflic
   assert.doesNotMatch(JSON.stringify({ invalid, conflict }), /stale-revision|refs\/bugs|[a-f0-9]{40}/i);
 });
 
+test('getRemoteSnapshot returns stable sorted metadata without checkout, fetch, or writes', async () => {
+  const commitId = 'a'.repeat(40);
+  const treeId = 'b'.repeat(40);
+  const nestedTreeId = 'c'.repeat(40);
+  const parentId = 'd'.repeat(40);
+  const blobA = 'e'.repeat(40);
+  const blobB = 'f'.repeat(40);
+  let checkoutCalls = 0;
+  let fetchCalls = 0;
+  let writeCalls = 0;
+  let commitCalls = 0;
+  let pushCalls = 0;
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async fetch() { fetchCalls += 1; },
+      async resolveRef({ ref }) {
+        assert.equal(ref, 'refs/remotes/origin/main');
+        return commitId;
+      },
+      async readCommit({ oid }) {
+        assert.equal(oid, commitId);
+        return {
+          commit: {
+            tree: treeId,
+            parent: [parentId],
+            message: 'Remote review',
+            author: { name: 'Example Author', timestamp: 1790596800 }
+          }
+        };
+      },
+      async readTree({ oid }) {
+        if (oid === treeId) {
+          return { tree: [
+            { type: 'blob', path: 'z.txt', oid: blobB, mode: '100644' },
+            { type: 'tree', path: 'nested', oid: nestedTreeId, mode: '040000' }
+          ] };
+        }
+        assert.equal(oid, nestedTreeId);
+        return { tree: [{ type: 'blob', path: 'a.txt', oid: blobA, mode: '100644' }] };
+      },
+      async readBlob({ oid }) {
+        return { blob: new Uint8Array(oid === blobA ? 7 : 12) };
+      },
+      async checkout() { checkoutCalls += 1; },
+      async writeFile() { writeCalls += 1; },
+      async commit() { commitCalls += 1; },
+      async push() { pushCalls += 1; }
+    }
+  });
+
+  const result = await engine.getRemoteSnapshot({ remoteRef: 'origin/main', maximumEntries: 10 });
+
+  assert.equal(result.succeeded, true);
+  assert.equal(result.operation, 'git.remote.snapshot');
+  assert.equal(result.value.ref.objectId, commitId);
+  assert.equal(result.value.commit.treeId, treeId);
+  assert.deepEqual(result.value.blobs.map(blob => [blob.path, blob.objectId, blob.sizeBytes]), [
+    ['/nested/a.txt', blobA, 7],
+    ['/z.txt', blobB, 12]
+  ]);
+  assert.equal(result.value.boundedBlobCount, 2);
+  assert.equal(fetchCalls, 0);
+  assert.equal(checkoutCalls, 0);
+  assert.equal(writeCalls, 0);
+  assert.equal(commitCalls, 0);
+  assert.equal(pushCalls, 0);
+});
+
+test('getRemoteSnapshot rejects secret-shaped, unsupported, malformed, and oversized inputs without mutation', async () => {
+  let resolveCalls = 0;
+  let readBlobCalls = 0;
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async resolveRef() {
+        resolveCalls += 1;
+        const error = new Error('network response contains token=secret');
+        error.code = 'NotFoundError';
+        throw error;
+      },
+      async readBlob() {
+        readBlobCalls += 1;
+        return { blob: new Uint8Array(2 * 1024 * 1024 + 1) };
+      }
+    }
+  });
+
+  const secret = await engine.getRemoteSnapshot({ remoteRef: 'origin/main?token=secret', maximumEntries: 10 });
+  assert.equal(secret.succeeded, false);
+  assert.equal(secret.failureKind, 'remoteSnapshotInvalidRequest');
+  assert.equal(secret.diagnostic, null);
+  assert.doesNotMatch(JSON.stringify(secret), /token=secret/);
+  assert.equal(resolveCalls, 0);
+
+  const unsupported = await engine.getRemoteSnapshot({ remoteRef: 'origin/main', maximumEntries: 10 });
+  assert.equal(unsupported.succeeded, false);
+  assert.equal(unsupported.failureKind, 'remoteSnapshotUnsupportedReference');
+  assert.equal(unsupported.diagnostic, null);
+  assert.equal(readBlobCalls, 0);
+});
+
 test('Blazor Git service invokes operations exported by the browser Git module', async () => {
   const [serviceSource, moduleSource] = await Promise.all([
     readFile(serviceUrl, 'utf8'),
@@ -1170,6 +1270,7 @@ test('Blazor Git service invokes operations exported by the browser Git module',
     'readTextFile',
     'writeTextFile',
     'getStatus',
+    'getRemoteSnapshot',
     'commit',
     'inspectPush',
     'push'

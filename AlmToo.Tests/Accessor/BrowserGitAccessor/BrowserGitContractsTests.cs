@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Managers.Workspace.Interface;
 using Xunit;
 
 namespace AlmToo.Tests.Accessor.BrowserGitAccessor;
@@ -138,6 +139,44 @@ public sealed class BrowserGitContractsTests
     }
 
     [Fact]
+    public void Reconciliation_contracts_expose_only_review_safe_metadata()
+    {
+        var contractTypes = new[]
+        {
+            typeof(WorkspaceFileComparison),
+            typeof(WorkspaceReconciliationInput),
+            typeof(WorkspaceReconciliationChange),
+            typeof(WorkspaceReconciliationApplyMetadata),
+            typeof(WorkspaceReconciliationResult)
+        };
+
+        foreach (var type in contractTypes)
+        {
+            var propertyNames = type.GetProperties().Select(property => property.Name);
+            Assert.DoesNotContain(propertyNames, name =>
+                name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("exception", StringComparison.OrdinalIgnoreCase));
+        }
+
+        var result = new WorkspaceReconciliationResult(
+            WorkspaceReconciliationStatus.Unavailable,
+            [],
+            "The remote comparison is unavailable.",
+            RequiresExplicitApply: false,
+            FailureKind: WorkspaceReconciliationFailureKind.RemoteUnavailable);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result));
+
+        Assert.Equal(
+            (int)WorkspaceReconciliationFailureKind.RemoteUnavailable,
+            json.RootElement.GetProperty("FailureKind").GetInt32());
+        Assert.DoesNotContain("token", json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("diagnostic", json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Branch_snapshot_contract_accepts_current_empty_and_bounded_choices()
     {
         var emptyRepository = new BranchSnapshot(null, [], 0);
@@ -273,6 +312,66 @@ public sealed class BrowserGitContractsTests
     }
 
     [Fact]
+    public void Remote_snapshot_contract_accepts_stable_path_scoped_metadata_without_secrets()
+    {
+        var commitId = new string('a', 40);
+        var treeId = new string('b', 40);
+        var blobId = new string('c', 40);
+        var snapshot = new RemoteSnapshot(
+            new RemoteSnapshotRef("refs/remotes/origin/main", commitId),
+            new RemoteSnapshotCommit(
+                commitId,
+                treeId,
+                new string('d', 40),
+                "Remote review",
+                "Example Author",
+                DateTimeOffset.Parse("2026-09-28T12:00:00Z")),
+            [new RemoteSnapshotBlob("/README.md", blobId, 12)],
+            1);
+
+        Assert.True(BrowserGitRemoteSnapshotContract.IsValidRequest(new RemoteSnapshotRequest("refs/remotes/origin/main")));
+        Assert.True(BrowserGitRemoteSnapshotContract.IsValidSnapshot(snapshot));
+        Assert.Equal("refs/remotes/origin/main", snapshot.RemoteRef);
+        Assert.Equal(commitId, snapshot.SourceRevision);
+        Assert.Equal("git.remote.snapshot", BrowserGitRemoteSnapshotOperations.Read);
+        Assert.DoesNotContain(typeof(RemoteSnapshot).GetProperties(), property =>
+            property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Remote_snapshot_contract_rejects_malformed_duplicate_unsafe_oversized_and_secret_shaped_values()
+    {
+        var commitId = new string('a', 40);
+        var treeId = new string('b', 40);
+        var validCommit = new RemoteSnapshotCommit(commitId, treeId, null, "Message", "Author", DateTimeOffset.UtcNow);
+        var validRef = new RemoteSnapshotRef("refs/remotes/origin/main", commitId);
+        var validBlob = new RemoteSnapshotBlob("/README.md", new string('c', 40), 12);
+
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidRequest(new RemoteSnapshotRequest("refs/remotes/origin/main?token=secret")));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidRequest(new RemoteSnapshotRequest("refs/remotes/origin/main", BrowserGitRemoteSnapshotContract.MaximumEntries + 1)));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidSnapshot(new RemoteSnapshot(
+            validRef,
+            validCommit,
+            [validBlob, validBlob],
+            2)));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidSnapshot(new RemoteSnapshot(
+            validRef,
+            validCommit,
+            [new RemoteSnapshotBlob("/../secrets.txt", validBlob.ObjectId, validBlob.SizeBytes)],
+            1)));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidBlob(validBlob with
+        {
+            SizeBytes = BrowserGitRemoteSnapshotContract.MaximumBlobSizeBytes + 1
+        }));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidCommit(validCommit with { CommitId = "malformed" }));
+        Assert.True(BrowserGitRemoteSnapshotContract.IsValidFailure(GitOperationFailureKind.RemoteSnapshotDataMalformed));
+        Assert.False(BrowserGitRemoteSnapshotContract.IsValidFailure(GitOperationFailureKind.Unknown));
+    }
+
+    [Fact]
     public void Publication_contract_rejects_unsupported_namespaces_deletes_malformed_refs_and_unbounded_sets()
     {
         var objectId = new string('a', 40);
@@ -308,5 +407,50 @@ public sealed class BrowserGitContractsTests
             [validUpdate],
             [validPrecondition],
             BoundedUpdateCount: 2)));
+    }
+
+    [Fact]
+    public void Reviewed_reconciliation_contract_requires_exact_bounded_selections_and_remote_preconditions()
+    {
+        var sourceRevision = new string('a', 40);
+        var remoteObjectId = new string('b', 40);
+        var request = new ReviewedReconciliationApplyRequest(
+            "review-1",
+            sourceRevision,
+            2,
+            [
+                new ReviewedReconciliationSelection("/README.md", "KeepLocal"),
+                new ReviewedReconciliationSelection("/docs/guide.md", "AcceptRemote")
+            ],
+            [
+                new ReviewedReconciliationRemotePrecondition("/README.md", remoteObjectId),
+                new ReviewedReconciliationRemotePrecondition("/docs/guide.md", null)
+            ]);
+
+        Assert.True(BrowserGitReconciliationContract.IsValidRequest(request));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            Selections = [request.Selections[0], request.Selections[0]]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            Selections = [new ReviewedReconciliationSelection("/docs/../secret.txt", "AcceptRemote")]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            Selections = [
+                new ReviewedReconciliationSelection("/README.md", "UnknownResolution"),
+                request.Selections[1]
+            ]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidRequest(request with
+        {
+            RemotePreconditions = [
+                request.RemotePreconditions[0],
+                new ReviewedReconciliationRemotePrecondition("/other.md", null)
+            ]
+        }));
+        Assert.False(BrowserGitReconciliationContract.IsValidFailure(GitOperationFailureKind.Unknown));
+        Assert.True(BrowserGitReconciliationContract.IsValidFailure(GitOperationFailureKind.ReconciliationStaleRemote));
     }
 }

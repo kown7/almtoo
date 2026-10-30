@@ -153,3 +153,75 @@ test('publication contracts allow only reviewed branch and Git-Bug refs with bou
   assert.match(engine, /networkUnavailable/);
   assert.match(engine, /diagnostic: null/);
 });
+
+test('remote snapshot boundary is typed, bounded, and strictly read-only', async () => {
+  const [facet, contracts, service, engine] = await Promise.all([
+    source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'),
+    source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
+    source('wwwroot/js/browserGitEngine.js')
+  ]);
+
+  assert.match(facet, /GetRemoteSnapshotAsync\(RemoteSnapshotRequest request, CancellationToken cancellationToken/);
+  for (const record of ['RemoteSnapshotRequest', 'RemoteSnapshotRef', 'RemoteSnapshotCommit', 'RemoteSnapshotBlob', 'RemoteSnapshot']) {
+    assert.match(contracts, new RegExp(`record ${record}\\b`));
+  }
+  assert.match(contracts, /MaximumEntries = 1000/);
+  assert.match(contracts, /Distinct\(StringComparer\.Ordinal\)/);
+  assert.match(service, /InvokeWithValueAsync<RemoteSnapshotDto, RemoteSnapshot>/);
+  assert.match(service, /BrowserGitRemoteSnapshotContract\.IsValidSnapshot/);
+  assert.match(service, /Diagnostic: null/);
+
+  const remoteSurface = engine.slice(
+    engine.indexOf('export async function getRemoteSnapshot'),
+    engine.indexOf('export async function checkoutBranch'));
+  assert.match(remoteSurface, /resolveRef\(\{ fs, dir, ref: resolvedRef \}\)/);
+  assert.match(remoteSurface, /readCommit/);
+  assert.match(remoteSurface, /readRemoteSnapshotTree/);
+  assert.match(engine, /git\.readTree/);
+  assert.match(engine, /git\.readBlob/);
+  assert.match(remoteSurface, /remoteSnapshotLimitExceeded/);
+  assert.match(remoteSurface, /failureKind,[\s\S]*?null\);/);
+  assert.doesNotMatch(remoteSurface, /fetch\(|checkout\(|writeFile\(|commit\(|push\(|persistFilesystem\(/);
+});
+
+test('reviewed reconciliation apply is preconditioned, bounded, and rollback-safe', async () => {
+  const [facet, contracts, service, engine] = await Promise.all([
+    source('Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs'),
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs'),
+    source('Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs'),
+    source('wwwroot/js/browserGitEngine.js')
+  ]);
+
+  assert.match(facet, /ApplyReviewedReconciliationAsync\(ReviewedReconciliationApplyRequest request/);
+  for (const record of [
+    'ReviewedReconciliationSelection',
+    'ReviewedReconciliationRemotePrecondition',
+    'ReviewedReconciliationApplyRequest',
+    'ReviewedReconciliationApplyReceipt'
+  ]) {
+    assert.match(contracts, new RegExp(`record ${record}\\b`));
+  }
+  assert.match(contracts, /selection\.Resolution is "KeepLocal" or "AcceptRemote"/);
+  assert.match(contracts, /SetEquals\(request\.RemotePreconditions/);
+  assert.match(service, /BrowserGitReconciliationContract\.IsValidRequest/);
+  assert.match(service, /SanitizeReviewedReconciliationResult/);
+  assert.match(service, /ReconciliationStaleRemote/);
+  assert.match(service, /Diagnostic: null/);
+
+  const applySurface = engine.slice(
+    engine.indexOf('export async function applyReviewedReconciliation'),
+    engine.indexOf('async function captureSynchronizationRefs'));
+  assert.match(applySurface, /resolveRef\(\{ fs, dir, ref: remoteRef \}\)/);
+  assert.match(applySurface, /expectedRemoteObjectId/);
+  assert.match(applySurface, /readBlob/);
+  assert.match(applySurface, /writeFile/);
+  assert.match(applySurface, /restoreReviewedReconciliationFiles/);
+  assert.match(applySurface, /persistFilesystem/);
+  assert.match(applySurface, /reconciliationStaleRemote/);
+  assert.match(applySurface, /reconciliationUnsupportedResolution/);
+  assert.match(applySurface, /reconciliationCancelled/);
+  assert.match(applySurface, /failureWithKind\([\s\S]*?, null\)/);
+  assert.doesNotMatch(applySurface, /git\.(?:fetch|push|commit)\s*\(/);
+  assert.doesNotMatch(applySurface, /personalAccessToken|github_pat|credential/i);
+});

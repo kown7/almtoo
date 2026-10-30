@@ -44,6 +44,21 @@ public enum GitOperationFailureKind
     BranchSwitchUnsupportedReference,
     BranchSwitchUnavailable,
     BranchSwitchUnknown,
+    RemoteSnapshotDataUnavailable,
+    RemoteSnapshotDataMalformed,
+    RemoteSnapshotInvalidRequest,
+    RemoteSnapshotUnsupportedReference,
+    RemoteSnapshotLimitExceeded,
+    RemoteSnapshotCancelled,
+    RemoteSnapshotUnknown,
+    ReconciliationInvalidRequest,
+    ReconciliationStaleRemote,
+    ReconciliationUnsupportedResolution,
+    ReconciliationWriteFailed,
+    ReconciliationCancelled,
+    ReconciliationDataMalformed,
+    ReconciliationDataUnavailable,
+    ReconciliationUnknown,
     Unknown
 }
 
@@ -54,6 +69,120 @@ public static class GitBugWriteOperations
     public const string CommentCreate = "gitBug.comment.create";
     public const string WriteReview = "gitBug.write.review";
     public const string WriteCommit = "gitBug.write.commit";
+}
+
+/// <summary>Stable operation names for the reviewed reconciliation write boundary.</summary>
+public static class BrowserGitReconciliationOperations
+{
+    public const string Apply = "git.reconciliation.apply";
+}
+
+/// <summary>One path-scoped resolution selected from a bounded reconciliation review.</summary>
+public sealed record ReviewedReconciliationSelection(string Path, string Resolution);
+
+/// <summary>One path-scoped remote object precondition captured by the review.</summary>
+public sealed record ReviewedReconciliationRemotePrecondition(string Path, string? ExpectedRemoteObjectId);
+
+/// <summary>Credential-free, explicitly reviewed reconciliation input for the Accessor boundary.</summary>
+public sealed record ReviewedReconciliationApplyRequest(
+    string ReviewId,
+    string SourceRevision,
+    int BoundedChangeCount,
+    IReadOnlyList<ReviewedReconciliationSelection> Selections,
+    IReadOnlyList<ReviewedReconciliationRemotePrecondition> RemotePreconditions);
+
+/// <summary>Safe receipt for a bounded reviewed reconciliation apply.</summary>
+public sealed record ReviewedReconciliationApplyReceipt(
+    string ReviewId,
+    string SourceRevision,
+    IReadOnlyList<string> AppliedPaths,
+    int BoundedAppliedPathCount);
+
+/// <summary>Pure bounds and allowlist checks for reviewed reconciliation input and output.</summary>
+public static class BrowserGitReconciliationContract
+{
+    public const int MaximumChanges = 1000;
+    public const int MaximumPathLength = 1024;
+    public const int MaximumReviewIdLength = 128;
+    public const int MaximumSourceRevisionLength = 128;
+    public const int MaximumResolutionLength = 32;
+    public const int MaximumObjectIdLength = 64;
+
+    public static bool IsValidOperation(string? operation) => operation is BrowserGitReconciliationOperations.Apply;
+
+    public static bool IsValidFailure(GitOperationFailureKind kind) => kind is
+        GitOperationFailureKind.ReconciliationInvalidRequest or
+        GitOperationFailureKind.ReconciliationStaleRemote or
+        GitOperationFailureKind.ReconciliationUnsupportedResolution or
+        GitOperationFailureKind.ReconciliationWriteFailed or
+        GitOperationFailureKind.ReconciliationCancelled or
+        GitOperationFailureKind.ReconciliationDataMalformed or
+        GitOperationFailureKind.ReconciliationDataUnavailable or
+        GitOperationFailureKind.ReconciliationUnknown;
+
+    public static bool IsValidRequest(ReviewedReconciliationApplyRequest? request) =>
+        request is not null
+        && IsSafeText(request.ReviewId, MaximumReviewIdLength)
+        && IsObjectId(request.SourceRevision)
+        && request.BoundedChangeCount is >= 0 and <= MaximumChanges
+        && request.Selections is not null
+        && request.Selections.Count <= MaximumChanges
+        && request.Selections.All(IsValidSelection)
+        && HasUniquePaths(request.Selections.Select(selection => selection.Path))
+        && request.RemotePreconditions is not null
+        && request.RemotePreconditions.Count <= MaximumChanges
+        && request.RemotePreconditions.All(IsValidPrecondition)
+        && HasUniquePaths(request.RemotePreconditions.Select(precondition => precondition.Path))
+        && request.Selections.Count == request.RemotePreconditions.Count
+        && request.Selections.Select(selection => selection.Path).ToHashSet(StringComparer.Ordinal)
+            .SetEquals(request.RemotePreconditions.Select(precondition => precondition.Path))
+        && request.BoundedChangeCount == request.Selections.Count;
+
+    public static bool IsValidReceipt(ReviewedReconciliationApplyReceipt? receipt) =>
+        receipt is not null
+        && IsSafeText(receipt.ReviewId, MaximumReviewIdLength)
+        && IsObjectId(receipt.SourceRevision)
+        && receipt.AppliedPaths is not null
+        && receipt.BoundedAppliedPathCount == receipt.AppliedPaths.Count
+        && receipt.BoundedAppliedPathCount <= MaximumChanges
+        && receipt.AppliedPaths.All(path => IsSafePath(path))
+        && HasUniquePaths(receipt.AppliedPaths);
+
+    public static bool IsValidSelection(ReviewedReconciliationSelection? selection) =>
+        selection is not null
+        && IsSafePath(selection.Path)
+        && IsSafeText(selection.Resolution, MaximumResolutionLength)
+        && selection.Resolution is "KeepLocal" or "AcceptRemote";
+
+    public static bool IsValidPrecondition(ReviewedReconciliationRemotePrecondition? precondition) =>
+        precondition is not null
+        && IsSafePath(precondition.Path)
+        && (precondition.ExpectedRemoteObjectId is null || IsObjectId(precondition.ExpectedRemoteObjectId));
+
+    private static bool IsObjectId(string? value) =>
+        value is not null
+        && value.Length is 40 or 64
+        && value.All(Uri.IsHexDigit);
+
+    private static bool IsSafePath(string? value) =>
+        value is not null
+        && value.StartsWith("/", StringComparison.Ordinal)
+        && value.Length <= MaximumPathLength
+        && value.IndexOfAny(['\\', '\0', '\r', '\n']) < 0
+        && !value.Contains('%', StringComparison.Ordinal)
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.Contains("/../", StringComparison.Ordinal)
+        && !value.EndsWith("/..", StringComparison.Ordinal)
+        && value.Split('/').Skip(1).All(segment => segment.Length > 0 && segment is not "." and not "..");
+
+    private static bool IsSafeText(string? value, int maximum) =>
+        value is not null
+        && value.Trim().Length > 0
+        && value.Length <= maximum
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+
+    private static bool HasUniquePaths(IEnumerable<string> paths) =>
+        paths.Distinct(StringComparer.Ordinal).Count() == paths.Count();
 }
 
 public enum GitBugWriteStage
@@ -531,6 +660,137 @@ public record SynchronizationReview(
 public record SynchronizationFailure(
     SynchronizationFailureCategory Category,
     string Message);
+
+/// <summary>Stable operation names for non-mutating remote snapshot reads.</summary>
+public static class BrowserGitRemoteSnapshotOperations
+{
+    public const string Read = "git.remote.snapshot";
+}
+
+/// <summary>Bounded input for a read-only remote-tracking ref snapshot.</summary>
+public sealed record RemoteSnapshotRequest(string RemoteRef, int MaximumEntries = BrowserGitRemoteSnapshotContract.DefaultMaximumEntries);
+
+/// <summary>Safe metadata for the resolved remote ref.</summary>
+public sealed record RemoteSnapshotRef(string Name, string ObjectId);
+
+/// <summary>Safe commit metadata at the resolved remote ref.</summary>
+public sealed record RemoteSnapshotCommit(
+    string CommitId,
+    string TreeId,
+    string? ParentCommitId,
+    string Message,
+    string AuthorName,
+    DateTimeOffset AuthoredAt);
+
+/// <summary>Path-scoped blob metadata; blob contents never cross the Accessor boundary.</summary>
+public sealed record RemoteSnapshotBlob(string Path, string ObjectId, long SizeBytes);
+
+/// <summary>Non-mutating remote comparison snapshot.</summary>
+public sealed record RemoteSnapshot(
+    RemoteSnapshotRef Ref,
+    RemoteSnapshotCommit Commit,
+    IReadOnlyList<RemoteSnapshotBlob> Blobs,
+    int BoundedBlobCount)
+{
+    /// <summary>Stable resolved remote ref name for reconciliation identity.</summary>
+    public string RemoteRef => Ref.Name;
+
+    /// <summary>Stable source revision used to fence later reconciliation review/apply operations.</summary>
+    public string SourceRevision => Ref.ObjectId;
+}
+
+/// <summary>Pure bounds and safety checks for remote comparison snapshots.</summary>
+public static class BrowserGitRemoteSnapshotContract
+{
+    public const int DefaultMaximumEntries = 1000;
+    public const int MaximumEntries = 1000;
+    public const int MaximumRefLength = 256;
+    public const int MaximumObjectIdLength = 64;
+    public const int MaximumPathLength = 1024;
+    public const int MaximumCommitMessageLength = 4096;
+    public const int MaximumAuthorLength = 512;
+    public const long MaximumBlobSizeBytes = 2 * 1024 * 1024;
+
+    public static bool IsValidOperation(string? operation) => operation is BrowserGitRemoteSnapshotOperations.Read;
+
+    public static bool IsValidFailure(GitOperationFailureKind kind) => kind is
+        GitOperationFailureKind.RemoteSnapshotDataUnavailable or
+        GitOperationFailureKind.RemoteSnapshotDataMalformed or
+        GitOperationFailureKind.RemoteSnapshotInvalidRequest or
+        GitOperationFailureKind.RemoteSnapshotUnsupportedReference or
+        GitOperationFailureKind.RemoteSnapshotLimitExceeded or
+        GitOperationFailureKind.RemoteSnapshotCancelled or
+        GitOperationFailureKind.RemoteSnapshotUnknown;
+
+    public static bool IsValidRequest(RemoteSnapshotRequest? request) =>
+        request is not null
+        && request.MaximumEntries is > 0 and <= MaximumEntries
+        && IsSafeRefName(request.RemoteRef);
+
+    public static bool IsValidRef(RemoteSnapshotRef? remoteRef) =>
+        remoteRef is not null
+        && IsSafeRefName(remoteRef.Name)
+        && IsObjectId(remoteRef.ObjectId);
+
+    public static bool IsValidCommit(RemoteSnapshotCommit? commit) =>
+        commit is not null
+        && IsObjectId(commit.CommitId)
+        && IsObjectId(commit.TreeId)
+        && (commit.ParentCommitId is null || IsObjectId(commit.ParentCommitId))
+        && IsSafeText(commit.Message, MaximumCommitMessageLength, allowEmpty: true, allowLineFeeds: true)
+        && IsSafeText(commit.AuthorName, MaximumAuthorLength)
+        && commit.AuthoredAt != default;
+
+    public static bool IsValidBlob(RemoteSnapshotBlob? blob) =>
+        blob is not null
+        && IsSafePath(blob.Path)
+        && IsObjectId(blob.ObjectId)
+        && blob.SizeBytes is >= 0 and <= MaximumBlobSizeBytes;
+
+    public static bool IsValidSnapshot(RemoteSnapshot? snapshot) =>
+        snapshot is not null
+        && IsValidRef(snapshot.Ref)
+        && IsValidCommit(snapshot.Commit)
+        && snapshot.Ref.ObjectId == snapshot.Commit.CommitId
+        && snapshot.BoundedBlobCount == snapshot.Blobs.Count
+        && snapshot.BoundedBlobCount <= MaximumEntries
+        && snapshot.Blobs.All(IsValidBlob)
+        && snapshot.Blobs.Select(blob => blob.Path).Distinct(StringComparer.Ordinal).Count() == snapshot.Blobs.Count;
+
+    private static bool IsObjectId(string? value) =>
+        value is not null
+        && value.Length is 40 or 64
+        && value.Length <= MaximumObjectIdLength
+        && value.All(Uri.IsHexDigit);
+
+    private static bool IsSafeRefName(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= MaximumRefLength
+        && value.IndexOfAny(['\\', '\0', '\r', '\n', ' ', '\t', '~', '^', ':', '?', '*', '[']) < 0
+        && !value.StartsWith("/", StringComparison.Ordinal)
+        && !value.EndsWith("/", StringComparison.Ordinal)
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.Contains("..", StringComparison.Ordinal)
+        && !value.Contains("@{", StringComparison.Ordinal);
+
+    private static bool IsSafePath(string? value) =>
+        value is not null
+        && value.StartsWith("/", StringComparison.Ordinal)
+        && value.Length <= MaximumPathLength
+        && value.IndexOfAny(['\\', '\0', '\r', '\n']) < 0
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.Contains("/../", StringComparison.Ordinal)
+        && !value.EndsWith("/..", StringComparison.Ordinal);
+
+    private static bool IsSafeText(string? value, int maximum, bool allowEmpty = false, bool allowLineFeeds = false) =>
+        value is not null
+        && (allowEmpty || value.Trim().Length > 0)
+        && value.Length <= maximum
+        && value.IndexOf('\0') < 0
+        && value.IndexOf('\r') < 0
+        && (allowLineFeeds || value.IndexOf('\n') < 0);
+}
 
 /// <summary>Stable operation names for bounded branch reads and safe local branch switching.</summary>
 public static class BrowserGitBranchHistoryOperations

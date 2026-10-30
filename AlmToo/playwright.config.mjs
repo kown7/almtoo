@@ -27,8 +27,12 @@ export default defineConfig({
   webServer: {
     command: 'dotnet run --project AlmToo.csproj --urls http://127.0.0.1:5208',
     url: baseURL,
-    // Reuse a manually started local server during development; CI always starts a fresh one.
-    reuseExistingServer: !process.env.CI,
+    // A dev server caches the generated framework asset manifest in memory. Reusing an
+    // orphaned process after a build can serve stale HTML that references missing
+    // dotnet.*.js assets and leave every browser test on the Loading screen. Fresh
+    // startup is the safe default; opt in only when the caller owns a compatible
+    // server process.
+    reuseExistingServer: process.env.PW_REUSE_SERVER === '1',
     timeout: 120_000,
     stdout: 'pipe',
     stderr: 'pipe'

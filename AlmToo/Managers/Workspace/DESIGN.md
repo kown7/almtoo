@@ -92,6 +92,8 @@ The Manager serializes repository operations through `operationGate` and uses ca
 
 `WorkspaceContracts.cs` and `WorkspaceState.cs` are Manager-owned boundary contracts in the folder-mirroring namespace `AlmToo.Managers.Workspace.Interface`. They define the stable `WorkspaceOperation` use-case identifiers, Client-safe `WorkspaceError` and `WorkspaceResult` records, bounded `WorkspaceCommitInput`, the passive `WorkspaceState` root, and the passive nested `GitBugState` feature section. Existing Accessor request/result records remain owned by `AlmToo.Accessor.BrowserGitAccessor.Interface`; the Manager contracts do not duplicate those DTOs.
 
+The reconciliation portion of the boundary is intentionally typed and bounded: `WorkspaceFileComparison` and `WorkspaceReconciliationInput` carry only safe paths/object identifiers, `WorkspaceReconciliationChange` exposes deterministic conflict categories with at most two `WorkspaceReconciliationResolution` choices, and `WorkspaceReconciliationResult` carries a bounded `WorkspaceReconciliationFailureKind` rather than transport diagnostics. `WorkspaceReconciliationApplyMetadata` fences an explicit apply to a reviewed revision and bounded change count; `WorkspaceState.ReconciliationApply` is passive Manager state and never contains credential material. `WorkspaceReconciliationContract` is a pure guard for malformed, duplicate, unsafe, oversized, or credential-shaped values and does not perform I/O.
+
 `WorkspaceError` intentionally carries only a safe message, operation identifier, stable failure category, and cancellation flag. Accessor diagnostics remain below the Manager boundary, including exception type names and `GitOperationResult.Diagnostic` values. The concrete `WorkspaceManager` remains the only Client-facing orchestration surface; no `IWorkspaceManager`, Git-Bug Engine, or Client-to-Accessor dependency was added.
 
 ## Accessor contract audit
@@ -153,7 +155,8 @@ Client -> WorkspaceManager -> ConflictReconciliationEngine
 ```
 
 - `WorkspaceManager` owns inspect, review, explicit apply, cancellation, stale-result protection, and Client-safe state.
-- `ConflictReconciliationEngine` owns deterministic path classification and bounded resolution policy; it does not call browser APIs or render UI.
+- `ConflictReconciliationEngine` owns deterministic path classification and bounded resolution policy; it does not call browser APIs or render UI. It maps absent comparisons to `Unavailable`, malformed values to `Failed` with `MalformedInput`, and unsupported formats to `Unsupported` with `UnsupportedFormat`; only divergent supported paths expose both bounded resolution choices.
+- `ConflictReconciliationEngine` rejects oversized, duplicate, null, and unsafe path inputs without throwing, and returns only contract-valid, sanitized reconciliation state.
 - `IBrowserGitAccessor` remains the platform seam for remote refs, snapshots, tree/blob reads, and later mutation integration.
 - Reconciliation inputs and outputs must contain safe identifiers and paths only; credentials, raw provider diagnostics, and exception type names stay below the Manager boundary.
 - Any new interface requires a genuine platform, substitution, or testing-seam justification and a fresh iDesign review at the affected slice.

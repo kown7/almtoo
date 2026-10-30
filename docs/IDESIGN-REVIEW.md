@@ -67,6 +67,16 @@ The agent must present the current section to the user and stop while it is `PEN
 **User approval:** Explicitly approved by user request to continue on 2026-10-25
 **Review result:** PASS. The consolidation preserves Client -> Manager -> Accessor direction, removes duplicate workspace context ownership, and introduces no Engine or pass-through Manager interface.
 
+## M016 S03 Reviewed reconciliation apply Accessor boundary
+
+**Status:** APPROVED
+**Affected layers:** Manager, Accessor, Resource
+**Dependency direction:** WorkspaceManager -> `IBrowserGitAccessor` -> `BrowserGitAccessor` -> `browserGitEngine.js`
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; add the reviewed reconciliation apply operation to the existing cohesive seam; no new interface.
+**Interface justifications:** `IBrowserGitAccessor` protects the browser Git platform boundary and its fixture-backed substitution seam; a separate reconciliation interface would be a pass-through with no independent implementation or caller.
+**Exceptions or risks:** The Resource revalidates the active remote-tracking ref and path-scoped object IDs before mutation, bounds text/path writes, and restores captured local files after write failure; raw browser/Git diagnostics and credentials remain inside the Accessor/Resource boundary.
+**Review result:** PASS. The reviewed apply remains Manager-orchestrated, Accessor-normalized, and Resource-executed with no Client-to-Accessor path or new decomposition.
+
 ## M015 S03 Accessor facet consolidation
 
 **Status:** APPROVED
@@ -445,3 +455,37 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Verification plan:** Contract and architecture tests enforce dependency direction and typed outcomes; Engine tests cover deterministic classifications and resolution policy; Manager tests cover state transitions, cancellation, stale-result protection, and failure recovery; controlled browser tests cover inspect -> review -> apply, conflict handling, retry, and no secret leakage.
 **Exceptions or risks:** A new Engine is justified because conflict classification is deterministic domain policy rather than browser integration. No other architectural exception is approved. Each slice must re-open this review before implementation if the service, contract, Accessor, Resource, or retained interface boundary materially changes.
 **Result:** PASS
+
+## M016 S02 T01 remote snapshot Accessor review
+
+**Status:** APPROVED
+**Affected layers:** Accessor, Resource (browser Git integration)
+**Dependency direction:** WorkspaceManager -> `IBrowserGitAccessor` -> `BrowserGitAccessor` -> `browserGitEngine.js` Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; extend its existing typed contract with credential-free remote snapshot acquisition. No new pass-through interface.
+**Interface justifications:** `IBrowserGitAccessor` is the existing platform substitution seam for browser Git and remote transport; the snapshot operation belongs on that cohesive boundary because it must own browser cancellation, response validation, bounded failures, and redaction.
+**Ownership decisions:** The Resource performs only non-mutating remote ref/commit/tree/blob reads through isomorphic-git. The Accessor normalizes and validates bounded DTOs and exposes only safe typed snapshot metadata; browser errors, credentials, tokens, URLs beyond the repository identity, and raw transport diagnostics remain below the boundary. WorkspaceManager and the reconciliation Engine consume the typed result without depending on browser or transport details.
+**Interface review:** PASS. No checkout, file write, commit, push, publication, or apply path is reachable from remote inspection. Existing `IGitBugAccessor` and publication/synchronization facets remain unchanged.
+
+## M016 S02 T02 WorkspaceManager remote review implementation review
+
+**Status:** APPROVED
+**Affected layers:** Client, Manager, Engine, Accessor, Resource
+**Dependency direction:** Client -> WorkspaceManager -> ConflictReconciliationEngine and retained IBrowserGitAccessor -> BrowserGitAccessor -> browser Git Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; no new interface.
+**Interface justifications:** `IBrowserGitAccessor` remains the genuine browser/platform substitution seam, while the Manager facet is a cohesive partial implementation rather than a pass-through interface.
+**Ownership decisions:** WorkspaceManager owns repository-context validation, operation gating, cancellation, generation fencing, safe state publication, and mapping typed snapshot data to Engine input. ConflictReconciliationEngine remains deterministic and I/O-free; Accessor and Resource details remain hidden.
+**Interface review:** PASS. Review is read-only and cannot reach checkout, write, commit, push, publication, or apply paths.
+
+## M016 S03 T01 reviewed reconciliation Engine and contract review
+
+**Status:** APPROVED
+**Affected layers:** Manager contract boundary, Engine
+**Dependency direction:** WorkspaceManager -> ConflictReconciliationEngine through Workspace reconciliation contracts
+**Interfaces added or retained:** No interface added; existing `IBrowserGitAccessor` remains outside this pure policy change.
+**Interface justifications:** None; the reviewed apply records are passive contracts and do not introduce a service seam.
+**Ownership decisions:** `ConflictReconciliationEngine` remains stateless, deterministic, credential-free, and I/O-free. It validates exact review identity/source revision, supported path-scoped choices, bounded remote preconditions, and explicit confirmation before returning a deterministic apply plan. WorkspaceManager remains responsible for lifecycle and later Accessor orchestration.
+**Verification placement:** Focused Engine tests cover classifications, both supported divergent resolutions, one-sided choices, deterministic ordering, replay/source mismatch, confirmation, malformed or non-applicable selections, missing metadata, and failed review states.
+**Exceptions:** None.
+
+**Result:** PASS
+
