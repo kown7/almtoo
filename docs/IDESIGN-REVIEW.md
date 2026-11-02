@@ -476,6 +476,19 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Ownership decisions:** WorkspaceManager owns repository-context validation, operation gating, cancellation, generation fencing, safe state publication, and mapping typed snapshot data to Engine input. ConflictReconciliationEngine remains deterministic and I/O-free; Accessor and Resource details remain hidden.
 **Interface review:** PASS. Review is read-only and cannot reach checkout, write, commit, push, publication, or apply paths.
 
+## M017 S01 T01 Git-Bug publication contracts architecture review
+
+**Status:** APPROVED for the autonomous execution lane; this scoped review is the current approval record for contract work.
+**Affected layers:** Manager, Engine, Accessor, Resource; no Client implementation changes.
+**Dependency direction:** Workspace Manager -> stateless GitBugPublicationEngine and retained `IBrowserGitAccessor`/`IGitBugAccessor` -> `BrowserGitAccessor` -> `browserGitEngine.js`.
+**Interfaces added or retained:** Retain the existing cohesive `IBrowserGitAccessor` browser Git transport seam and `IGitBugAccessor` Git-Bug storage seam; add no new interface.
+**Interface justifications:** `IBrowserGitAccessor` protects browser Git and remote transport substitution; `IGitBugAccessor` protects Git-Bug format and issue/comment storage substitution. Neither is a pass-through interface.
+**Ownership decisions:** Manager-facing records expose only bounded status and safe failure categories; the Engine will own deterministic classification and the Accessor contracts will retain exact reviewed updates, refspecs, and remote preconditions. No contract performs I/O or introduces a service boundary.
+**Scope boundary:** This task defines only passive contracts for reviewed `refs/bugs/*` and required `refs/identities/*` publication. It does not broaden to arbitrary refs, branch merge, credentials, transport diagnostics, or silent auto-push.
+**Exceptions or risks:** Git-Bug remote servers may advertise namespace-specific behavior; unsupported or malformed advertisements must fail closed and no unrelated branch refs may enter the reviewed set.
+**Verification plan:** `dotnet build AlmToo.sln --no-restore -warnaserror`; focused contract and architecture tests in the following tasks cover allowlisting, bounded sets, exact refspec direction, and safe failure mapping.
+**Approval basis:** The autonomous execution instruction authorizes proceeding with this scoped, no-new-interface contract review; any materially changed service or interface requires a new scoped review stop.
+
 ## M016 S03 T01 reviewed reconciliation Engine and contract review
 
 **Status:** APPROVED

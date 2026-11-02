@@ -489,6 +489,39 @@ public sealed record GitPublicationReceipt(
     IReadOnlyList<GitRefUpdate> AppliedUpdates,
     int BoundedUpdateCount);
 
+/// <summary>Supported Git-Bug ref families; issue refs require identity support in a publication review.</summary>
+public enum GitBugPublicationRefKind
+{
+    Issue,
+    Identity
+}
+
+/// <summary>One safe Git-Bug ref observed in the local repository or remote advertisement.</summary>
+public sealed record GitBugPublicationRef(
+    string RefName,
+    GitBugPublicationRefKind Kind,
+    string ObjectId);
+
+/// <summary>Only the local-to-remote direction is permitted for reviewed Git-Bug publication.</summary>
+public enum GitBugPublicationRefspecDirection
+{
+    LocalToRemote
+}
+
+/// <summary>Exact refspec coordinates retained from review through the Accessor call.</summary>
+public sealed record GitBugPublicationRefspec(
+    string SourceRef,
+    string DestinationRef,
+    GitBugPublicationRefspecDirection Direction,
+    bool Force = false);
+
+/// <summary>Credential-free Git-Bug publication request. Manager review records must pass these same records to the Accessor.</summary>
+public sealed record GitBugPublicationRequest(
+    string SourceRevision,
+    IReadOnlyList<GitRefUpdate> Updates,
+    IReadOnlyList<GitBugPublicationRefspec> RefSpecs,
+    IReadOnlyList<GitRemotePrecondition> RemotePreconditions);
+
 /// <summary>Pure bounds and allowlist checks for reviewed branch and Git-Bug publication.</summary>
 public static class BrowserGitPublicationContract
 {
@@ -524,6 +557,51 @@ public static class BrowserGitPublicationContract
         && request.RemotePreconditions.Count <= MaximumRemotePreconditions
         && request.RemotePreconditions.All(IsValidRemotePrecondition)
         && HasUniqueRefs(request.RemotePreconditions.Select(precondition => precondition.RefName));
+
+    public static bool IsValidGitBugRef(GitBugPublicationRef? reference) =>
+        reference is not null
+        && Enum.IsDefined(reference.Kind)
+        && IsObjectId(reference.ObjectId)
+        && reference.Kind switch
+        {
+            GitBugPublicationRefKind.Issue => IsAllowedRef(reference.RefName, GitRefNamespace.GitBug)
+                && reference.RefName.StartsWith("refs/bugs/", StringComparison.Ordinal),
+            GitBugPublicationRefKind.Identity => IsAllowedRef(reference.RefName, GitRefNamespace.GitBug)
+                && reference.RefName.StartsWith("refs/identities/", StringComparison.Ordinal),
+            _ => false
+        };
+
+    public static bool IsValidGitBugRefspec(GitBugPublicationRefspec? refspec) =>
+        refspec is not null
+        && Enum.IsDefined(refspec.Direction)
+        && refspec.Direction == GitBugPublicationRefspecDirection.LocalToRemote
+        && !refspec.Force
+        && IsAllowedRef(refspec.SourceRef, GitRefNamespace.GitBug)
+        && IsAllowedRef(refspec.DestinationRef, GitRefNamespace.GitBug)
+        && string.Equals(refspec.SourceRef, refspec.DestinationRef, StringComparison.Ordinal);
+
+    public static bool IsValidGitBugRequest(GitBugPublicationRequest? request) =>
+        request is not null
+        && IsObjectId(request.SourceRevision)
+        && request.Updates is not null
+        && request.Updates.Count is > 0 and <= MaximumUpdates
+        && request.Updates.All(update => IsValidUpdate(update) && update.Namespace == GitRefNamespace.GitBug)
+        && HasUniqueRefs(request.Updates.Select(update => update.RefName))
+        && request.RefSpecs is not null
+        && request.RefSpecs.Count == request.Updates.Count
+        && request.RefSpecs.All(IsValidGitBugRefspec)
+        && HasUniqueRefs(request.RefSpecs.Select(refspec => refspec.SourceRef))
+        && request.RefSpecs.Select(refspec => refspec.SourceRef)
+            .ToHashSet(StringComparer.Ordinal)
+            .SetEquals(request.Updates.Select(update => update.RefName))
+        && request.RemotePreconditions is not null
+        && request.RemotePreconditions.Count == request.Updates.Count
+        && request.RemotePreconditions.Count <= MaximumRemotePreconditions
+        && request.RemotePreconditions.All(IsValidRemotePrecondition)
+        && HasUniqueRefs(request.RemotePreconditions.Select(precondition => precondition.RefName))
+        && request.RemotePreconditions.All(precondition => request.Updates.Any(update =>
+            string.Equals(update.RefName, precondition.RefName, StringComparison.Ordinal)
+            && string.Equals(update.ExpectedOldObjectId, precondition.ExpectedObjectId, StringComparison.Ordinal)));
 
     public static bool IsValidReview(GitPublicationReview? review) =>
         review is not null
