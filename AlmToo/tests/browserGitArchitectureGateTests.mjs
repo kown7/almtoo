@@ -9,6 +9,7 @@ const contractPath = 'Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.
 const gitBugInterfacePath = 'Accessor/BrowserGitAccessor/Interface/IGitBugAccessor.cs';
 const browserGitAccessorPath = 'Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs';
 const browserGitResourcePath = 'wwwroot/js/browserGitEngine.js';
+const publicationEnginePath = 'Engines/Workspace/GitBugPublicationEngine.cs';
 const excludedDirectoryNames = new Set(['bin', 'obj', 'node_modules', 'test-results', 'playwright-report', '.git', '.gsd']);
 const dtoDeclaration = /\b(?:record|enum)\s+(?:GitOperationResult|GitOperationFailureKind|GitBugIssueId|GitBugIssueQuery|GitBugIssueState|GitBugIssuePage|GitBugIssueSummary|GitBugIssueDetail|GitBugComment|RepositoryOpenRequest|RepositoryInfo|FileFilterKind|FilterFilesRequest|FilterFilesResult|UpdateFilesRequest|TextFileUpdate|UpdateFilesResult|RepositoryFileEntry|RepositoryFileKind|TextFileContent|ChangedFile|GitChangeKind|CommitRequest|CommitInfo|PushReview|PushRequest|PushResult|SynchronizationIntent|SynchronizationDecisionState|SynchronizationFailureCategory|SynchronizationRequest|IncomingCommitMetadata|ChangedFileSummary|SynchronizationReview|SynchronizationFailure)\b/;
 
@@ -38,6 +39,7 @@ async function productionSnapshot() {
   return {
     clients: await readSources(clientPaths),
     managers: await readSources(managerPaths),
+    engines: await readSources([publicationEnginePath]),
     accessors: await readSources([...accessorPaths, browserGitResourcePath, 'wwwroot/js/pushCredentialSession.js']),
     contracts: await readSources([contractPath, gitBugInterfacePath]),
     composition: await readSources(['Program.cs']),
@@ -86,6 +88,7 @@ export function inspectArchitecture(snapshot) {
   }
 
   failures.push(...matchingSources(snapshot.accessors, /AlmToo\.(?:Managers|Pages|Components)\b|\b(?:NavigationManager|RenderFragment|EventCallback|RepositoryWorkspaceState|StateChanged|CredentialReplacementRequired|ConfirmPush|AutoRetry)\b/, 'ACCESSOR_WORKFLOW_OR_UI', 'Accessor must not own Manager workflow policy or Client presentation state'));
+  failures.push(...matchingSources(snapshot.engines, /using\s+(?:AlmToo\.Accessor\.BrowserGitAccessor|Microsoft\.JSInterop)|\b(?:BrowserGitAccessor|IGitBugAccessor|IJSRuntime|IJSObjectReference|JSImport|HttpClient|File|Directory)\b|System\.(?:IO|Net)\b/, 'ENGINE_DEPENDENCY_EDGE', 'Git-Bug publication Engine must remain independent of browser, credential, transport, and filesystem dependencies'));
   failures.push(...matchingSources(production, /\b(?:IVersionControlAccessor|VersionControlAccessor|IBrowserGitService|BrowserGitService|IGitPublicationAccessor|IBrowserFileAccessor)\b|AlmToo\.(?:Accessors\.Git|Services\.Git)\b/, 'LEGACY_GIT_ARCHITECTURE', 'legacy Browser Git service or redundant Accessor facet name is forbidden'));
 
   const contract = snapshot.contracts.get(contractPath);
@@ -187,6 +190,7 @@ function fixture(overrides = {}) {
   const base = {
     clients: new Map([['Pages/Home.razor', '@inject WorkspaceManager Workspace']]),
     managers: new Map([['Managers/Workspace/Service/WorkspaceManager.cs', 'public sealed class WorkspaceManager { }']]),
+    engines: new Map([[publicationEnginePath, 'public sealed class GitBugPublicationEngine { }']]),
     accessors: new Map([
       ['Accessor/BrowserGitAccessor/Interface/IBrowserGitAccessor.cs', 'public interface IBrowserGitAccessor { }'],
       [browserGitAccessorPath, 'public sealed class BrowserGitAccessor : IGitBugAccessor { }'],
@@ -217,6 +221,7 @@ test('negative fixtures identify dependency and ownership violations at concrete
   assertViolation(fixture({ clients: new Map([['Components/RepositoryFileBrowser.razor', '@inject IJSRuntime GitRuntime']]) }), 'CLIENT_GIT_INTEROP', 'Components/RepositoryFileBrowser.razor');
   assertViolation(fixture({ managers: new Map([['Managers/Workspace/Service/WorkspaceManager.cs', 'sealed class WorkspaceManager { BillingManager other; }']]) }), 'MANAGER_TO_MANAGER', 'Managers/Workspace/Service/WorkspaceManager.cs');
   assertViolation(fixture({ accessors: new Map([['Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs', 'sealed class BrowserGitAccessor { RepositoryWorkspaceState state; void ConfirmPush() {} }']]) }), 'ACCESSOR_WORKFLOW_OR_UI', 'Accessor/BrowserGitAccessor/Service/BrowserGitAccessor.cs');
+  assertViolation(fixture({ engines: new Map([[publicationEnginePath, 'using Microsoft.JSInterop; public sealed class GitBugPublicationEngine { IJSRuntime runtime; }']]) }), 'ENGINE_DEPENDENCY_EDGE', publicationEnginePath);
 });
 
 test('negative fixtures enforce Accessor contract co-location, passive shape, and composition', () => {
