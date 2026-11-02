@@ -504,7 +504,7 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 ---
 ## M017 S03 T01 reviewed Git-Bug publication Manager lifecycle
 
-**Status:** BLOCKED pending explicit approval
+**Status:** APPROVED by explicit user approval on 2026-11-02
 **Affected layers:** Manager, Engine, Accessor, Resource; no Client implementation in this task.
 **Dependency direction:** WorkspaceManager -> GitBugPublicationEngine and retained `IBrowserGitAccessor` -> BrowserGitAccessor -> `browserGitEngine.js` Resource.
 **Interfaces added or retained:** Retain `IBrowserGitAccessor` and `IGitBugAccessor`; add no new interface.
@@ -513,6 +513,19 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Scope boundary:** This review covers the materially changed WorkspaceManager and WorkspaceContracts lifecycle only. It does not authorize Client rendering, new interfaces, Manager-to-Manager calls, arbitrary ref publication, credential exposure, or raw transport diagnostics.
 **Required proof:** Focused Manager tests must cover happy review/confirm/publish, confirmation gating, exact-review revalidation, repository-change reset, unrelated/duplicate/malformed refs, missing identity support, cancellation, stale remote, credential, network, unsupported, and remote-rejection mappings.
 **Exceptions:** None proposed.
-**Approval basis:** The prior M017 S01 approval explicitly covers passive contract work and states that any materially changed service requires a new scoped review stop. This T01 changes WorkspaceManager behavior and therefore requires explicit approval before source implementation begins.
+**Approval basis:** The prior M017 S01 approval explicitly covers passive contract work and states that any materially changed service requires a new scoped review stop. This T01 changes WorkspaceManager behavior and therefore required explicit approval before source implementation began.
 
-**Result:** BLOCKED
+**Result:** PASS
+
+## M017 S03 T02 reviewed Git-Bug publication Client workflow
+
+**Status:** APPROVED by explicit user approval on 2026-11-02
+**Affected layers:** Client, Manager; retained Engine, Accessor, and Resource boundaries are consumed transitively.
+**Dependency direction:** GitBug page and child components -> WorkspaceManager passive state and callbacks -> GitBugPublicationEngine -> retained Accessor interfaces -> BrowserGitAccessor -> browser Git Resource.
+**Interfaces added or retained:** No service interface added or changed for T02; retain `IBrowserGitAccessor` and `IGitBugAccessor`.
+**Interface justifications:** `IBrowserGitAccessor` remains the browser/platform transport substitution seam; `IGitBugAccessor` remains the Git-Bug storage and fixture-backed substitution seam. No Client pass-through interface is introduced.
+**Ownership decisions:** The Client renders Manager-owned review state and invokes separate inspect, confirm, publish, and retry callbacks. WorkspaceManager retains ownership of exact review identity, revalidation, publication, cancellation, stale invalidation, typed failure mapping, and redaction.
+**Scope boundary:** T02 is limited to composing the existing GitBug page, issue detail, and repository commit/publication Client components plus a real Chromium workflow spec. The Client must not construct Accessor requests, call Git-related JavaScript directly, publish implicitly, rediscover refs, or expose credentials, raw server payloads, or transport diagnostics.
+**Approval basis:** Explicit user approval in the active execution conversation on 2026-11-02.
+
+**Result:** PASS

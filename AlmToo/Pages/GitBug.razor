@@ -50,6 +50,8 @@
         || Workspace.State.CreatedCommit is not null
         || Workspace.State.PushReview is not null
         || Workspace.State.PublicationReview is not null
+        || Workspace.State.GitBugPublication is not null
+        || Workspace.State.GitBugPublicationReceipt is not null
         || (Workspace.State.Operation is WorkspaceOperation.ReviewCommit
             or WorkspaceOperation.Commit
             or WorkspaceOperation.ReviewPublication
@@ -151,7 +153,13 @@
         }
     }
     private async Task RefreshRepositoryStatusAsync() => await Workspace.RefreshStatusAsync();
-    private async Task ReviewCommitAsync() => await Workspace.ReviewCommitAsync();
+    private async Task ReviewCommitAsync()
+    {
+        if (await Workspace.ReviewCommitAsync())
+        {
+            await InspectGitBugPublicationFromCurrentReviewAsync();
+        }
+    }
     private async Task ConfirmCommitAsync() => await Workspace.ConfirmLocalCommitAsync();
     private void SetCommitDetails((string Message, string AuthorName, string Email) details) =>
         Workspace.SetProposedCommit(new WorkspaceCommitInput(details.Message, details.AuthorName, details.Email));
@@ -166,13 +174,58 @@
         }
     }
     private async Task RetryPushAsync() => await Workspace.InspectPushAsync();
-    private async Task ReviewPublicationAsync() => await Workspace.ReviewPublicationAsync();
-    private void ConfirmPublicationAsync() => Workspace.ConfirmPublicationReview(true);
-    private async Task PublishPublicationAsync()
+    private async Task ReviewPublicationAsync()
     {
-        await Workspace.PublishReviewedPublicationAsync();
+        if (await Workspace.ReviewPublicationAsync())
+        {
+            await InspectGitBugPublicationFromCurrentReviewAsync();
+        }
     }
-    private async Task RetryPublicationAsync() => await Workspace.ReviewPublicationAsync();
+
+    private async Task InspectGitBugPublicationFromCurrentReviewAsync()
+    {
+        if (Workspace.State.PublicationReview is not { } publicationReview)
+        {
+            return;
+        }
+
+        var updates = publicationReview.Updates
+            .Where(update => update.Namespace == AlmToo.Accessor.BrowserGitAccessor.Interface.GitRefNamespace.GitBug)
+            .Where(update => update.Kind is AlmToo.Accessor.BrowserGitAccessor.Interface.GitRefUpdateKind.Create
+                or AlmToo.Accessor.BrowserGitAccessor.Interface.GitRefUpdateKind.Update)
+            .ToArray();
+        var updateNames = updates.Select(update => update.RefName).ToHashSet(StringComparer.Ordinal);
+        var remoteRefs = publicationReview.RemotePreconditions
+            .Where(precondition => precondition.ExpectedObjectId is not null && updateNames.Contains(precondition.RefName))
+            .Select(precondition => new AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRef(
+                precondition.RefName,
+                GetGitBugRefKind(precondition.RefName),
+                precondition.ExpectedObjectId!))
+            .ToArray();
+        var sourceRevision = Workspace.State.CreatedCommit?.CommitId
+            ?? updates.Select(update => update.NewObjectId).FirstOrDefault()
+            ?? string.Empty;
+        var localRefs = updates
+            .Select(update => new AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRef(
+                update.RefName,
+                GetGitBugRefKind(update.RefName),
+                update.NewObjectId))
+            .ToArray();
+
+        await Workspace.ReviewGitBugPublicationAsync(
+            new WorkspaceGitBugPublicationInput(sourceRevision, localRefs, remoteRefs));
+    }
+
+    private void ConfirmPublicationAsync() => Workspace.ConfirmGitBugPublication(true);
+
+    private async Task PublishPublicationAsync() => await Workspace.PublishGitBugPublicationAsync();
+
+    private async Task RetryPublicationAsync() => await ReviewPublicationAsync();
+
+    private static AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind GetGitBugRefKind(string refName) =>
+        refName.StartsWith("refs/identities/", StringComparison.Ordinal)
+            ? AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Identity
+            : AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Issue;
     private async Task ReplaceCredentialAsync(string credential) => await Workspace.StoreCredentialAsync(credential);
     private void ReturnToIssueList() => Workspace.ReturnToIssueList();
 
