@@ -1,4 +1,5 @@
 using AlmToo.Accessor.BrowserGitAccessor.Interface;
+using AlmToo.Engines.Workspace;
 using AlmToo.Managers.Workspace.Interface;
 
 namespace AlmToo.Managers.Workspace;
@@ -10,6 +11,9 @@ public sealed partial class WorkspaceManager : IDisposable
     private readonly IGitBugAccessor gitBugAccessor;
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private CancellationTokenSource? activeOperation;
+    private readonly GitBugPublicationEngine gitBugPublicationEngine = new();
+    private IReadOnlyList<GitBugPublicationRefState> gitBugReviewedRemoteRefs = Array.Empty<GitBugPublicationRefState>();
+    private IReadOnlyList<GitBugPublicationRefState> gitBugReviewedLocalRefs = Array.Empty<GitBugPublicationRefState>();
     private bool disposed;
 
     public WorkspaceManager(IBrowserGitAccessor gitAccessor, IGitBugAccessor gitBugAccessor)
@@ -365,6 +369,173 @@ public sealed partial class WorkspaceManager : IDisposable
     public Task<bool> InspectPublicationAsync(CancellationToken cancellationToken = default) =>
         ReviewPublicationAsync(cancellationToken);
 
+    /// <summary>Inspects the current Git-Bug remote advertisement and stores a bounded, Client-safe review.</summary>
+    public Task<bool> ReviewGitBugPublicationAsync(
+        WorkspaceGitBugPublicationInput input,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(WorkspaceOperation.ReviewPublication, async token =>
+        {
+            InvalidateGitBugPublicationReview();
+            if (!RequireRepository())
+            {
+                return false;
+            }
+
+            if (input is null)
+            {
+                return SetGitBugPublicationFailure(
+                    WorkspaceGitBugPublicationStatus.Failed,
+                    WorkspaceGitBugPublicationFailureKind.MalformedInput,
+                    "The Git-Bug publication snapshot is invalid. Refresh the repository and review again.");
+            }
+
+            var repository = State.Repository!;
+            var branch = State.CurrentBranch?.Name;
+            if (string.IsNullOrWhiteSpace(branch))
+            {
+                branch = "main";
+            }
+
+            GitOperationResult<GitBugRemoteInspection> remote;
+            try
+            {
+                remote = await gitAccessor.InspectGitBugRemoteAsync(
+                    new GitBugRemoteInspectionRequest(repository.RepositoryUrl, branch), token);
+            }
+            catch (NotSupportedException)
+            {
+                return SetGitBugPublicationFailure(
+                    WorkspaceGitBugPublicationStatus.Failed,
+                    WorkspaceGitBugPublicationFailureKind.UnsupportedRef,
+                    "Git-Bug publication is not supported by this repository Accessor.");
+            }
+
+            if (!remote.Succeeded || remote.Value is null)
+            {
+                return SetGitBugAccessorFailure(remote.FailureKind);
+            }
+
+            if (!TryMapGitBugRemoteRefs(remote.Value.Refs, out var remoteRefs))
+            {
+                return SetGitBugPublicationFailure(
+                    WorkspaceGitBugPublicationStatus.Failed,
+                    WorkspaceGitBugPublicationFailureKind.UnsupportedRef,
+                    "The remote Git-Bug ref advertisement was not supported safely.");
+            }
+
+            var localRefs = input.LocalRefs
+                .Select(reference => new GitBugPublicationRefState(reference.RefName, reference.ObjectId))
+                .ToArray();
+            var policy = gitBugPublicationEngine.Evaluate(
+                new GitBugPublicationInput(input.SourceRevision, localRefs, remoteRefs));
+            if (policy.Plan is null)
+            {
+                return SetGitBugPolicyFailure(policy);
+            }
+
+            var review = CreateGitBugPublicationReview(repository.RepositoryUrl, branch, input, policy.Plan);
+            gitBugReviewedLocalRefs = localRefs;
+            gitBugReviewedRemoteRefs = remoteRefs;
+            State.GitBugPublicationReceipt = null;
+            State.GitBugPublicationConfirmed = false;
+            State.GitBugPublication = new WorkspaceGitBugPublicationResult(
+                WorkspaceGitBugPublicationStatus.Ready,
+                WorkspaceGitBugPublicationFailureKind.None,
+                "Review the exact Git-Bug refs and explicitly confirm before publishing.",
+                review);
+            return Succeed("The Git-Bug publication review is ready.");
+        }, cancellationToken);
+
+    /// <summary>Alias for UI callers that describe the first phase as passive inspection.</summary>
+    public Task<bool> InspectGitBugPublicationAsync(
+        WorkspaceGitBugPublicationInput input,
+        CancellationToken cancellationToken = default) =>
+        ReviewGitBugPublicationAsync(input, cancellationToken);
+
+    public void ConfirmGitBugPublication(bool confirmed)
+    {
+        State.GitBugPublicationConfirmed = confirmed && State.GitBugPublicationReview is not null;
+        State.Error = null;
+        NotifyChanged();
+    }
+
+    /// <summary>Revalidates the reviewed remote refs and publishes the exact confirmed Accessor request.</summary>
+    public Task<bool> PublishGitBugPublicationAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(WorkspaceOperation.PublishPublication, async token =>
+        {
+            var publication = State.GitBugPublication;
+            var review = publication?.Review;
+            if (!State.GitBugPublicationConfirmed || review is null)
+            {
+                return SetGitBugPublicationFailure(
+                    WorkspaceGitBugPublicationStatus.Failed,
+                    WorkspaceGitBugPublicationFailureKind.MalformedInput,
+                    "Review the exact Git-Bug refs and explicitly confirm before publishing.",
+                    review);
+            }
+
+            var repository = State.Repository;
+            var branch = State.CurrentBranch?.Name ?? "main";
+            if (repository is null
+                || !string.Equals(repository.RepositoryUrl, review.Request.RepositoryUrl, StringComparison.Ordinal)
+                || !string.Equals(branch, review.Request.Branch, StringComparison.Ordinal))
+            {
+                InvalidateGitBugPublicationReview();
+                return SetGitBugPublicationFailure(
+                    WorkspaceGitBugPublicationStatus.StaleSource,
+                    WorkspaceGitBugPublicationFailureKind.StaleSourceRevision,
+                    "The repository context changed after review. Review the current Git-Bug refs again.");
+            }
+
+            GitOperationResult<GitBugRemoteInspection> remote;
+            try
+            {
+                remote = await gitAccessor.InspectGitBugRemoteAsync(
+                    new GitBugRemoteInspectionRequest(repository.RepositoryUrl, review.Request.Branch), token);
+            }
+            catch (NotSupportedException)
+            {
+                return SetGitBugPublicationFailure(
+                    WorkspaceGitBugPublicationStatus.Failed,
+                    WorkspaceGitBugPublicationFailureKind.UnsupportedRef,
+                    "Git-Bug publication is not supported by this repository Accessor.",
+                    review);
+            }
+
+            if (!remote.Succeeded || remote.Value is null)
+            {
+                return SetGitBugAccessorFailure(remote.FailureKind, review, retainReview: true);
+            }
+
+            if (!TryMapGitBugRemoteRefs(remote.Value.Refs, out var latestRemoteRefs)
+                || !latestRemoteRefs.SequenceEqual(gitBugReviewedRemoteRefs))
+            {
+                InvalidateGitBugPublicationReview();
+                return SetGitBugPublicationFailure(
+                    WorkspaceGitBugPublicationStatus.StaleSource,
+                    WorkspaceGitBugPublicationFailureKind.StaleSourceRevision,
+                    "The remote Git-Bug refs changed after review. Review the current refs before retrying.");
+            }
+
+            State.GitBugPublicationConfirmed = false;
+            var result = await gitAccessor.PublishGitBugAsync(review.Request, token);
+            if (!result.Succeeded || result.Value is null)
+            {
+                return SetGitBugAccessorFailure(result.FailureKind, review, retainReview: true);
+            }
+
+            State.GitBugPublicationReceipt = result.Value;
+            State.GitBugPublication = new WorkspaceGitBugPublicationResult(
+                WorkspaceGitBugPublicationStatus.Ready,
+                WorkspaceGitBugPublicationFailureKind.None,
+                "The reviewed Git-Bug refs were published safely.",
+                review);
+            return Succeed("The reviewed Git-Bug refs were published safely.");
+        }, cancellationToken);
+
+    public Task<bool> PublishReviewedGitBugPublicationAsync(CancellationToken cancellationToken = default) =>
+        PublishGitBugPublicationAsync(cancellationToken);
+
     public void ConfirmPublicationReview(bool confirmed)
     {
         State.PublicationConfirmed = confirmed && State.PublicationReview is not null;
@@ -617,6 +788,7 @@ public sealed partial class WorkspaceManager : IDisposable
 
     private async Task<bool> RefreshStatusCoreAsync(CancellationToken token)
     {
+        InvalidateGitBugPublicationReview();
         if (!RequireRepository())
         {
             State.ChangedFiles = Array.Empty<ChangedFile>();
@@ -964,6 +1136,7 @@ public sealed partial class WorkspaceManager : IDisposable
         ClearSelection();
         InvalidatePushReview();
         InvalidatePublicationReview();
+        InvalidateGitBugPublicationReview();
     }
 
     private void ClearSelection()
@@ -978,6 +1151,173 @@ public sealed partial class WorkspaceManager : IDisposable
         State.PushReview = null;
         State.PushConfirmed = false;
         State.PushFailureKind = null;
+    }
+
+    private bool SetGitBugPolicyFailure(GitBugPublicationPolicyResult policy, WorkspaceGitBugPublicationReview? review = null)
+    {
+        var status = policy.Status switch
+        {
+            GitBugPublicationStatus.NoChanges => WorkspaceGitBugPublicationStatus.NoChanges,
+            GitBugPublicationStatus.Unsupported => WorkspaceGitBugPublicationStatus.Failed,
+            GitBugPublicationStatus.Stale => WorkspaceGitBugPublicationStatus.StaleSource,
+            GitBugPublicationStatus.Malformed => WorkspaceGitBugPublicationStatus.Failed,
+            _ => WorkspaceGitBugPublicationStatus.Rejected
+        };
+        var failure = policy.FailureKind switch
+        {
+            GitBugPublicationFailureKind.InvalidInput => WorkspaceGitBugPublicationFailureKind.MalformedInput,
+            GitBugPublicationFailureKind.UnsupportedRef => WorkspaceGitBugPublicationFailureKind.UnsupportedRef,
+            GitBugPublicationFailureKind.MissingIdentitySupport => WorkspaceGitBugPublicationFailureKind.MissingIdentitySupport,
+            GitBugPublicationFailureKind.RemoteAhead => WorkspaceGitBugPublicationFailureKind.RemoteAhead,
+            GitBugPublicationFailureKind.StaleReview => WorkspaceGitBugPublicationFailureKind.StaleSourceRevision,
+            GitBugPublicationFailureKind.BoundExceeded => WorkspaceGitBugPublicationFailureKind.LimitExceeded,
+            GitBugPublicationFailureKind.ForceUpdateRequired => WorkspaceGitBugPublicationFailureKind.ForceUpdateDenied,
+            _ => policy.Status == GitBugPublicationStatus.NoChanges
+                ? WorkspaceGitBugPublicationFailureKind.None
+                : WorkspaceGitBugPublicationFailureKind.Unknown
+        };
+        var message = policy.Status switch
+        {
+            GitBugPublicationStatus.NoChanges => "There are no Git-Bug refs to publish.",
+            GitBugPublicationStatus.Unsupported => "The Git-Bug refs are not supported safely for publication.",
+            GitBugPublicationStatus.Stale => "The Git-Bug publication snapshot is stale. Review the current refs again.",
+            _ => "The Git-Bug publication snapshot could not be reviewed safely. Refresh and try again."
+        };
+        return SetGitBugPublicationFailure(status, failure, message, review);
+    }
+
+    private bool SetGitBugAccessorFailure(
+        GitOperationFailureKind? accessorFailure,
+        WorkspaceGitBugPublicationReview? review = null,
+        bool retainReview = false)
+    {
+        (WorkspaceGitBugPublicationStatus status, WorkspaceGitBugPublicationFailureKind failure, string message) = accessorFailure switch
+        {
+            GitOperationFailureKind.GitBugPublicationUnsupported or
+                GitOperationFailureKind.GitBugPublicationCredentialUnavailable
+                => (WorkspaceGitBugPublicationStatus.Failed,
+                    WorkspaceGitBugPublicationFailureKind.UnsupportedRef,
+                    "Git-Bug publication is unavailable for this repository."),
+            GitOperationFailureKind.GitBugPublicationStaleRemote or
+                GitOperationFailureKind.RemoteAhead or
+                GitOperationFailureKind.GitBugWritePreconditionFailed
+                => (WorkspaceGitBugPublicationStatus.StaleSource,
+                    WorkspaceGitBugPublicationFailureKind.StaleSourceRevision,
+                    "The remote Git-Bug refs changed after review. Review the current refs again."),
+            GitOperationFailureKind.GitBugPublicationInvalidRequest
+                => (WorkspaceGitBugPublicationStatus.Failed,
+                    WorkspaceGitBugPublicationFailureKind.MalformedInput,
+                    "The reviewed Git-Bug publication request was invalid."),
+            GitOperationFailureKind.GitBugPublicationRemoteRejected or
+                GitOperationFailureKind.GitBugWriteConflict
+                => (WorkspaceGitBugPublicationStatus.Rejected,
+                    WorkspaceGitBugPublicationFailureKind.UnsafeUpdate,
+                    "The remote rejected the reviewed Git-Bug refs. Review and retry safely."),
+            _ => (WorkspaceGitBugPublicationStatus.Failed,
+                WorkspaceGitBugPublicationFailureKind.Unknown,
+                "The Git-Bug publication service is temporarily unavailable. Review and retry safely.")
+        };
+
+        if (status == WorkspaceGitBugPublicationStatus.StaleSource)
+        {
+            InvalidateGitBugPublicationReview();
+            review = null;
+        }
+
+        return SetGitBugPublicationFailure(status, failure, message, review, accessorFailure);
+    }
+
+    private bool SetGitBugPublicationFailure(
+        WorkspaceGitBugPublicationStatus status,
+        WorkspaceGitBugPublicationFailureKind failure,
+        string message,
+        WorkspaceGitBugPublicationReview? review = null,
+        GitOperationFailureKind? accessorFailure = null)
+    {
+        State.GitBugPublicationConfirmed = false;
+        State.GitBugPublication = new WorkspaceGitBugPublicationResult(status, failure, message, review);
+        State.Error = new(State.Operation, message, accessorFailure);
+        State.Result = new(State.Operation, false, message, accessorFailure);
+        NotifyChanged();
+        return false;
+    }
+
+    private WorkspaceGitBugPublicationReview CreateGitBugPublicationReview(
+        string repositoryUrl,
+        string branch,
+        WorkspaceGitBugPublicationInput input,
+        GitBugPublicationPlan plan)
+    {
+        var updates = plan.RefSpecs.Select(spec => new GitRefUpdate(
+            spec.DestinationRef,
+            GitRefNamespace.GitBug,
+            spec.ChangeKind == GitBugPublicationChangeKind.Create
+                ? GitRefUpdateKind.Create
+                : GitRefUpdateKind.Update,
+            spec.LocalObjectId,
+            spec.ExpectedRemoteObjectId)).ToArray();
+        var preconditions = plan.RefSpecs
+            .Select(spec => new GitRemotePrecondition(spec.DestinationRef, spec.ExpectedRemoteObjectId))
+            .ToArray();
+        var request = new GitBugPublicationRequest(
+            Guid.NewGuid().ToString("N"),
+            repositoryUrl,
+            branch,
+            plan.SourceRevision,
+            updates,
+            preconditions);
+        var issueRefs = input.LocalRefs
+            .Where(reference => reference.Kind == AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Issue)
+            .ToArray();
+        var identityRefs = input.LocalRefs
+            .Where(reference => reference.Kind == AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Identity)
+            .ToArray();
+        return new WorkspaceGitBugPublicationReview(
+            plan.SourceRevision,
+            request,
+            issueRefs,
+            identityRefs,
+            plan.BoundedRefCount);
+    }
+
+    private static bool TryMapGitBugRemoteRefs(
+        IReadOnlyList<GitBugRemoteRef>? refs,
+        out IReadOnlyList<GitBugPublicationRefState> mapped)
+    {
+        var result = new List<GitBugPublicationRefState>();
+        if (refs is null)
+        {
+            mapped = Array.Empty<GitBugPublicationRefState>();
+            return false;
+        }
+
+        foreach (var remoteRef in refs)
+        {
+            if (remoteRef is null
+                || string.IsNullOrWhiteSpace(remoteRef.RefName)
+                || string.IsNullOrWhiteSpace(remoteRef.ObjectId)
+                || remoteRef.Namespace != GitRefNamespace.GitBug
+                || (!remoteRef.RefName.StartsWith("refs/bugs/", StringComparison.Ordinal)
+                    && !remoteRef.RefName.StartsWith("refs/identities/", StringComparison.Ordinal)))
+            {
+                mapped = Array.Empty<GitBugPublicationRefState>();
+                return false;
+            }
+
+            result.Add(new GitBugPublicationRefState(remoteRef.RefName, remoteRef.ObjectId));
+        }
+
+        mapped = result.OrderBy(reference => reference.RefName, StringComparer.Ordinal).ToArray();
+        return true;
+    }
+
+    private void InvalidateGitBugPublicationReview()
+    {
+        State.GitBugPublication = null;
+        State.GitBugPublicationConfirmed = false;
+        State.GitBugPublicationReceipt = null;
+        gitBugReviewedLocalRefs = Array.Empty<GitBugPublicationRefState>();
+        gitBugReviewedRemoteRefs = Array.Empty<GitBugPublicationRefState>();
     }
 
     private void InvalidatePublicationReview()

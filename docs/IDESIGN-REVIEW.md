@@ -501,4 +501,18 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Exceptions:** None.
 
 **Result:** PASS
+---
+## M017 S03 T01 reviewed Git-Bug publication Manager lifecycle
 
+**Status:** BLOCKED pending explicit approval
+**Affected layers:** Manager, Engine, Accessor, Resource; no Client implementation in this task.
+**Dependency direction:** WorkspaceManager -> GitBugPublicationEngine and retained `IBrowserGitAccessor` -> BrowserGitAccessor -> `browserGitEngine.js` Resource.
+**Interfaces added or retained:** Retain `IBrowserGitAccessor` and `IGitBugAccessor`; add no new interface.
+**Interface justifications:** `IBrowserGitAccessor` remains the browser Git/remote transport substitution seam; `IGitBugAccessor` remains the Git-Bug storage and fixture-backed substitution seam. Neither is a pass-through interface.
+**Ownership decisions:** WorkspaceManager owns inspect -> exact review -> explicit confirmation -> immediate revalidation -> publication orchestration, cancellation, stale invalidation, and safe failure mapping. GitBugPublicationEngine remains deterministic and I/O-free; BrowserGitAccessor owns remote inspection/publication integration and redaction; `browserGitEngine.js` remains the Resource.
+**Scope boundary:** This review covers the materially changed WorkspaceManager and WorkspaceContracts lifecycle only. It does not authorize Client rendering, new interfaces, Manager-to-Manager calls, arbitrary ref publication, credential exposure, or raw transport diagnostics.
+**Required proof:** Focused Manager tests must cover happy review/confirm/publish, confirmation gating, exact-review revalidation, repository-change reset, unrelated/duplicate/malformed refs, missing identity support, cancellation, stale remote, credential, network, unsupported, and remote-rejection mappings.
+**Exceptions:** None proposed.
+**Approval basis:** The prior M017 S01 approval explicitly covers passive contract work and states that any materially changed service requires a new scoped review stop. This T01 changes WorkspaceManager behavior and therefore requires explicit approval before source implementation begins.
+
+**Result:** BLOCKED

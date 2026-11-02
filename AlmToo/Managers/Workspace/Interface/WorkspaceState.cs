@@ -22,6 +22,10 @@ public sealed record WorkspaceState
     public IReadOnlyList<ChangedFile> ChangedFiles { get; internal set; } = Array.Empty<ChangedFile>();
     public bool HasChangedFiles => ChangedFiles.Count > 0;
     public GitPublicationReview? PublicationReview { get; internal set; }
+    public WorkspaceGitBugPublicationResult? GitBugPublication { get; internal set; }
+    public WorkspaceGitBugPublicationReview? GitBugPublicationReview => GitBugPublication?.Review;
+    public bool GitBugPublicationConfirmed { get; internal set; }
+    public GitBugPublicationReceipt? GitBugPublicationReceipt { get; internal set; }
     public IReadOnlyList<GitRefUpdate> ChangedRefs => PublicationReview?.Updates ?? Array.Empty<GitRefUpdate>();
     public bool HasChangedRefs => ChangedRefs.Count > 0;
     public bool PublicationReviewLoaded => PublicationReview is not null;
