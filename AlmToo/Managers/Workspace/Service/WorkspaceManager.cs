@@ -452,6 +452,49 @@ public sealed partial class WorkspaceManager : IDisposable
         CancellationToken cancellationToken = default) =>
         ReviewGitBugPublicationAsync(input, cancellationToken);
 
+    /// <summary>
+    /// Projects the exact reviewed Git-Bug subset through the Manager boundary before policy inspection.
+    /// Clients never construct Accessor publication records or rediscover refs.
+    /// </summary>
+    public Task<bool> ReviewGitBugPublicationFromCurrentReviewAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (State.PublicationReview is not { } publicationReview)
+        {
+            return Task.FromResult(false);
+        }
+
+        var updates = publicationReview.Updates
+            .Where(update => update.Namespace == GitRefNamespace.GitBug)
+            .Where(update => update.Kind is GitRefUpdateKind.Create or GitRefUpdateKind.Update)
+            .ToArray();
+        var updateNames = updates.Select(update => update.RefName).ToHashSet(StringComparer.Ordinal);
+        var remoteRefs = publicationReview.RemotePreconditions
+            .Where(precondition => precondition.ExpectedObjectId is not null && updateNames.Contains(precondition.RefName))
+            .Select(precondition => new GitBugPublicationRef(
+                precondition.RefName,
+                precondition.RefName.StartsWith("refs/identities/", StringComparison.Ordinal)
+                    ? AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Identity
+                    : AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Issue,
+                precondition.ExpectedObjectId!))
+            .ToArray();
+        var sourceRevision = State.CreatedCommit?.CommitId
+            ?? updates.Select(update => update.NewObjectId).FirstOrDefault()
+            ?? string.Empty;
+        var localRefs = updates
+            .Select(update => new GitBugPublicationRef(
+                update.RefName,
+                update.RefName.StartsWith("refs/identities/", StringComparison.Ordinal)
+                    ? AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Identity
+                    : AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Issue,
+                update.NewObjectId))
+            .ToArray();
+
+        return ReviewGitBugPublicationAsync(
+            new WorkspaceGitBugPublicationInput(sourceRevision, localRefs, remoteRefs),
+            cancellationToken);
+    }
+
     public void ConfirmGitBugPublication(bool confirmed)
     {
         State.GitBugPublicationConfirmed = confirmed && State.GitBugPublicationReview is not null;

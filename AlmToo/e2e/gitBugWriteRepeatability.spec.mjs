@@ -45,6 +45,8 @@ async function prepareRepeatabilityCommit(page, round, setPhase) {
   await expect(changedRefList).toContainText('refs/bugs/');
   await expect(changedRefList).toContainText('refs/identities/');
   await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Confirm publication' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
   await assertIssueContentExactlyOnce(page, `Deterministic repeatability round ${round}.`);
 }
 
@@ -56,6 +58,12 @@ async function assertCredentialAbsent(page, credential) {
     url: location.href
   }));
   expect(JSON.stringify(browserState)).not.toContain(credential);
+}
+
+async function assertSafeFailurePresentation(page) {
+  const alertText = (await page.getByRole('alert').allTextContents()).join('\n');
+  expect(alertText.length).toBeLessThan(1024);
+  expect(alertText).not.toMatch(/fixture-push-secret|Authorization:|git-receive-pack|controlled remote|stack trace|diagnostic/i);
 }
 
 test('repeats deterministic Git-Bug write and recovery without state leakage', async ({ page }, testInfo) => {
@@ -84,6 +92,7 @@ test('repeats deterministic Git-Bug write and recovery without state leakage', a
       await acceptancePage.getByRole('button', { name: 'Confirm publication' }).click();
       await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
       await expect(acceptancePage.getByRole('alert').first()).toContainText(/credential|permission|rejected/i);
+      await assertSafeFailurePresentation(acceptancePage);
       await assertCredentialAbsent(acceptancePage, credential);
       expect((await remote.snapshot()).refs).toEqual(initialRemote.refs);
 

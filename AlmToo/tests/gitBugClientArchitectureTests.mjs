@@ -46,14 +46,22 @@ test('WorkspaceManager owns repository, publication, and Git-Bug use-cases', asy
   assert.match(page, /OnReviewCommitRequested="ReviewCommitAsync"/);
   assert.match(page, /OnReviewPushRequested="ReviewPushAsync"/);
   assert.match(page, /OnPushRequested="PushAsync"/);
+  assert.match(page, /OnPublicationReviewRequested="ReviewPublicationAsync"/);
+  assert.match(page, /OnPublicationConfirmed="ConfirmPublicationAsync"/);
+  assert.match(page, /OnPublicationRequested="PublishPublicationAsync"/);
+  assert.match(page, /OnRetryPublicationRequested="RetryPublicationAsync"/);
+  assert.match(page, /Workspace\.ReviewGitBugPublicationFromCurrentReviewAsync\(\)/);
+  assert.match(page, /Workspace\.ConfirmGitBugPublication\(true\)/);
+  assert.match(page, /Workspace\.PublishGitBugPublicationAsync\(\)/);
+  assert.doesNotMatch(page, /AlmToo\.Accessor|IGitBugAccessor|BrowserGitAccessor|GitRefUpdate|GitBugPublicationRef|GitPublicationRequest|RemotePrecondition/);
   assert.match(home, /Workspace\.State/);
   assert.match(home, /RepositoryChangedFiles/);
   assert.doesNotMatch(gitBugManager, /^\s*(?:public|private|protected)[^{\n]*(?:Commit|Push)[^{\n]*\(/m);
   assert.match(gitBugState, /public GitBugState GitBug/);
 
   for (const lifecycleMethod of [
-    'ReviewCommitAsync', 'ReviewPublicationAsync', 'SetProposedCommit', 'ConfirmLocalCommitAsync', 'CommitAsync',
-    'InspectPushAsync', 'StoreCredentialAsync', 'PushReviewedCommitAsync', 'PublishReviewedPublicationAsync', 'CancelCurrentOperation'
+    'ReviewCommitAsync', 'ReviewPublicationAsync', 'ReviewGitBugPublicationFromCurrentReviewAsync', 'SetProposedCommit', 'ConfirmLocalCommitAsync', 'CommitAsync',
+    'InspectPushAsync', 'StoreCredentialAsync', 'PushReviewedCommitAsync', 'PublishReviewedPublicationAsync', 'PublishGitBugPublicationAsync', 'ConfirmGitBugPublication', 'CancelCurrentOperation'
   ]) assert.match(repositoryManager, new RegExp(`\\b${lifecycleMethod}\\b`), `missing repository lifecycle owner: ${lifecycleMethod}`);
   assert.match(repositoryState, /GitPublicationReview\? PublicationReview/);
   assert.match(repositoryState, /GitRefUpdate> ChangedRefs/);
@@ -80,6 +88,43 @@ test('Git-Bug page renders every Manager-owned state and delegates intent', asyn
 
   assert.match(page, /Workspace\.StateChanged \+= HandleStateChanged/);
   assert.match(page, /Workspace\.StateChanged -= HandleStateChanged/);
+});
+
+test('reviewed publication is explicit, bounded, and safely retryable', async () => {
+  const [page, manager, recovery, repeatability, workflow] = await Promise.all([
+    source('Pages/GitBug.razor'),
+    source('Managers/Workspace/Service/WorkspaceManager.cs'),
+    source('e2e/gitBugWriteRecovery.spec.mjs'),
+    source('e2e/gitBugWriteRepeatability.spec.mjs'),
+    source('e2e/gitBugWriteWorkflow.spec.mjs')
+  ]);
+
+  assert.match(manager, /ReviewGitBugPublicationFromCurrentReviewAsync\(/);
+  assert.match(manager, /update\.Namespace == GitRefNamespace\.GitBug/);
+  assert.match(manager, /GitRefUpdateKind\.Create or GitRefUpdateKind\.Update/);
+  assert.match(manager, /ToHashSet\(StringComparer\.Ordinal\)/);
+  assert.match(manager, /StartsWith\("refs\/identities\//);
+  assert.match(manager, /InvalidateGitBugPublicationReview\(\)/);
+  assert.match(manager, /remote Git-Bug refs changed after review/);
+  assert.match(manager, /The repository context changed after review/);
+
+  assert.match(page, /ReviewGitBugPublicationFromCurrentReviewAsync\(\)/);
+  assert.match(page, /ConfirmGitBugPublication\(true\)/);
+  assert.match(page, /PublishGitBugPublicationAsync\(\)/);
+  assert.doesNotMatch(page, /new\s+(?:AlmToo\.Accessor|GitBugPublicationRef|GitRefUpdate|GitPublicationRequest)|\.Diagnostic\b|fetch\s*\(/i);
+
+  for (const spec of [recovery, repeatability]) {
+    assert.match(spec, /Confirm publication/);
+    assert.match(spec, /Publish reviewed refs/);
+    assert.match(spec, /Review and retry/);
+    assert.match(spec, /fixture-push-secret/);
+    assert.match(spec, /assertCredential(?:Cleared|Absent)/);
+  }
+  assert.match(recovery, /failureMode: 'auth'/);
+  assert.match(recovery, /failureMode: 'network'/);
+  assert.match(workflow, /Add comment locally/);
+  assert.match(workflow, /Publish reviewed refs\D+toHaveCount\(0\)/);
+  assert.match(workflow, /Review changed files/);
 });
 
 test('issue writes refresh the central repository state without a second publication lifecycle', async () => {

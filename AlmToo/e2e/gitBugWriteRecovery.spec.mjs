@@ -17,6 +17,8 @@ async function openIssueAndPrepareCommit(page, remote, title, setPhase) {
   await expect(changedRefList).toContainText('refs/bugs/');
   await expect(changedRefList).toContainText('refs/identities/');
   await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Confirm publication' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
 }
 
 async function assertCredentialCleared(page, { durable = true } = {}) {
@@ -34,6 +36,12 @@ async function assertCredentialCleared(page, { durable = true } = {}) {
     expect(browserState.local).not.toContain(credential);
     expect(browserState.session).not.toContain(credential);
   }
+}
+
+async function assertSafeFailurePresentation(page) {
+  const alertText = (await page.getByRole('alert').allTextContents()).join('\n');
+  expect(alertText.length).toBeLessThan(1024);
+  expect(alertText).not.toMatch(/fixture-push-secret|Authorization:|git-receive-pack|controlled remote|stack trace|diagnostic/i);
 }
 
 async function pushWithExplicitCredential(page) {
@@ -58,6 +66,7 @@ test.describe('Git-Bug controlled push recovery', () => {
       setPhase('authentication failure');
       await pushWithExplicitCredential(acceptancePage);
       await expect(acceptancePage.getByRole('alert').first()).toContainText(/credential|permission|rejected/i);
+      await assertSafeFailurePresentation(acceptancePage);
       await assertCredentialCleared(acceptancePage, { durable: false });
       const rejectedRemote = await remote.snapshot();
       expect(rejectedRemote.refs).toEqual(initialRemote.refs);
@@ -90,6 +99,7 @@ test.describe('Git-Bug controlled push recovery', () => {
       setPhase('network failure');
       await pushWithExplicitCredential(acceptancePage);
       await expect(acceptancePage.getByRole('alert').first()).toContainText(/network|reached|failed/i);
+      await assertSafeFailurePresentation(acceptancePage);
       await assertCredentialCleared(acceptancePage, { durable: false });
       expect((await remote.snapshot()).refs).toEqual(initialRemote.refs);
       await expect(acceptancePage.getByRole('button', { name: 'Review and retry' })).toBeVisible();
