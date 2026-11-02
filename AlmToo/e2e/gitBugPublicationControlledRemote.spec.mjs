@@ -66,7 +66,7 @@ function assertRemoteOnlyContainsReviewedUpdates(before, after, localAfter, revi
   }
 }
 
-async function assertNoSecrets(page, diagnostics) {
+async function assertNoSecrets(page, diagnostics, { allowedConsoleErrors = [] } = {}) {
   const browserState = await page.evaluate(() => ({
     body: document.body.innerText,
     url: location.href,
@@ -79,7 +79,9 @@ async function assertNoSecrets(page, diagnostics) {
   expect(serialized).not.toContain(rawTransportCommand);
   expect(serialized).not.toMatch(/Authorization:\s*Basic/i);
   expect(diagnostics.pageErrors).toEqual([]);
-  expect(diagnostics.consoleErrors.filter(message => !message.includes('status of 401'))).toEqual([]);
+  const allowedMarkers = ['status of 401', ...allowedConsoleErrors];
+  expect(diagnostics.consoleErrors
+    .filter(message => !allowedMarkers.some(marker => message.includes(marker)))).toEqual([]);
 }
 
 async function publishReviewedRefs(page) {
@@ -90,6 +92,29 @@ async function publishReviewedRefs(page) {
   await expect(page.getByRole('button', { name: 'Publish reviewed refs' })).toBeVisible();
   await page.getByRole('button', { name: 'Publish reviewed refs' }).click();
   await expect(page.getByText('Git-Bug refs published successfully.')).toBeVisible({ timeout: 15_000 });
+}
+
+async function assertCredentialCleared(page) {
+  const browserState = await page.evaluate(() => ({
+    html: document.documentElement.innerHTML,
+    url: location.href,
+    local: JSON.stringify(localStorage),
+    session: JSON.stringify(sessionStorage)
+  }));
+  expect(browserState.html).not.toContain(credential);
+  expect(browserState.url).not.toContain(credential);
+}
+
+async function assertSafeFailurePresentation(page) {
+  const alertText = (await page.getByRole('alert').allTextContents()).join('\\n');
+  expect(alertText.length).toBeLessThan(1024);
+  expect(alertText).not.toMatch(/fixture-push-secret|Authorization:|git-receive-pack|controlled remote|stack trace|diagnostic/i);
+}
+
+async function retryAfterFailure(page) {
+  await page.getByRole('button', { name: 'Review and retry' }).first().click();
+  await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
+  await publishReviewedRefs(page);
 }
 
 test.describe('Git-Bug controlled remote publication', () => {
@@ -186,6 +211,115 @@ test.describe('Git-Bug controlled remote publication', () => {
       await assertNoSecrets(acceptancePage, diagnostics);
       expect(diagnostics.requestFailures).toEqual([]);
       expect(diagnostics.httpErrors.filter(({ status }) => status !== 401)).toEqual([]);
+    });
+  });
+
+  test('fails closed on remote rejection and publishes only after a fresh review retry', async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    await withGitBugAcceptance(page, testInfo, {
+      scenario: 'controlled-remote-non-fast-forward-rejection',
+      credential,
+      remote: {
+        username: 'x-access-token',
+        password: credential,
+        failureMode: 'non-fast-forward'
+      }
+    }, async ({ page: acceptancePage, remote, diagnostics, setPhase }) => {
+      const beforeRemote = await remote.snapshot();
+      await prepareReviewedIssue(
+        acceptancePage,
+        'Non-fast-forward controlled publication issue',
+        'This reviewed publication must be re-reviewed after remote rejection.'
+      );
+
+      setPhase('remote rejection');
+      await publishReviewedRefs(acceptancePage).catch(() => undefined);
+      await expect(acceptancePage.getByRole('alert').first()).toContainText(/rejected|failed|permission|remote/i);
+      await assertSafeFailurePresentation(acceptancePage);
+      await assertCredentialCleared(acceptancePage);
+      await expect(acceptancePage.getByRole('button', { name: 'Review Git-Bug refs' })).toBeVisible();
+      await expect(acceptancePage.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
+
+      const rejectedRemote = await remote.snapshot();
+      expect(rejectedRemote.refs).toEqual(beforeRemote.refs);
+      expect(rejectedRemote.refOids).toEqual(beforeRemote.refOids);
+      expect(rejectedRemote.snapshotDigest).toBe(beforeRemote.snapshotDigest);
+
+      setPhase('remote rejection retry');
+      remote.clearFailureMode();
+      await retryAfterFailure(acceptancePage);
+      await assertNoSecrets(acceptancePage, diagnostics, { allowedConsoleErrors: ['status of 403'] });
+      expect((await remote.snapshot()).requestCount).toBeGreaterThan(beforeRemote.requestCount);
+    });
+  });
+
+  test('recovers from controlled authentication failure only after explicit retry', async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    await withGitBugAcceptance(page, testInfo, {
+      scenario: 'controlled-remote-authentication-recovery',
+      credential,
+      remote: {
+        username: 'x-access-token',
+        password: credential,
+        failureMode: 'auth'
+      }
+    }, async ({ page: acceptancePage, remote, diagnostics, setPhase }) => {
+      const beforeRemote = await remote.snapshot();
+      await prepareReviewedIssue(
+        acceptancePage,
+        'Authentication controlled publication issue',
+        'This publication must retry after a controlled authentication failure.'
+      );
+
+      setPhase('authentication failure');
+      await publishReviewedRefs(acceptancePage).catch(() => undefined);
+      await expect(acceptancePage.getByRole('alert').first()).toContainText(/credential|permission|rejected|failed/i);
+      await assertSafeFailurePresentation(acceptancePage);
+      await assertCredentialCleared(acceptancePage);
+      expect((await remote.snapshot()).refs).toEqual(beforeRemote.refs);
+
+      setPhase('authentication retry');
+      remote.clearFailureMode();
+      await retryAfterFailure(acceptancePage);
+      await assertNoSecrets(acceptancePage, diagnostics);
+      expect(diagnostics.pageErrors).toEqual([]);
+      expect(diagnostics.consoleErrors.filter(message => !message.includes('status of 401'))).toEqual([]);
+      expect((await remote.snapshot()).requestCount).toBeGreaterThan(beforeRemote.requestCount);
+    });
+  });
+
+  test('recovers from transient network failure only after explicit review retry', async ({ page }, testInfo) => {
+    test.setTimeout(90_000);
+    await withGitBugAcceptance(page, testInfo, {
+      scenario: 'controlled-remote-network-recovery',
+      credential,
+      remote: {
+        username: 'x-access-token',
+        password: credential,
+        failureMode: 'network'
+      }
+    }, async ({ page: acceptancePage, remote, diagnostics, setPhase }) => {
+      const beforeRemote = await remote.snapshot();
+      await prepareReviewedIssue(
+        acceptancePage,
+        'Network controlled publication issue',
+        'This publication must retry after a controlled transient network failure.'
+      );
+
+      setPhase('network failure');
+      await publishReviewedRefs(acceptancePage).catch(() => undefined);
+      await expect(acceptancePage.getByRole('alert').first()).toContainText(/network|reached|failed|retry/i);
+      await assertSafeFailurePresentation(acceptancePage);
+      await assertCredentialCleared(acceptancePage);
+      const failedRemote = await remote.snapshot();
+      expect(failedRemote.refs).toEqual(beforeRemote.refs);
+      expect(failedRemote.refOids).toEqual(beforeRemote.refOids);
+
+      setPhase('network retry');
+      remote.clearFailureMode();
+      await retryAfterFailure(acceptancePage);
+      await assertNoSecrets(acceptancePage, diagnostics, { allowedConsoleErrors: ['ERR_FAILED'] });
+      expect((await remote.snapshot()).requestCount).toBeGreaterThan(beforeRemote.requestCount);
     });
   });
 });

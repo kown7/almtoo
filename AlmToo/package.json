@@ -15,6 +15,7 @@
     "test:workflow": "node --test tests/githubPagesWorkflowContractTests.mjs",
     "test:browser": "playwright test e2e/repositoryWorkflow.spec.mjs e2e/credentialSafety.spec.mjs e2e/reconciliationWorkflow.spec.mjs --workers=1",
     "test:git-bug-write": "playwright test e2e/gitBugWriteWorkflow.spec.mjs e2e/gitBugWriteRecovery.spec.mjs e2e/gitBugWriteRepeatability.spec.mjs --project=chromium",
+    "test:git-bug-publication": "playwright test e2e/gitBugPublicationControlledRemote.spec.mjs --project=chromium --workers=1",
     "test:e2e": "playwright test",
     "test:browser:live": "node --env-file-if-exists=$HOME/.config/almtoo/live.env --env-file-if-exists=.env node_modules/@playwright/test/cli.js test e2e/liveSynchronization.spec.mjs"
   },
