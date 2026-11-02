@@ -34,7 +34,7 @@ test.describe('Git-Bug reviewed publication Client', () => {
     await withGitBugAcceptance(page, testInfo, {
       scenario: 'reviewed-publication-ui',
       credential,
-      remote: { username: credential, password: 'x-oauth-basic', failureMode: 'auth' }
+      remote: { username: 'x-access-token', password: credential, failureMode: 'auth' }
     }, async ({ page: acceptancePage, remote, diagnostics }) => {
       await prepareReviewedIssue(acceptancePage);
       await assertSafePublicationSurface(acceptancePage, credential);

@@ -58,12 +58,15 @@ public sealed class GitBugPublicationEngineTests
         var update = engine.Evaluate(new GitBugPublicationInput(SourceRevision, local, remote));
 
         Assert.Equal(GitBugPublicationStatus.Ready, update.Status);
-        var updateSpec = Assert.Single(update.Plan!.RefSpecs);
-        Assert.Equal("refs/bugs/issue-1", updateSpec.SourceRef);
+        Assert.Equal(2, update.Plan!.RefSpecs.Count);
+        var updateSpec = update.Plan.RefSpecs.Single(spec => spec.SourceRef == "refs/bugs/issue-1");
         Assert.Equal(GitBugPublicationChangeKind.Update, updateSpec.ChangeKind);
         Assert.Equal(new string('c', 40), updateSpec.ExpectedRemoteObjectId);
         Assert.False(updateSpec.Force);
-        Assert.Equal(1, update.Plan.BoundedRefCount);
+        var identitySpec = update.Plan.RefSpecs.Single(spec => spec.SourceRef == "refs/identities/alice");
+        Assert.Equal(GitBugPublicationChangeKind.Update, identitySpec.ChangeKind);
+        Assert.Equal(new string('b', 40), identitySpec.ExpectedRemoteObjectId);
+        Assert.Equal(2, update.Plan.BoundedRefCount);
 
         var noop = engine.Evaluate(new GitBugPublicationInput(SourceRevision, local, local));
 
@@ -172,6 +175,29 @@ public sealed class GitBugPublicationEngineTests
         Assert.Equal(GitBugPublicationChangeKind.Update, spec.ChangeKind);
         Assert.False(spec.Force);
         Assert.NotEqual(GitBugPublicationFailureKind.ForceUpdateRequired, result.FailureKind);
+    }
+
+    [Fact]
+    public void Evaluate_keeps_identity_support_in_a_changed_issue_plan_when_identity_is_unchanged()
+    {
+        var result = engine.Evaluate(new GitBugPublicationInput(
+            SourceRevision,
+            [
+                Ref("refs/bugs/issue-1", 'b'),
+                Ref("refs/identities/alice", 'a')
+            ],
+            [
+                Ref("refs/bugs/issue-1", 'a'),
+                Ref("refs/identities/alice", 'a')
+            ]));
+
+        Assert.Equal(GitBugPublicationStatus.Ready, result.Status);
+        Assert.Equal(
+            ["refs/bugs/issue-1", "refs/identities/alice"],
+            result.Plan!.RefSpecs.Select(spec => spec.SourceRef));
+        var identitySpec = result.Plan.RefSpecs.Single(spec => spec.Kind == GitBugPublicationRefKind.Identity);
+        Assert.Equal(GitBugPublicationChangeKind.Update, identitySpec.ChangeKind);
+        Assert.Equal(identitySpec.LocalObjectId, identitySpec.ExpectedRemoteObjectId);
     }
 
     private static GitBugPublicationRefState Ref(string refName, char objectIdPrefix) =>

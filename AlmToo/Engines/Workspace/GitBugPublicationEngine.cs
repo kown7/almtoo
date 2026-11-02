@@ -99,6 +99,20 @@ public sealed class GitBugPublicationEngine
             refSpecs.Add(CreateRefSpec(localRef, remoteRef.ObjectId));
         }
 
+        if (refSpecs.Count > 0 && !refSpecs.Any(spec => spec.Kind == ManagerGitBugPublicationRefKind.Identity))
+        {
+            foreach (var identityRef in local.Values
+                         .Where(IsIdentity)
+                         .OrderBy(reference => reference.RefName, StringComparer.Ordinal))
+            {
+                refSpecs.Add(CreateRefSpec(
+                    identityRef,
+                    remote.TryGetValue(identityRef.RefName, out var remoteIdentity)
+                        ? remoteIdentity.ObjectId
+                        : null));
+            }
+        }
+
         if (refSpecs.Count == 0)
         {
             return new GitBugPublicationPolicyResult(

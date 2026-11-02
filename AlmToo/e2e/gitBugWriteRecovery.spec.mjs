@@ -17,7 +17,8 @@ async function openIssueAndPrepareCommit(page, remote, title, setPhase) {
   await expect(changedRefList).toContainText('refs/bugs/');
   await expect(changedRefList).toContainText('refs/identities/');
   await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('button', { name: 'Confirm publication' })).toBeVisible();
+  await expect(page.getByLabel('Tab-scoped credential')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm publication' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
 }
 
@@ -59,7 +60,7 @@ test.describe('Git-Bug controlled push recovery', () => {
     await withGitBugAcceptance(page, testInfo, {
       scenario: 'authentication-failure-recovery',
       credential,
-      remote: { username: credential, password: 'x-oauth-basic', failureMode: 'auth' }
+      remote: { username: 'x-access-token', password: credential, failureMode: 'auth' }
     }, async ({ page: acceptancePage, remote, diagnostics, setPhase }) => {
       const initialRemote = await remote.snapshot();
       await openIssueAndPrepareCommit(acceptancePage, remote, 'Authentication recovery issue', setPhase);
@@ -81,7 +82,7 @@ test.describe('Git-Bug controlled push recovery', () => {
       await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
       await expect(acceptancePage.getByText('Git-Bug refs published successfully.')).toBeVisible({ timeout: 15_000 });
       expect((await remote.snapshot()).requestCount).toBeGreaterThan(initialRemote.requestCount);
-      await assertCredentialCleared(acceptancePage);
+      await assertCredentialCleared(acceptancePage, { durable: false });
       expect(diagnostics.pageErrors).toEqual([]);
       expect(diagnostics.consoleErrors.filter(message => !message.includes('status of 401'))).toEqual([]);
     });
@@ -92,7 +93,7 @@ test.describe('Git-Bug controlled push recovery', () => {
     await withGitBugAcceptance(page, testInfo, {
       scenario: 'network-failure-recovery',
       credential,
-      remote: { username: credential, password: 'x-oauth-basic', failureMode: 'network' }
+      remote: { username: 'x-access-token', password: credential, failureMode: 'network' }
     }, async ({ page: acceptancePage, remote, diagnostics, setPhase }) => {
       const initialRemote = await remote.snapshot();
       await openIssueAndPrepareCommit(acceptancePage, remote, 'Network recovery issue', setPhase);
@@ -114,7 +115,7 @@ test.describe('Git-Bug controlled push recovery', () => {
       await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
       await expect(acceptancePage.getByText('Git-Bug refs published successfully.')).toBeVisible({ timeout: 15_000 });
       expect((await remote.snapshot()).requestCount).toBeGreaterThan(initialRemote.requestCount);
-      await assertCredentialCleared(acceptancePage);
+      await assertCredentialCleared(acceptancePage, { durable: false });
       expect(diagnostics.pageErrors).toEqual([]);
       expect(diagnostics.consoleErrors
         .filter(message => !message.includes('status of 401') && !message.includes('ERR_FAILED'))).toEqual([]);

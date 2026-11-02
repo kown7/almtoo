@@ -551,7 +551,8 @@ public sealed partial class WorkspaceManager : IDisposable
             }
 
             if (!TryMapGitBugRemoteRefs(remote.Value.Refs, out var latestRemoteRefs)
-                || !latestRemoteRefs.SequenceEqual(gitBugReviewedRemoteRefs))
+                || !latestRemoteRefs.SequenceEqual(gitBugReviewedRemoteRefs)
+                || !MatchesReviewedGitBugRemotePreconditions(review.Request, latestRemoteRefs))
             {
                 InvalidateGitBugPublicationReview();
                 return SetGitBugPublicationFailure(
@@ -1321,6 +1322,37 @@ public sealed partial class WorkspaceManager : IDisposable
             issueRefs,
             identityRefs,
             plan.BoundedRefCount);
+    }
+
+    private static bool MatchesReviewedGitBugRemotePreconditions(
+        GitBugPublicationRequest request,
+        IReadOnlyList<GitBugPublicationRefState> latestRemoteRefs)
+    {
+        var latestByRef = latestRemoteRefs.ToDictionary(
+            reference => reference.RefName,
+            reference => reference.ObjectId,
+            StringComparer.Ordinal);
+
+        foreach (var precondition in request.RemotePreconditions)
+        {
+            var exists = latestByRef.TryGetValue(precondition.RefName, out var latestObjectId);
+            if (precondition.ExpectedObjectId is null)
+            {
+                if (exists)
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!exists || !string.Equals(latestObjectId, precondition.ExpectedObjectId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool TryMapGitBugRemoteRefs(

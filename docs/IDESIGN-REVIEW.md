@@ -529,3 +529,14 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Approval basis:** Explicit user approval in the active execution conversation on 2026-11-02.
 
 **Result:** PASS
+
+## M017 S03 T04 cross-boundary verification, Manager revalidation, and Engine identity-support correction
+
+**Status:** APPROVED by explicit user approval on 2026-11-02
+**Affected layers:** Manager, Engine, Accessor, Client, and browser acceptance Resource tests. The Manager revalidation comparison and Engine publication-plan policy are materially changed; Client and Accessor contracts remain retained and are regression-tested.
+**Dependency direction:** Playwright Resource test harness -> running Git-Bug Client -> WorkspaceManager -> GitBugPublicationEngine -> retained Accessor boundary -> browser Git Resource.
+**Interfaces added or retained:** No interfaces added or changed; retain `IBrowserGitAccessor` and `IGitBugAccessor`.
+**Interface justifications:** `IBrowserGitAccessor` remains the browser/platform transport substitution seam, and `IGitBugAccessor` remains the Git-Bug storage/fixture substitution seam; this correction changes only assertions that consume their existing Client workflow.
+**Ownership and scope:** Update the stale recovery/repeatability browser assertions to follow the implemented credential-first publication lifecycle: review refs, provide or replace the tab-scoped credential, explicitly confirm, then publish or retry. Correct Manager publication revalidation to compare the exact reviewed remote preconditions, including absent-create refs, rather than requiring the bounded review subset to equal the complete remote advertisement. Correct Engine policy to include unchanged or newly-created local identity support refs in a non-empty issue publication plan so the retained Accessor contract can validate and publish the exact bounded request. Do not weaken production safety behavior, bypass explicit confirmation, alter ref construction outside that identity-support rule, or expose diagnostics.
+**Verification boundary:** Re-run the focused publication review, recovery, repeatability, and workflow Chromium specs plus the no-restore .NET and npm suites; retain the existing safe-redaction, exact-review, stale-state, identity-support, and no-mutation assertions.
+**Approval basis:** Awaiting explicit user re-approval because execution revealed a materially changed Manager service contract.
