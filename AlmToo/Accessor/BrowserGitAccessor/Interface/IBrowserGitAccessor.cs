@@ -24,4 +24,38 @@ public interface IBrowserGitAccessor : IAsyncDisposable
     ValueTask<GitOperationResult<bool>> ForgetCredentialAsync(CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<SynchronizationReview>> SynchronizeAsync(SynchronizationRequest request, CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<ReviewedReconciliationApplyReceipt>> ApplyReviewedReconciliationAsync(ReviewedReconciliationApplyRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Passively inspects remote Git-Bug refs without mutation; concrete Accessors override this boundary operation.</summary>
+    ValueTask<GitOperationResult<GitBugRemoteInspection>> InspectGitBugRemoteAsync(
+        GitBugRemoteInspectionRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(
+            BrowserGitPublicationContract.IsValidInspectionRequest(request)
+                ? new GitOperationResult<GitBugRemoteInspection>(
+                    GitBugPublicationOperations.InspectRemote,
+                    false,
+                    "Remote Git-Bug inspection is unavailable.",
+                    FailureKind: GitOperationFailureKind.GitBugPublicationUnsupported)
+                : new GitOperationResult<GitBugRemoteInspection>(
+                    GitBugPublicationOperations.InspectRemote,
+                    false,
+                    "The Git-Bug inspection request is invalid.",
+                    FailureKind: GitOperationFailureKind.GitBugPublicationInvalidRequest));
+
+    /// <summary>Publishes only a validated reviewed Git-Bug request; concrete Accessors override this boundary operation.</summary>
+    ValueTask<GitOperationResult<GitBugPublicationReceipt>> PublishGitBugAsync(
+        GitBugPublicationRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(
+            BrowserGitPublicationContract.IsValidGitBugRequest(request)
+                ? new GitOperationResult<GitBugPublicationReceipt>(
+                    GitBugPublicationOperations.Publish,
+                    false,
+                    "Git-Bug publication is unavailable.",
+                    FailureKind: GitOperationFailureKind.GitBugPublicationUnsupported)
+                : new GitOperationResult<GitBugPublicationReceipt>(
+                    GitBugPublicationOperations.Publish,
+                    false,
+                    "The Git-Bug publication request is invalid.",
+                    FailureKind: GitOperationFailureKind.GitBugPublicationInvalidRequest));
 }

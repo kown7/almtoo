@@ -33,6 +33,12 @@ public enum GitOperationFailureKind
     GitBugWriteUnavailable,
     GitBugWriteSerializationFailed,
     GitBugWriteUnknown,
+    GitBugPublicationCredentialUnavailable,
+    GitBugPublicationInvalidRequest,
+    GitBugPublicationUnsupported,
+    GitBugPublicationCancelled,
+    GitBugPublicationRemoteRejected,
+    GitBugPublicationStaleRemote,
     BranchHistoryDataUnavailable,
     BranchHistoryDataMalformed,
     BranchHistoryInvalidRequest,
@@ -489,38 +495,60 @@ public sealed record GitPublicationReceipt(
     IReadOnlyList<GitRefUpdate> AppliedUpdates,
     int BoundedUpdateCount);
 
-/// <summary>Supported Git-Bug ref families; issue refs require identity support in a publication review.</summary>
+/// <summary>Supported Git-Bug ref families used by the Manager's credential-free policy snapshot.</summary>
 public enum GitBugPublicationRefKind
 {
     Issue,
     Identity
 }
 
-/// <summary>One safe Git-Bug ref observed in the local repository or remote advertisement.</summary>
+/// <summary>One safe Git-Bug ref used by Manager policy; Accessor publication still uses GitRefUpdate.</summary>
 public sealed record GitBugPublicationRef(
     string RefName,
     GitBugPublicationRefKind Kind,
     string ObjectId);
 
-/// <summary>Only the local-to-remote direction is permitted for reviewed Git-Bug publication.</summary>
-public enum GitBugPublicationRefspecDirection
-{
-    LocalToRemote
-}
+/// <summary>Request for passive inspection of the remote Git-Bug ref advertisement.</summary>
+public sealed record GitBugRemoteInspectionRequest(
+    string RepositoryUrl,
+    string Branch);
 
-/// <summary>Exact refspec coordinates retained from review through the Accessor call.</summary>
-public sealed record GitBugPublicationRefspec(
-    string SourceRef,
-    string DestinationRef,
-    GitBugPublicationRefspecDirection Direction,
-    bool Force = false);
+/// <summary>One safe Git-Bug ref observed in a remote advertisement.</summary>
+public sealed record GitBugRemoteRef(
+    string RefName,
+    GitRefNamespace Namespace,
+    string ObjectId);
 
-/// <summary>Credential-free Git-Bug publication request. Manager review records must pass these same records to the Accessor.</summary>
+/// <summary>Credential presence and usage metadata without exposing tab-scoped credential material.</summary>
+public sealed record GitBugCredentialUsage(
+    bool Available,
+    bool Used);
+
+/// <summary>Remote Git-Bug refs and non-sensitive credential metadata returned by passive inspection.</summary>
+public sealed record GitBugRemoteInspection(
+    string RepositoryUrl,
+    string Branch,
+    IReadOnlyList<GitBugRemoteRef> Refs,
+    GitBugCredentialUsage Credential);
+
+/// <summary>Credential-free Git-Bug publication request containing only the reviewed S01 records.</summary>
 public sealed record GitBugPublicationRequest(
+    string ReviewId,
+    string RepositoryUrl,
+    string Branch,
     string SourceRevision,
     IReadOnlyList<GitRefUpdate> Updates,
-    IReadOnlyList<GitBugPublicationRefspec> RefSpecs,
     IReadOnlyList<GitRemotePrecondition> RemotePreconditions);
+
+/// <summary>Safe receipt for a validated Git-Bug publication.</summary>
+public sealed record GitBugPublicationReceipt(
+    string ReviewId,
+    string RepositoryUrl,
+    string Branch,
+    string SourceRevision,
+    IReadOnlyList<GitRefUpdate> AppliedUpdates,
+    GitBugCredentialUsage Credential,
+    int BoundedUpdateCount);
 
 /// <summary>Pure bounds and allowlist checks for reviewed branch and Git-Bug publication.</summary>
 public static class BrowserGitPublicationContract
@@ -558,42 +586,59 @@ public static class BrowserGitPublicationContract
         && request.RemotePreconditions.All(IsValidRemotePrecondition)
         && HasUniqueRefs(request.RemotePreconditions.Select(precondition => precondition.RefName));
 
-    public static bool IsValidGitBugRef(GitBugPublicationRef? reference) =>
-        reference is not null
-        && Enum.IsDefined(reference.Kind)
-        && IsObjectId(reference.ObjectId)
-        && reference.Kind switch
-        {
-            GitBugPublicationRefKind.Issue => IsAllowedRef(reference.RefName, GitRefNamespace.GitBug)
-                && reference.RefName.StartsWith("refs/bugs/", StringComparison.Ordinal),
-            GitBugPublicationRefKind.Identity => IsAllowedRef(reference.RefName, GitRefNamespace.GitBug)
-                && reference.RefName.StartsWith("refs/identities/", StringComparison.Ordinal),
-            _ => false
-        };
+    public static bool IsValidOperation(string? operation) => operation is
+        GitBugPublicationOperations.InspectRemote or
+        GitBugPublicationOperations.Publish;
 
-    public static bool IsValidGitBugRefspec(GitBugPublicationRefspec? refspec) =>
-        refspec is not null
-        && Enum.IsDefined(refspec.Direction)
-        && refspec.Direction == GitBugPublicationRefspecDirection.LocalToRemote
-        && !refspec.Force
-        && IsAllowedRef(refspec.SourceRef, GitRefNamespace.GitBug)
-        && IsAllowedRef(refspec.DestinationRef, GitRefNamespace.GitBug)
-        && string.Equals(refspec.SourceRef, refspec.DestinationRef, StringComparison.Ordinal);
+    public static bool IsValidFailure(GitOperationFailureKind kind) => kind is
+        GitOperationFailureKind.CredentialRejected
+        or GitOperationFailureKind.NetworkUnavailable
+        or GitOperationFailureKind.UnsupportedRef
+        or GitOperationFailureKind.GitBugDataUnavailable
+        or GitOperationFailureKind.GitBugFormatUnsupported
+        or GitOperationFailureKind.GitBugDataMalformed
+        or GitOperationFailureKind.GitBugPublicationCredentialUnavailable
+        or GitOperationFailureKind.GitBugPublicationInvalidRequest
+        or GitOperationFailureKind.GitBugPublicationUnsupported
+        or GitOperationFailureKind.GitBugPublicationCancelled
+        or GitOperationFailureKind.GitBugPublicationRemoteRejected
+        or GitOperationFailureKind.GitBugPublicationStaleRemote;
+
+    public static bool IsValidInspectionRequest(GitBugRemoteInspectionRequest? request) =>
+        request is not null
+        && IsAllowedRepositoryUri(request.RepositoryUrl)
+        && IsSafeBranch(request.Branch);
+
+    public static bool IsValidRemoteRef(GitBugRemoteRef? remoteRef) =>
+        remoteRef is not null
+        && remoteRef.Namespace == GitRefNamespace.GitBug
+        && IsAllowedRef(remoteRef.RefName, GitRefNamespace.GitBug)
+        && IsObjectId(remoteRef.ObjectId);
+
+    public static bool IsValidCredentialUsage(GitBugCredentialUsage? credential) =>
+        credential is not null
+        && (!credential.Used || credential.Available);
+
+    public static bool IsValidInspection(GitBugRemoteInspection? inspection) =>
+        inspection is not null
+        && IsAllowedRepositoryUri(inspection.RepositoryUrl)
+        && IsSafeBranch(inspection.Branch)
+        && inspection.Refs is not null
+        && inspection.Refs.Count <= MaximumUpdates
+        && inspection.Refs.All(IsValidRemoteRef)
+        && HasUniqueRefs(inspection.Refs.Select(remoteRef => remoteRef.RefName))
+        && IsValidCredentialUsage(inspection.Credential);
 
     public static bool IsValidGitBugRequest(GitBugPublicationRequest? request) =>
         request is not null
+        && IsSafeReviewId(request.ReviewId)
+        && IsAllowedRepositoryUri(request.RepositoryUrl)
+        && IsSafeBranch(request.Branch)
         && IsObjectId(request.SourceRevision)
         && request.Updates is not null
         && request.Updates.Count is > 0 and <= MaximumUpdates
         && request.Updates.All(update => IsValidUpdate(update) && update.Namespace == GitRefNamespace.GitBug)
         && HasUniqueRefs(request.Updates.Select(update => update.RefName))
-        && request.RefSpecs is not null
-        && request.RefSpecs.Count == request.Updates.Count
-        && request.RefSpecs.All(IsValidGitBugRefspec)
-        && HasUniqueRefs(request.RefSpecs.Select(refspec => refspec.SourceRef))
-        && request.RefSpecs.Select(refspec => refspec.SourceRef)
-            .ToHashSet(StringComparer.Ordinal)
-            .SetEquals(request.Updates.Select(update => update.RefName))
         && request.RemotePreconditions is not null
         && request.RemotePreconditions.Count == request.Updates.Count
         && request.RemotePreconditions.Count <= MaximumRemotePreconditions
@@ -602,6 +647,57 @@ public static class BrowserGitPublicationContract
         && request.RemotePreconditions.All(precondition => request.Updates.Any(update =>
             string.Equals(update.RefName, precondition.RefName, StringComparison.Ordinal)
             && string.Equals(update.ExpectedOldObjectId, precondition.ExpectedObjectId, StringComparison.Ordinal)));
+
+    public static bool IsValidReceipt(GitBugPublicationReceipt? receipt) =>
+        receipt is not null
+        && IsSafeReviewId(receipt.ReviewId)
+        && IsAllowedRepositoryUri(receipt.RepositoryUrl)
+        && IsSafeBranch(receipt.Branch)
+        && IsObjectId(receipt.SourceRevision)
+        && receipt.AppliedUpdates is not null
+        && receipt.BoundedUpdateCount is > 0 and <= MaximumUpdates
+        && receipt.BoundedUpdateCount == receipt.AppliedUpdates.Count
+        && receipt.AppliedUpdates.All(update => IsValidUpdate(update) && update.Namespace == GitRefNamespace.GitBug)
+        && HasUniqueRefs(receipt.AppliedUpdates.Select(update => update.RefName))
+        && IsValidCredentialUsage(receipt.Credential);
+
+    public static bool IsSafeOutcome<T>(
+        GitOperationResult<T>? result,
+        string operation,
+        Func<T?, bool> validValue) =>
+        result is not null
+        && result.Operation == operation
+        && IsSafeMessage(result.Message)
+        && result.Diagnostic is null
+        && (result.Succeeded
+            ? result.FailureKind is null && validValue(result.Value)
+            : result.Value is null
+                && result.FailureKind is not null
+                && IsValidFailure(result.FailureKind.Value));
+
+    public static GitOperationFailureKind ToOperationFailure(GitBugPublicationFailureCategory category) => category switch
+    {
+        GitBugPublicationFailureCategory.CredentialUnavailable => GitOperationFailureKind.GitBugPublicationCredentialUnavailable,
+        GitBugPublicationFailureCategory.CredentialRejected => GitOperationFailureKind.CredentialRejected,
+        GitBugPublicationFailureCategory.NetworkUnavailable => GitOperationFailureKind.NetworkUnavailable,
+        GitBugPublicationFailureCategory.Unsupported => GitOperationFailureKind.GitBugPublicationUnsupported,
+        GitBugPublicationFailureCategory.StaleRemote => GitOperationFailureKind.GitBugPublicationStaleRemote,
+        GitBugPublicationFailureCategory.RemoteRejected => GitOperationFailureKind.GitBugPublicationRemoteRejected,
+        GitBugPublicationFailureCategory.Cancelled => GitOperationFailureKind.GitBugPublicationCancelled,
+        _ => GitOperationFailureKind.GitBugPublicationInvalidRequest
+    };
+
+    private static bool IsSafeReviewId(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= 128
+        && value.IndexOfAny(['\\', '\0', '\r', '\n', ' ', '\t']) < 0;
+
+    private static bool IsSafeMessage(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= 512
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
 
     public static bool IsValidReview(GitPublicationReview? review) =>
         review is not null
@@ -673,6 +769,26 @@ public static class BrowserGitPublicationContract
             || (repository.Scheme == Uri.UriSchemeHttp
                 && (string.Equals(repository.Host, "localhost", StringComparison.OrdinalIgnoreCase)
                     || IPAddress.TryParse(repository.Host, out var address) && IPAddress.IsLoopback(address))));
+}
+
+/// <summary>Stable operation names for passive Git-Bug inspection and bounded reviewed publication.</summary>
+public static class GitBugPublicationOperations
+{
+    public const string InspectRemote = "gitBug.publication.inspectRemote";
+    public const string Publish = "gitBug.publication.publish";
+}
+
+/// <summary>Safe publication failure categories before they are normalized to GitOperationFailureKind.</summary>
+public enum GitBugPublicationFailureCategory
+{
+    CredentialUnavailable,
+    CredentialRejected,
+    NetworkUnavailable,
+    Unsupported,
+    StaleRemote,
+    RemoteRejected,
+    Cancelled,
+    InvalidRequest
 }
 
 /// <summary>Describes whether synchronization should only inspect or may apply an accepted review.</summary>
