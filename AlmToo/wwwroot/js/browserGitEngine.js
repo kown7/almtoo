@@ -2177,6 +2177,327 @@ function normalizedPublicationFailure(failureKind) {
   };
 }
 
+const gitBugPublicationFailureMessages = Object.freeze({
+  gitBugPublicationInvalidRequest: 'The reviewed Git-Bug publication request is invalid.',
+  gitBugPublicationCredentialUnavailable: 'A credential is required to publish the reviewed Git-Bug refs.',
+  credentialRejected: 'The remote rejected the supplied credentials or repository permission.',
+  networkUnavailable: 'The remote Git-Bug refs could not be reached.',
+  gitBugPublicationUnsupported: 'The remote does not expose a supported Git-Bug ref format.',
+  gitBugPublicationStaleRemote: 'The remote Git-Bug refs changed after review; nothing was published.',
+  gitBugPublicationRemoteRejected: 'The remote rejected the reviewed Git-Bug publication.',
+  gitBugPublicationCancelled: 'The reviewed Git-Bug publication was cancelled.',
+  gitBugDataUnavailable: 'The remote Git-Bug refs could not be read safely.',
+  gitBugDataMalformed: 'The remote returned malformed Git-Bug ref data.'
+});
+
+function gitBugPublicationFailure(operation, failureKind) {
+  return {
+    operation,
+    succeeded: false,
+    message: gitBugPublicationFailureMessages[failureKind] ?? 'The reviewed Git-Bug publication could not be completed safely.',
+    value: null,
+    diagnostic: null,
+    failureKind
+  };
+}
+
+function gitBugPublicationSuccess(operation, message, value) {
+  return {
+    operation,
+    succeeded: true,
+    message,
+    value,
+    diagnostic: null,
+    failureKind: null
+  };
+}
+
+function isGitObjectId(value) {
+  return isSafePublicationObjectId(value)
+    && (value.length === 40 || value.length === 64);
+}
+
+function normalizeGitBugEnum(value, names) {
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    return names[value] ?? null;
+  }
+  return typeof value === 'string' && names.includes(value) ? value : null;
+}
+
+function isSafeGitBugRepositoryUrl(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(parsed.hostname)))
+      && parsed.username.length === 0
+      && parsed.password.length === 0
+      && !parsed.hash;
+  } catch {
+    return false;
+  }
+}
+
+function isSafeGitBugBranch(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= publicationLimits.maximumRefNameLength
+    && ![...value].some(character => '\u0000\r\n ~^:?*[]'.includes(character))
+    && !value.includes('..')
+    && !value.includes('//')
+    && !value.startsWith('/')
+    && !value.endsWith('/');
+}
+
+function normalizeGitBugRef(value, namespace) {
+  const prefix = `refs/${namespace}/`;
+  const refName = typeof value === 'string' && value.startsWith('refs/')
+    ? value
+    : `${prefix}${value ?? ''}`;
+  if (!isSafePublicationRef(refName)
+      || !refName.startsWith(prefix)
+      || !gitBugIssueIdPattern.test(refName.slice(prefix.length))) {
+    throw new TypeError('git-bug-remote-unsupported');
+  }
+  return refName;
+}
+
+function normalizeGitBugPublicationRequest(request) {
+  if (!request || typeof request !== 'object'
+      || typeof request.reviewId !== 'string'
+      || request.reviewId.length === 0
+      || request.reviewId.length > 128
+      || [...request.reviewId].some(character => '\u0000\r\n'.includes(character))
+      || !isSafeGitBugRepositoryUrl(request.repositoryUrl)
+      || !isSafeGitBugBranch(request.branch)
+      || !isGitObjectId(request.sourceRevision)
+      || !Array.isArray(request.updates)
+      || request.updates.length === 0
+      || request.updates.length > publicationLimits.maximumUpdates
+      || !Array.isArray(request.remotePreconditions)
+      || request.remotePreconditions.length !== request.updates.length) {
+    throw new TypeError('git-bug-publication-invalid-request');
+  }
+
+  const refs = new Set();
+  const updates = request.updates.map((update) => {
+    const namespace = normalizeGitBugEnum(update?.namespace, ['Branch', 'GitBug']);
+    const kind = normalizeGitBugEnum(update?.kind, ['Create', 'Update', 'Delete']);
+    if (!update || namespace !== 'GitBug' || kind === null || kind === 'Delete'
+        || !isSafePublicationRef(update.refName)
+        || (!update.refName.startsWith('refs/bugs/') && !update.refName.startsWith('refs/identities/'))
+        || !gitBugIssueIdPattern.test(update.refName.split('/').at(-1))
+        || refs.has(update.refName)
+        || !isGitObjectId(update.newObjectId)
+        || (update.expectedOldObjectId !== null
+          && update.expectedOldObjectId !== undefined
+          && !isGitObjectId(update.expectedOldObjectId))) {
+      throw new TypeError('git-bug-publication-invalid-update');
+    }
+    refs.add(update.refName);
+    return {
+      ...update,
+      namespace,
+      kind,
+      expectedOldObjectId: update.expectedOldObjectId ?? null
+    };
+  });
+
+  if (!updates.some(update => update.refName.startsWith('refs/identities/'))) {
+    throw new TypeError('git-bug-publication-identity-support-missing');
+  }
+
+  const preconditionRefs = new Set();
+  const remotePreconditions = request.remotePreconditions.map((precondition) => {
+    if (!precondition || !refs.has(precondition.refName)
+        || preconditionRefs.has(precondition.refName)
+        || !isSafePublicationRef(precondition.refName)
+        || (!precondition.refName.startsWith('refs/bugs/') && !precondition.refName.startsWith('refs/identities/'))
+        || (precondition.expectedObjectId !== null
+          && !isGitObjectId(precondition.expectedObjectId))) {
+      throw new TypeError('git-bug-publication-invalid-precondition');
+    }
+    const update = updates.find(candidate => candidate.refName === precondition.refName);
+    if (!update || update.expectedOldObjectId !== precondition.expectedObjectId) {
+      throw new TypeError('git-bug-publication-precondition-mismatch');
+    }
+    preconditionRefs.add(precondition.refName);
+    return { refName: precondition.refName, expectedObjectId: precondition.expectedObjectId };
+  });
+
+  return {
+    reviewId: request.reviewId,
+    repositoryUrl: request.repositoryUrl,
+    branch: request.branch,
+    sourceRevision: request.sourceRevision,
+    updates,
+    remotePreconditions
+  };
+}
+
+function normalizeGitBugRemoteAdvertisement(advertisement, namespace) {
+  if (!Array.isArray(advertisement)) {
+    throw new TypeError('git-bug-remote-malformed');
+  }
+  return advertisement.map((entry) => {
+    const refName = normalizeGitBugRef(entry?.ref, namespace);
+    if (!isGitObjectId(entry?.oid)) {
+      throw new TypeError('git-bug-remote-malformed');
+    }
+    return { refName, objectId: entry.oid };
+  });
+}
+
+async function listGitBugRemoteRefs({ git, http, repositoryUrl, personalAccessToken = null }) {
+  const refs = [];
+  const seen = new Set();
+  for (const namespace of ['bugs', 'identities']) {
+    const options = { http, url: repositoryUrl, corsProxy, prefix: `refs/${namespace}/` };
+    if (typeof personalAccessToken === 'string' && personalAccessToken.length > 0) {
+      options.onAuth = () => ({ username: 'x-access-token', password: personalAccessToken });
+    }
+    const advertisement = await withPublicationTimeout(git.listServerRefs(options));
+    for (const remoteRef of normalizeGitBugRemoteAdvertisement(advertisement, namespace)) {
+      if (seen.has(remoteRef.refName)) {
+        throw new TypeError('git-bug-remote-duplicate');
+      }
+      seen.add(remoteRef.refName);
+      refs.push(remoteRef);
+    }
+  }
+  if (refs.length > publicationLimits.maximumUpdates) {
+    throw new RangeError('git-bug-remote-limit');
+  }
+  return refs.sort((left, right) => left.refName.localeCompare(right.refName));
+}
+
+function classifyGitBugPublicationError(error, phase) {
+  if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
+      || /cancel|abort/i.test(String(error?.code ?? error?.message ?? ''))) {
+    return 'gitBugPublicationCancelled';
+  }
+  const code = String(error?.code ?? '').toLowerCase();
+  const message = String(error?.message ?? '').toLowerCase();
+  const status = String(error?.status ?? error?.statusCode ?? error?.response?.status ?? '').toLowerCase();
+  if (/401|403|auth|credential|permission|forbidden|unauthorized/.test(`${code} ${message} ${status}`)) {
+    return 'credentialRejected';
+  }
+  if (/unsupported|git-bug-remote-unsupported|not.?supported|invalid.?ref|unknown.?ref/.test(`${code} ${message}`)) {
+    return 'gitBugPublicationUnsupported';
+  }
+  if (/network|timeout|cors|fetch|offline|enotfound|enet|econn|eai|ehost|http/.test(`${code} ${message}`)) {
+    return 'networkUnavailable';
+  }
+  if (phase === 'remote') {
+    return 'gitBugDataMalformed';
+  }
+  return 'gitBugPublicationRemoteRejected';
+}
+
+export async function inspectGitBugRemote(request) {
+  const operation = 'gitBug.publication.inspectRemote';
+  if (!request || typeof request !== 'object'
+      || !isSafeGitBugRepositoryUrl(request.repositoryUrl)
+      || !isSafeGitBugBranch(request.branch)) {
+    return gitBugPublicationFailure(operation, 'gitBugPublicationInvalidRequest');
+  }
+
+  try {
+    await ensureDependencies();
+    const { git } = { git: getGit() };
+    const refs = await listGitBugRemoteRefs({
+      git,
+      http: getGitHttp(),
+      repositoryUrl: request.repositoryUrl
+    });
+    return gitBugPublicationSuccess(operation, 'The remote Git-Bug refs were inspected.', {
+      repositoryUrl: request.repositoryUrl,
+      branch: request.branch,
+      refs: refs.map(ref => ({
+        refName: ref.refName,
+        namespace: 'GitBug',
+        objectId: ref.objectId
+      })),
+      credential: { available: false, used: false }
+    });
+  } catch (error) {
+    return gitBugPublicationFailure(operation, classifyGitBugPublicationError(error, 'remote'));
+  }
+}
+
+export async function publishGitBug(request, personalAccessToken) {
+  const operation = 'gitBug.publication.publish';
+  let review;
+  try {
+    review = normalizeGitBugPublicationRequest(request);
+  } catch {
+    return gitBugPublicationFailure(operation, 'gitBugPublicationInvalidRequest');
+  }
+  if (typeof personalAccessToken !== 'string' || personalAccessToken.trim().length === 0) {
+    return gitBugPublicationFailure(operation, 'gitBugPublicationCredentialUnavailable');
+  }
+
+  try {
+    await ensureDependencies();
+    const workspace = await getActiveWorkspace(operation);
+    if (workspace.repositoryUrl !== review.repositoryUrl) {
+      return gitBugPublicationFailure(operation, 'gitBugPublicationInvalidRequest');
+    }
+    const { fs, dir } = workspace;
+    const git = getGit();
+    const remoteRefs = await listGitBugRemoteRefs({
+      git,
+      http: getGitHttp(),
+      repositoryUrl: review.repositoryUrl,
+      personalAccessToken
+    });
+    const remoteByRef = new Map(remoteRefs.map(ref => [ref.refName, ref.objectId]));
+    for (const precondition of review.remotePreconditions) {
+      const currentObjectId = remoteByRef.get(precondition.refName) ?? null;
+      if (currentObjectId !== precondition.expectedObjectId) {
+        return gitBugPublicationFailure(operation, 'gitBugPublicationStaleRemote');
+      }
+    }
+
+    const pushedUpdates = [];
+    for (const update of review.updates) {
+      const currentObjectId = remoteByRef.get(update.refName) ?? null;
+      const precondition = review.remotePreconditions.find(item => item.refName === update.refName);
+      if (!precondition || currentObjectId !== precondition.expectedObjectId) {
+        return gitBugPublicationFailure(operation, 'gitBugPublicationStaleRemote');
+      }
+      if (update.kind === 'Update' && update.expectedOldObjectId === null && currentObjectId === null) {
+        return gitBugPublicationFailure(operation, 'gitBugPublicationStaleRemote');
+      }
+      await withPublicationTimeout(git.push({
+        fs,
+        http: getGitHttp(),
+        dir,
+        url: review.repositoryUrl,
+        corsProxy,
+        ref: update.refName,
+        remoteRef: update.refName,
+        force: false,
+        onAuth: () => ({ username: 'x-access-token', password: personalAccessToken })
+      }));
+      pushedUpdates.push(update);
+    }
+
+    return gitBugPublicationSuccess(operation, 'The reviewed Git-Bug refs were published.', {
+      reviewId: review.reviewId,
+      repositoryUrl: review.repositoryUrl,
+      branch: review.branch,
+      sourceRevision: review.sourceRevision,
+      appliedUpdates: pushedUpdates,
+      credential: { available: true, used: true },
+      boundedUpdateCount: pushedUpdates.length
+    });
+  } catch (error) {
+    return gitBugPublicationFailure(operation, classifyGitBugPublicationError(error, 'publish'));
+  }
+}
+
 function canonicalizeGitHubOrigin(origin) {
   let parsed;
   try {

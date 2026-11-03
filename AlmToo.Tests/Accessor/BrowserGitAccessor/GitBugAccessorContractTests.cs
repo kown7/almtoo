@@ -385,14 +385,14 @@ public sealed class GitBugAccessorContractTests
                 @namespace = "GitBug",
                 kind = "Update",
                 newObjectId = identityObject,
-                expectedOldObjectId = identityObject
+                expectedOldObjectId = (string?)identityObject
             }
         };
         var preconditions = new[]
         {
             new { refName = "refs/heads/main", expectedObjectId = (string?)head },
             new { refName = "refs/bugs/issue-1", expectedObjectId = (string?)null },
-            new { refName = "refs/identities/author-1", expectedObjectId = identityObject }
+            new { refName = "refs/identities/author-1", expectedObjectId = (string?)identityObject }
         };
         var module = new FakeModule(new Dictionary<string, string>
         {
@@ -420,19 +420,20 @@ public sealed class GitBugAccessorContractTests
 
         var reviewResult = await accessor.InspectPublicationAsync();
         Assert.True(reviewResult.Succeeded);
-        Assert.NotNull(reviewResult.Value);
+        var review = reviewResult.Value ?? throw new InvalidOperationException("The publication review should include a value.");
         var request = new GitPublicationRequest(
-            reviewResult.Value.RepositoryUrl,
-            reviewResult.Value.Branch,
-            reviewResult.Value.Updates,
-            reviewResult.Value.RemotePreconditions);
+            review.RepositoryUrl,
+            review.Branch,
+            review.Updates,
+            review.RemotePreconditions);
         var publishResult = await accessor.PublishAsync(request);
 
         Assert.True(reviewResult.Succeeded);
         Assert.True(publishResult.Succeeded);
-        Assert.Equal(3, reviewResult.Value.Updates.Count);
-        Assert.Equal("refs/bugs/issue-1", reviewResult.Value.Updates[1].RefName);
-        Assert.Equal(3, publishResult.Value.BoundedUpdateCount);
+        var publication = publishResult.Value ?? throw new InvalidOperationException("The publication result should include a value.");
+        Assert.Equal(3, review.Updates.Count);
+        Assert.Equal("refs/bugs/issue-1", review.Updates[1].RefName);
+        Assert.Equal(3, publication.BoundedUpdateCount);
         Assert.Contains("initialize", module.Invocations);
         Assert.Contains("inspectPublication", module.Invocations);
         Assert.Contains("getCredentialForPush", module.Invocations);

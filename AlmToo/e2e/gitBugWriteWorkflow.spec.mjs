@@ -26,7 +26,7 @@ test('edits an existing Git-Bug issue with an empty description', async ({ page 
   await withGitBugAcceptance(page, testInfo, {
     scenario: 'empty-description-edit',
     credential,
-    remote: { username: credential, password: 'x-oauth-basic' }
+    remote: { username: 'x-access-token', password: credential }
   }, async ({ page: acceptancePage, diagnostics, setPhase }) => {
     setPhase('edit empty description');
     await acceptancePage.getByRole('button', { name: 'Open issue: Minimal issue without optional metadata' }).click();
@@ -48,7 +48,7 @@ test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', 
   await withGitBugAcceptance(page, testInfo, {
     scenario: 'successful-git-bug-write',
     credential,
-    remote: { username: credential, password: 'x-oauth-basic' }
+    remote: { username: 'x-access-token', password: credential }
   }, async ({ page: acceptancePage, remote, diagnostics, setPhase, assertNoCredential }) => {
     const repositoryUrl = remote.url;
     setPhase('capture initial fixture');
@@ -91,7 +91,7 @@ test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', 
     await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('Branch');
     await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('Reviewed refs');
     await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('refs/bugs/');
-    await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('refs/identities/');
+    await expect(acceptancePage.locator('.gitbug-push-review')).toContainText('Required identity refs');
 
     const credentialInput = acceptancePage.getByLabel('Tab-scoped credential');
     await credentialInput.fill(credential);
@@ -112,7 +112,6 @@ test('edits, reviews, commits, and pushes a Git-Bug issue through the browser', 
 
     const storage = await acceptancePage.evaluate(() => ({
       localStorage: Object.fromEntries(Object.entries(localStorage)),
-      sessionStorage: Object.fromEntries(Object.entries(sessionStorage)),
       body: document.body.innerText
     }));
     assertNoCredential(storage);

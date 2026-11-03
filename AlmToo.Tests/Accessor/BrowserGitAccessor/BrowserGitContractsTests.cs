@@ -312,6 +312,66 @@ public sealed class BrowserGitContractsTests
     }
 
     [Fact]
+    public void GitBug_publication_review_preserves_exact_non_force_records_for_accessor_handoff()
+    {
+        var issueObjectId = new string('a', 40);
+        var identityObjectId = new string('b', 40);
+        var updates = new GitRefUpdate[]
+        {
+            new("refs/bugs/issue-1", GitRefNamespace.GitBug, GitRefUpdateKind.Update, issueObjectId, new string('c', 40)),
+            new("refs/identities/author-1", GitRefNamespace.GitBug, GitRefUpdateKind.Create, identityObjectId)
+        };
+        var preconditions = new GitRemotePrecondition[]
+        {
+            new("refs/bugs/issue-1", new string('c', 40)),
+            new("refs/identities/author-1", null)
+        };
+        var review = new GitPublicationReview(
+            "https://github.com/example/project.git",
+            "main",
+            updates,
+            preconditions,
+            updates.Length);
+        var request = new GitPublicationRequest(
+            review.RepositoryUrl,
+            review.Branch,
+            review.Updates,
+            review.RemotePreconditions);
+
+        Assert.True(BrowserGitPublicationContract.IsValidReview(review));
+        Assert.True(BrowserGitPublicationContract.IsValidRequest(request));
+        Assert.Same(updates, request.Updates);
+        Assert.Same(preconditions, request.RemotePreconditions);
+        Assert.DoesNotContain(typeof(GitRefUpdate).GetProperties(), property =>
+            property.Name.Equals("Force", StringComparison.OrdinalIgnoreCase));
+        Assert.All(request.Updates, update => Assert.NotEqual(GitRefUpdateKind.Delete, update.Kind));
+    }
+
+    [Fact]
+    public void GitBug_publication_contract_rejects_force_like_delete_or_ambiguous_ref_updates()
+    {
+        var objectId = new string('a', 40);
+        var update = new GitRefUpdate(
+            "refs/bugs/issue-1",
+            GitRefNamespace.GitBug,
+            GitRefUpdateKind.Update,
+            objectId,
+            new string('b', 40));
+        var request = new GitPublicationRequest(
+            "https://github.com/example/project.git",
+            "main",
+            [update],
+            [new GitRemotePrecondition(update.RefName, update.ExpectedOldObjectId)]);
+
+        Assert.True(BrowserGitPublicationContract.IsValidRequest(request));
+        Assert.False(BrowserGitPublicationContract.IsValidUpdate(update with { Kind = GitRefUpdateKind.Delete }));
+        Assert.False(BrowserGitPublicationContract.IsValidRequest(request with
+        {
+            Updates = [update, update]
+        }));
+    }
+
+    [Fact]
     public void Remote_snapshot_contract_accepts_stable_path_scoped_metadata_without_secrets()
     {
         var commitId = new string('a', 40);

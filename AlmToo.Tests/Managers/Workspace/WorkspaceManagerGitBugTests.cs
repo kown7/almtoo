@@ -371,6 +371,98 @@ public sealed class WorkspaceManagerGitBugTests
         Assert.Null(manager.State.GitBug.SelectedIssue);
     }
 
+    [Fact]
+    public async Task Reviewed_publication_requires_confirmation_and_reuses_exact_request_after_revalidation()
+    {
+        var browser = new WorkspaceManagerTests.FakeBrowserAccessor();
+        GitBugPublicationRequest? publishedRequest = null;
+        browser.GitBugRemoteInspectionAsync = (request, _) => ValueTask.FromResult(Success(
+            new GitBugRemoteInspection(request.RepositoryUrl, request.Branch, [], new GitBugCredentialUsage(false, false))));
+        browser.GitBugPublicationAsync = (request, _) =>
+        {
+            publishedRequest = request;
+            return ValueTask.FromResult(Success(new GitBugPublicationReceipt(
+                request.ReviewId,
+                request.RepositoryUrl,
+                request.Branch,
+                request.SourceRevision,
+                request.Updates,
+                new GitBugCredentialUsage(true, true),
+                request.Updates.Count)));
+        };
+        using var manager = new WorkspaceManager(browser, new FakeGitBugAccessor());
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        var sourceRevision = new string('a', 40);
+        var localObjectId = new string('b', 40);
+        var input = new WorkspaceGitBugPublicationInput(
+            sourceRevision,
+            [new GitBugPublicationRef(
+                $"refs/bugs/{FirstIdValue}",
+                AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Issue,
+                localObjectId),
+             new GitBugPublicationRef(
+                "refs/identities/alice",
+                AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Identity,
+                new string('d', 40))],
+            []);
+
+        await manager.ReviewGitBugPublicationAsync(input);
+        Assert.Equal(WorkspaceGitBugPublicationStatus.Ready, manager.State.GitBugPublication?.Status);
+        Assert.False(await manager.PublishGitBugPublicationAsync());
+        Assert.Contains("explicitly confirm", manager.State.GitBugPublication!.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, browser.GitBugRemoteInspectionCalls);
+
+        manager.ConfirmGitBugPublication(true);
+        Assert.True(await manager.PublishGitBugPublicationAsync());
+        Assert.Equal(2, browser.GitBugRemoteInspectionCalls);
+        Assert.Equal(1, browser.GitBugPublicationCalls);
+        Assert.NotNull(publishedRequest);
+        Assert.Equal(2, publishedRequest!.Updates.Count);
+        Assert.Contains(publishedRequest.Updates, update => update.NewObjectId == localObjectId);
+        Assert.Equal(manager.State.GitBugPublicationReview!.Request, publishedRequest);
+    }
+
+    [Fact]
+    public async Task Remote_change_invalidates_review_without_publishing_or_exposing_accessor_details()
+    {
+        var browser = new WorkspaceManagerTests.FakeBrowserAccessor();
+        var inspectionCount = 0;
+        var remoteObjectId = new string('c', 40);
+        browser.GitBugRemoteInspectionAsync = (request, _) =>
+        {
+            inspectionCount++;
+            var refs = inspectionCount == 1
+                ? Array.Empty<GitBugRemoteRef>()
+                : [new GitBugRemoteRef($"refs/bugs/{SecondIdValue}", GitRefNamespace.GitBug, remoteObjectId)];
+            return ValueTask.FromResult(Success(new GitBugRemoteInspection(
+                request.RepositoryUrl, request.Branch, refs, new GitBugCredentialUsage(false, false))));
+        };
+        using var manager = new WorkspaceManager(browser, new FakeGitBugAccessor());
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        var input = new WorkspaceGitBugPublicationInput(
+            new string('a', 40),
+            [new GitBugPublicationRef(
+                $"refs/bugs/{FirstIdValue}",
+                AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Issue,
+                new string('b', 40)),
+             new GitBugPublicationRef(
+                "refs/identities/alice",
+                AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Identity,
+                new string('d', 40))],
+            []);
+
+        await manager.ReviewGitBugPublicationAsync(input);
+        Assert.Equal(WorkspaceGitBugPublicationStatus.Ready, manager.State.GitBugPublication?.Status);
+        manager.ConfirmGitBugPublication(true);
+        Assert.False(await manager.PublishGitBugPublicationAsync());
+
+        Assert.Equal(2, browser.GitBugRemoteInspectionCalls);
+        Assert.Equal(0, browser.GitBugPublicationCalls);
+        Assert.Null(manager.State.GitBugPublicationReview);
+        Assert.Equal(WorkspaceGitBugPublicationStatus.StaleSource, manager.State.GitBugPublication!.Status);
+        Assert.Contains("changed after review", manager.State.GitBugPublication.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static WorkspaceManager CreateManager(FakeGitBugAccessor fake) => CreateManager((IGitBugAccessor)fake);
 
     private static GitOperationResult<T> Success<T>(T value) =>

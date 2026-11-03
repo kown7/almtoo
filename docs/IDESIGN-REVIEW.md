@@ -476,6 +476,19 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Ownership decisions:** WorkspaceManager owns repository-context validation, operation gating, cancellation, generation fencing, safe state publication, and mapping typed snapshot data to Engine input. ConflictReconciliationEngine remains deterministic and I/O-free; Accessor and Resource details remain hidden.
 **Interface review:** PASS. Review is read-only and cannot reach checkout, write, commit, push, publication, or apply paths.
 
+## M017 S01 T01 Git-Bug publication contracts architecture review
+
+**Status:** APPROVED for the autonomous execution lane; this scoped review is the current approval record for contract work.
+**Affected layers:** Manager, Engine, Accessor, Resource; no Client implementation changes.
+**Dependency direction:** Workspace Manager -> stateless GitBugPublicationEngine and retained `IBrowserGitAccessor`/`IGitBugAccessor` -> `BrowserGitAccessor` -> `browserGitEngine.js`.
+**Interfaces added or retained:** Retain the existing cohesive `IBrowserGitAccessor` browser Git transport seam and `IGitBugAccessor` Git-Bug storage seam; add no new interface.
+**Interface justifications:** `IBrowserGitAccessor` protects browser Git and remote transport substitution; `IGitBugAccessor` protects Git-Bug format and issue/comment storage substitution. Neither is a pass-through interface.
+**Ownership decisions:** Manager-facing records expose only bounded status and safe failure categories; the Engine will own deterministic classification and the Accessor contracts will retain exact reviewed updates, refspecs, and remote preconditions. No contract performs I/O or introduces a service boundary.
+**Scope boundary:** This task defines only passive contracts for reviewed `refs/bugs/*` and required `refs/identities/*` publication. It does not broaden to arbitrary refs, branch merge, credentials, transport diagnostics, or silent auto-push.
+**Exceptions or risks:** Git-Bug remote servers may advertise namespace-specific behavior; unsupported or malformed advertisements must fail closed and no unrelated branch refs may enter the reviewed set.
+**Verification plan:** `dotnet build AlmToo.sln --no-restore -warnaserror`; focused contract and architecture tests in the following tasks cover allowlisting, bounded sets, exact refspec direction, and safe failure mapping.
+**Approval basis:** The autonomous execution instruction authorizes proceeding with this scoped, no-new-interface contract review; any materially changed service or interface requires a new scoped review stop.
+
 ## M016 S03 T01 reviewed reconciliation Engine and contract review
 
 **Status:** APPROVED
@@ -488,4 +501,42 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Exceptions:** None.
 
 **Result:** PASS
+---
+## M017 S03 T01 reviewed Git-Bug publication Manager lifecycle
 
+**Status:** APPROVED by explicit user approval on 2026-11-02
+**Affected layers:** Manager, Engine, Accessor, Resource; no Client implementation in this task.
+**Dependency direction:** WorkspaceManager -> GitBugPublicationEngine and retained `IBrowserGitAccessor` -> BrowserGitAccessor -> `browserGitEngine.js` Resource.
+**Interfaces added or retained:** Retain `IBrowserGitAccessor` and `IGitBugAccessor`; add no new interface.
+**Interface justifications:** `IBrowserGitAccessor` remains the browser Git/remote transport substitution seam; `IGitBugAccessor` remains the Git-Bug storage and fixture-backed substitution seam. Neither is a pass-through interface.
+**Ownership decisions:** WorkspaceManager owns inspect -> exact review -> explicit confirmation -> immediate revalidation -> publication orchestration, cancellation, stale invalidation, and safe failure mapping. GitBugPublicationEngine remains deterministic and I/O-free; BrowserGitAccessor owns remote inspection/publication integration and redaction; `browserGitEngine.js` remains the Resource.
+**Scope boundary:** This review covers the materially changed WorkspaceManager and WorkspaceContracts lifecycle only. It does not authorize Client rendering, new interfaces, Manager-to-Manager calls, arbitrary ref publication, credential exposure, or raw transport diagnostics.
+**Required proof:** Focused Manager tests must cover happy review/confirm/publish, confirmation gating, exact-review revalidation, repository-change reset, unrelated/duplicate/malformed refs, missing identity support, cancellation, stale remote, credential, network, unsupported, and remote-rejection mappings.
+**Exceptions:** None proposed.
+**Approval basis:** The prior M017 S01 approval explicitly covers passive contract work and states that any materially changed service requires a new scoped review stop. This T01 changes WorkspaceManager behavior and therefore required explicit approval before source implementation began.
+
+**Result:** PASS
+
+## M017 S03 T02 reviewed Git-Bug publication Client workflow
+
+**Status:** APPROVED by explicit user approval on 2026-11-02
+**Affected layers:** Client, Manager; retained Engine, Accessor, and Resource boundaries are consumed transitively.
+**Dependency direction:** GitBug page and child components -> WorkspaceManager passive state and callbacks -> GitBugPublicationEngine -> retained Accessor interfaces -> BrowserGitAccessor -> browser Git Resource.
+**Interfaces added or retained:** No service interface added or changed for T02; retain `IBrowserGitAccessor` and `IGitBugAccessor`.
+**Interface justifications:** `IBrowserGitAccessor` remains the browser/platform transport substitution seam; `IGitBugAccessor` remains the Git-Bug storage and fixture-backed substitution seam. No Client pass-through interface is introduced.
+**Ownership decisions:** The Client renders Manager-owned review state and invokes separate inspect, confirm, publish, and retry callbacks. WorkspaceManager retains ownership of exact review identity, revalidation, publication, cancellation, stale invalidation, typed failure mapping, and redaction.
+**Scope boundary:** T02 is limited to composing the existing GitBug page, issue detail, and repository commit/publication Client components plus a real Chromium workflow spec. The Client must not construct Accessor requests, call Git-related JavaScript directly, publish implicitly, rediscover refs, or expose credentials, raw server payloads, or transport diagnostics.
+**Approval basis:** Explicit user approval in the active execution conversation on 2026-11-02.
+
+**Result:** PASS
+
+## M017 S03 T04 cross-boundary verification, Manager revalidation, and Engine identity-support correction
+
+**Status:** APPROVED by explicit user approval on 2026-11-02
+**Affected layers:** Manager, Engine, Accessor, Client, and browser acceptance Resource tests. The Manager revalidation comparison and Engine publication-plan policy are materially changed; Client and Accessor contracts remain retained and are regression-tested.
+**Dependency direction:** Playwright Resource test harness -> running Git-Bug Client -> WorkspaceManager -> GitBugPublicationEngine -> retained Accessor boundary -> browser Git Resource.
+**Interfaces added or retained:** No interfaces added or changed; retain `IBrowserGitAccessor` and `IGitBugAccessor`.
+**Interface justifications:** `IBrowserGitAccessor` remains the browser/platform transport substitution seam, and `IGitBugAccessor` remains the Git-Bug storage/fixture substitution seam; this correction changes only assertions that consume their existing Client workflow.
+**Ownership and scope:** Update the stale recovery/repeatability browser assertions to follow the implemented credential-first publication lifecycle: review refs, provide or replace the tab-scoped credential, explicitly confirm, then publish or retry. Correct Manager publication revalidation to compare the exact reviewed remote preconditions, including absent-create refs, rather than requiring the bounded review subset to equal the complete remote advertisement. Correct Engine policy to include unchanged or newly-created local identity support refs in a non-empty issue publication plan so the retained Accessor contract can validate and publish the exact bounded request. Do not weaken production safety behavior, bypass explicit confirmation, alter ref construction outside that identity-support rule, or expose diagnostics.
+**Verification boundary:** Re-run the focused publication review, recovery, repeatability, and workflow Chromium specs plus the no-restore .NET and npm suites; retain the existing safe-redaction, exact-review, stale-state, identity-support, and no-mutation assertions.
+**Approval basis:** Awaiting explicit user re-approval because execution revealed a materially changed Manager service contract.

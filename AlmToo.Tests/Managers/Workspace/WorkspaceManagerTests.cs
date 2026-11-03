@@ -1077,6 +1077,10 @@ public sealed class WorkspaceManagerTests
         public int InspectCalls { get; private set; }
         public int PushCalls { get; private set; }
         public int SynchronizeCalls { get; private set; }
+        public Func<GitBugRemoteInspectionRequest, CancellationToken, ValueTask<GitOperationResult<GitBugRemoteInspection>>>? GitBugRemoteInspectionAsync { get; set; }
+        public Func<GitBugPublicationRequest, CancellationToken, ValueTask<GitOperationResult<GitBugPublicationReceipt>>>? GitBugPublicationAsync { get; set; }
+        public int GitBugRemoteInspectionCalls { get; private set; }
+        public int GitBugPublicationCalls { get; private set; }
         public int CheckoutCalls { get; private set; }
         public List<CheckoutBranchRequest> CheckoutRequests { get; } = [];
         public Func<SynchronizationRequest, GitOperationResult<SynchronizationReview>> Synchronize { get; set; } = request =>
@@ -1110,6 +1114,28 @@ public sealed class WorkspaceManagerTests
             FileFilterKind.DirectoryEntries => new GitOperationResult<FilterFilesResult>("filter-files", true, "Files loaded.", new(request.Path, [Readme])),
             _ => new GitOperationResult<FilterFilesResult>("filter-files", true, "File loaded.", new(request.Path, [], new(request.Path, "original\n", SizeBytes: 9)))
         };
+
+        public ValueTask<GitOperationResult<GitBugRemoteInspection>> InspectGitBugRemoteAsync(
+            GitBugRemoteInspectionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            GitBugRemoteInspectionCalls++;
+            return GitBugRemoteInspectionAsync is null
+                ? ValueTask.FromResult(new GitOperationResult<GitBugRemoteInspection>(
+                    "inspectGitBugRemote", false, "unsupported", FailureKind: GitOperationFailureKind.GitBugPublicationUnsupported))
+                : GitBugRemoteInspectionAsync(request, cancellationToken);
+        }
+
+        public ValueTask<GitOperationResult<GitBugPublicationReceipt>> PublishGitBugAsync(
+            GitBugPublicationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            GitBugPublicationCalls++;
+            return GitBugPublicationAsync is null
+                ? ValueTask.FromResult(new GitOperationResult<GitBugPublicationReceipt>(
+                    "publishGitBug", false, "unsupported", FailureKind: GitOperationFailureKind.GitBugPublicationUnsupported))
+                : GitBugPublicationAsync(request, cancellationToken);
+        }
 
         public ValueTask<GitOperationResult<RepositoryInfo>> CloneOrOpenAsync(RepositoryOpenRequest request, CancellationToken cancellationToken = default)
         {

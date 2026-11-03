@@ -356,6 +356,127 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
         return SanitizePublicationResult(result);
     }
 
+    public async ValueTask<GitOperationResult<GitBugRemoteInspection>> InspectGitBugRemoteAsync(
+        GitBugRemoteInspectionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = GitBugPublicationOperations.InspectRemote;
+        if (!BrowserGitPublicationContract.IsValidInspectionRequest(request))
+        {
+            return GitBugPublicationFailure<GitBugRemoteInspection>(
+                operation,
+                GitOperationFailureKind.GitBugPublicationInvalidRequest);
+        }
+
+        var result = await InvokeResponseAsync<GitBugRemoteInspectionDto>(
+            operation,
+            "inspectGitBugRemote",
+            cancellationToken,
+            request);
+
+        if (!result.Succeeded)
+        {
+            return GitBugPublicationFailure<GitBugRemoteInspection>(
+                operation,
+                NormalizeGitBugFailure(result, operation));
+        }
+
+        try
+        {
+            var inspection = result.Value?.ToContract();
+            return inspection is not null && BrowserGitPublicationContract.IsValidInspection(inspection)
+                ? new GitOperationResult<GitBugRemoteInspection>(
+                    operation,
+                    true,
+                    "Remote Git-Bug refs were inspected.",
+                    inspection)
+                : GitBugPublicationFailure<GitBugRemoteInspection>(
+                    operation,
+                    GitOperationFailureKind.GitBugDataMalformed);
+        }
+        catch (Exception)
+        {
+            return GitBugPublicationFailure<GitBugRemoteInspection>(
+                operation,
+                GitOperationFailureKind.GitBugDataMalformed);
+        }
+    }
+
+    public async ValueTask<GitOperationResult<GitBugPublicationReceipt>> PublishGitBugAsync(
+        GitBugPublicationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = GitBugPublicationOperations.Publish;
+        if (!BrowserGitPublicationContract.IsValidGitBugRequest(request))
+        {
+            return GitBugPublicationFailure<GitBugPublicationReceipt>(
+                operation,
+                GitOperationFailureKind.GitBugPublicationInvalidRequest);
+        }
+
+        string? credential;
+        try
+        {
+            var credentialModule = await GetCredentialModuleAsync(cancellationToken);
+            credential = await credentialModule.InvokeAsync<string?>(
+                "getCredentialForPush",
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return GitBugPublicationFailure<GitBugPublicationReceipt>(
+                operation,
+                GitOperationFailureKind.GitBugPublicationCancelled);
+        }
+        catch (Exception)
+        {
+            return GitBugPublicationFailure<GitBugPublicationReceipt>(
+                operation,
+                GitOperationFailureKind.GitBugPublicationCredentialUnavailable);
+        }
+
+        if (string.IsNullOrWhiteSpace(credential))
+        {
+            return GitBugPublicationFailure<GitBugPublicationReceipt>(
+                operation,
+                GitOperationFailureKind.GitBugPublicationCredentialUnavailable);
+        }
+
+        var result = await InvokeResponseAsync<GitBugPublicationReceiptDto>(
+            operation,
+            "publishGitBug",
+            cancellationToken,
+            request,
+            credential);
+
+        if (!result.Succeeded)
+        {
+            return GitBugPublicationFailure<GitBugPublicationReceipt>(
+                operation,
+                NormalizeGitBugFailure(result, operation));
+        }
+
+        try
+        {
+            var receipt = result.Value?.ToContract();
+            return receipt is not null && BrowserGitPublicationContract.IsValidReceipt(receipt)
+                ? new GitOperationResult<GitBugPublicationReceipt>(
+                    operation,
+                    true,
+                    "The reviewed Git-Bug refs were published.",
+                    receipt)
+                : GitBugPublicationFailure<GitBugPublicationReceipt>(
+                    operation,
+                    GitOperationFailureKind.GitBugPublicationUnsupported);
+        }
+        catch (Exception)
+        {
+            return GitBugPublicationFailure<GitBugPublicationReceipt>(
+                operation,
+                GitOperationFailureKind.GitBugPublicationUnsupported);
+        }
+    }
+
     public async ValueTask<GitOperationResult<SynchronizationReview>> SynchronizeAsync(
         SynchronizationRequest request,
         CancellationToken cancellationToken = default)
@@ -850,6 +971,57 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             return SanitizedGitBugFailure<TValue>(operation, GitOperationFailureKind.GitBugDataMalformed);
         }
     }
+
+    private static GitOperationFailureKind NormalizeGitBugFailure<TValue>(
+        BrowserGitResponse<TValue> result,
+        string operation)
+    {
+        var parsed = result.FailureKind switch
+        {
+            "credentialUnavailable" or "gitBugPublicationCredentialUnavailable" => GitOperationFailureKind.GitBugPublicationCredentialUnavailable,
+            "credentialRejected" => GitOperationFailureKind.CredentialRejected,
+            "networkUnavailable" => GitOperationFailureKind.NetworkUnavailable,
+            "unsupported" or "gitBugPublicationUnsupported" => GitOperationFailureKind.GitBugPublicationUnsupported,
+            "staleRemote" or "gitBugPublicationStaleRemote" => GitOperationFailureKind.GitBugPublicationStaleRemote,
+            "remoteRejected" or "gitBugPublicationRemoteRejected" => GitOperationFailureKind.GitBugPublicationRemoteRejected,
+            "cancelled" or "gitBugPublicationCancelled" => GitOperationFailureKind.GitBugPublicationCancelled,
+            "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
+            "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
+            "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+            "unsupportedRef" => GitOperationFailureKind.UnsupportedRef,
+            _ when result.Message.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+                || result.Message.Contains("cancelled", StringComparison.OrdinalIgnoreCase) => GitOperationFailureKind.GitBugPublicationCancelled,
+            _ when operation == GitBugPublicationOperations.InspectRemote => GitOperationFailureKind.GitBugDataUnavailable,
+            _ => GitOperationFailureKind.NetworkUnavailable
+        };
+
+        return parsed;
+    }
+
+    private static GitOperationResult<TValue> GitBugPublicationFailure<TValue>(
+        string operation,
+        GitOperationFailureKind failureKind) =>
+        new(
+            operation,
+            false,
+            failureKind switch
+            {
+                GitOperationFailureKind.GitBugPublicationInvalidRequest => "The Git-Bug publication request is invalid.",
+                GitOperationFailureKind.GitBugPublicationCredentialUnavailable => "A tab-scoped credential is required for Git-Bug publication.",
+                GitOperationFailureKind.CredentialRejected => "The tab-scoped credential was rejected by the remote.",
+                GitOperationFailureKind.NetworkUnavailable => "The remote Git service could not be reached.",
+                GitOperationFailureKind.GitBugDataUnavailable => "Remote Git-Bug refs could not be inspected.",
+                GitOperationFailureKind.GitBugFormatUnsupported => "The remote Git-Bug format is not supported.",
+                GitOperationFailureKind.GitBugDataMalformed => "The remote Git-Bug data was malformed.",
+                GitOperationFailureKind.UnsupportedRef => "The remote Git-Bug refs are not supported.",
+                GitOperationFailureKind.GitBugPublicationStaleRemote => "The remote Git-Bug refs changed after review.",
+                GitOperationFailureKind.GitBugPublicationRemoteRejected => "The remote rejected the reviewed Git-Bug refs.",
+                GitOperationFailureKind.GitBugPublicationCancelled => "The Git-Bug publication was canceled.",
+                _ => "The Git-Bug publication could not be completed."
+            },
+            Value: default,
+            Diagnostic: null,
+            FailureKind: failureKind);
 
     private static GitOperationFailureKind ParseGitBugFailureKind(string? failureKind) => failureKind switch
     {
@@ -1351,6 +1523,93 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
                 Message = message,
                 Diagnostic = diagnostic
             };
+    }
+
+    private sealed record GitBugRemoteInspectionDto
+    {
+        [JsonPropertyName("repositoryUrl")]
+        public string RepositoryUrl { get; init; } = string.Empty;
+
+        [JsonPropertyName("branch")]
+        public string Branch { get; init; } = string.Empty;
+
+        [JsonPropertyName("refs")]
+        public IReadOnlyList<GitBugRemoteRefDto> Refs { get; init; } = [];
+
+        [JsonPropertyName("credential")]
+        public GitBugCredentialUsageDto? Credential { get; init; }
+
+        public GitBugRemoteInspection ToContract() =>
+            new(
+                RepositoryUrl,
+                Branch,
+                Refs.Select(reference => reference.ToContract()).ToArray(),
+                Credential?.ToContract() ?? throw new InvalidOperationException("Credential metadata was missing."));
+    }
+
+    private sealed record GitBugRemoteRefDto
+    {
+        [JsonPropertyName("refName")]
+        public string RefName { get; init; } = string.Empty;
+
+        [JsonPropertyName("namespace")]
+        public string Namespace { get; init; } = string.Empty;
+
+        [JsonPropertyName("objectId")]
+        public string ObjectId { get; init; } = string.Empty;
+
+        public GitBugRemoteRef ToContract() =>
+            new(
+                RefName,
+                Enum.TryParse<GitRefNamespace>(Namespace, ignoreCase: true, out var value)
+                    ? value
+                    : throw new InvalidOperationException("Remote ref namespace was invalid."),
+                ObjectId);
+    }
+
+    private sealed record GitBugCredentialUsageDto
+    {
+        [JsonPropertyName("available")]
+        public bool Available { get; init; }
+
+        [JsonPropertyName("used")]
+        public bool Used { get; init; }
+
+        public GitBugCredentialUsage ToContract() => new(Available, Used);
+    }
+
+    private sealed record GitBugPublicationReceiptDto
+    {
+        [JsonPropertyName("reviewId")]
+        public string ReviewId { get; init; } = string.Empty;
+
+        [JsonPropertyName("repositoryUrl")]
+        public string RepositoryUrl { get; init; } = string.Empty;
+
+        [JsonPropertyName("branch")]
+        public string Branch { get; init; } = string.Empty;
+
+        [JsonPropertyName("sourceRevision")]
+        public string SourceRevision { get; init; } = string.Empty;
+
+        [JsonPropertyName("appliedUpdates")]
+        public IReadOnlyList<GitRefUpdateDto> AppliedUpdates { get; init; } = [];
+
+        [JsonPropertyName("credential")]
+        public GitBugCredentialUsageDto? Credential { get; init; }
+
+        [JsonPropertyName("boundedUpdateCount")]
+        public int BoundedUpdateCount { get; init; }
+
+        public GitBugPublicationReceipt ToContract() =>
+            new(
+                ReviewId,
+                RepositoryUrl,
+                Branch,
+                SourceRevision,
+                AppliedUpdates.Select(update => update.ToContract()).ToArray(),
+                Credential?.ToContract() ?? throw new InvalidOperationException("Credential metadata was missing."),
+                BoundedUpdateCount);
     }
 
     private sealed record GitBugIssueEditRequestDto

@@ -57,6 +57,66 @@ public sealed record WorkspaceError(
     GitOperationFailureKind? FailureKind = null,
     bool WasCancelled = false);
 
+/// <summary>Safe Manager lifecycle states for a deterministic Git-Bug publication review.</summary>
+public enum WorkspaceGitBugPublicationStatus
+{
+    Idle,
+    Ready,
+    NoChanges,
+    Rejected,
+    StaleSource,
+    RemoteAhead,
+    Failed
+}
+
+/// <summary>Bounded failure categories that may cross the Git-Bug publication policy boundary.</summary>
+public enum WorkspaceGitBugPublicationFailureKind
+{
+    None,
+    MalformedInput,
+    UnsupportedRef,
+    MissingIdentitySupport,
+    DuplicateRef,
+    LimitExceeded,
+    RemoteAhead,
+    StaleSourceRevision,
+    ForceUpdateDenied,
+    UnsafeUpdate,
+    Unknown
+}
+
+/// <summary>Credential-free policy input; local and advertised refs are snapshots, not live repository handles.</summary>
+public sealed record WorkspaceGitBugPublicationInput(
+    string SourceRevision,
+    IReadOnlyList<GitBugPublicationRef> LocalRefs,
+    IReadOnlyList<GitBugPublicationRef> AdvertisedRemoteRefs);
+
+/// <summary>Explicit bounds used by the Git-Bug publication Engine and Manager state.</summary>
+public sealed record WorkspaceGitBugPublicationBounds(
+    int MaximumIssueRefs = BrowserGitPublicationContract.MaximumUpdates,
+    int MaximumIdentityRefs = BrowserGitPublicationContract.MaximumUpdates,
+    int MaximumTotalRefs = BrowserGitPublicationContract.MaximumUpdates,
+    int MaximumRemotePreconditions = BrowserGitPublicationContract.MaximumRemotePreconditions);
+
+/// <summary>
+/// Exact reviewed publication records. The same Accessor request instance represented here must be passed to
+/// publication; no Manager conversion or ref re-discovery is permitted between review and apply.
+/// </summary>
+public sealed record WorkspaceGitBugPublicationReview(
+    string SourceRevision,
+    GitBugPublicationRequest Request,
+    IReadOnlyList<GitBugPublicationRef> RequiredIssueRefs,
+    IReadOnlyList<GitBugPublicationRef> RequiredIdentityRefs,
+    int BoundedRefCount,
+    WorkspaceGitBugPublicationStatus Status = WorkspaceGitBugPublicationStatus.Ready);
+
+/// <summary>Client-safe result of deterministic Git-Bug publication policy evaluation.</summary>
+public sealed record WorkspaceGitBugPublicationResult(
+    WorkspaceGitBugPublicationStatus Status,
+    WorkspaceGitBugPublicationFailureKind FailureKind,
+    string Message,
+    WorkspaceGitBugPublicationReview? Review = null);
+
 /// <summary>A Client-safe outcome for a complete workspace use-case.</summary>
 public sealed record WorkspaceResult(
     WorkspaceOperation Operation,

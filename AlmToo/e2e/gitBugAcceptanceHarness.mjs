@@ -7,6 +7,7 @@ const proxyPrefix = 'https://cors.isomorphic-git.org/';
 const proxyPattern = `${proxyPrefix}**`;
 const defaultTimeout = 30_000;
 const maxDiagnostics = 50;
+const rawTransportDiagnosticPattern = /\b(?:ECONNRESET|git-(?:receive|upload)-pack)\b/gu;
 
 function boundedPush(values, value) {
   if (values.length < maxDiagnostics) values.push(value);
@@ -17,7 +18,7 @@ function redact(value, secrets) {
   for (const secret of secrets) {
     if (secret) result = result.split(secret).join('[REDACTED]');
   }
-  return result;
+  return result.replace(rawTransportDiagnosticPattern, '[REDACTED_TRANSPORT]');
 }
 
 function redactValue(value, secrets) {

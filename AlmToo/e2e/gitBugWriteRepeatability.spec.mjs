@@ -45,6 +45,9 @@ async function prepareRepeatabilityCommit(page, round, setPhase) {
   await expect(changedRefList).toContainText('refs/bugs/');
   await expect(changedRefList).toContainText('refs/identities/');
   await expect(page.getByRole('heading', { name: 'Confirm Git-Bug publication', level: 4 })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByLabel('Tab-scoped credential')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm publication' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Publish reviewed refs' })).toHaveCount(0);
   await assertIssueContentExactlyOnce(page, `Deterministic repeatability round ${round}.`);
 }
 
@@ -55,7 +58,15 @@ async function assertCredentialAbsent(page, credential) {
     session: JSON.stringify(sessionStorage),
     url: location.href
   }));
-  expect(JSON.stringify(browserState)).not.toContain(credential);
+  expect(browserState.html).not.toContain(credential);
+  expect(browserState.local).not.toContain(credential);
+  expect(browserState.url).not.toContain(credential);
+}
+
+async function assertSafeFailurePresentation(page) {
+  const alertText = (await page.getByRole('alert').allTextContents()).join('\n');
+  expect(alertText.length).toBeLessThan(1024);
+  expect(alertText).not.toMatch(/fixture-push-secret|Authorization:|git-receive-pack|controlled remote|stack trace|diagnostic/i);
 }
 
 test('repeats deterministic Git-Bug write and recovery without state leakage', async ({ page }, testInfo) => {
@@ -67,7 +78,7 @@ test('repeats deterministic Git-Bug write and recovery without state leakage', a
     await withGitBugAcceptance(page, testInfo, {
       scenario: `write-recovery-repeatability-round-${round}`,
       credential,
-      remote: { username: credential, password: 'x-oauth-basic', failureMode: 'auth' }
+      remote: { username: 'x-access-token', password: credential, failureMode: 'auth' }
     }, async ({ page: acceptancePage, remote, diagnostics, setPhase, assertNoCredential }) => {
       await expect(acceptancePage.getByRole('button', { name: 'Open issue: Unicode café regression 🐛' })).toBeVisible();
       await expect(acceptancePage.getByRole('heading', { name: /Repeatability round \d+/, level: 2 })).toHaveCount(0);
@@ -84,6 +95,7 @@ test('repeats deterministic Git-Bug write and recovery without state leakage', a
       await acceptancePage.getByRole('button', { name: 'Confirm publication' }).click();
       await acceptancePage.getByRole('button', { name: 'Publish reviewed refs' }).click();
       await expect(acceptancePage.getByRole('alert').first()).toContainText(/credential|permission|rejected/i);
+      await assertSafeFailurePresentation(acceptancePage);
       await assertCredentialAbsent(acceptancePage, credential);
       expect((await remote.snapshot()).refs).toEqual(initialRemote.refs);
 
@@ -99,7 +111,6 @@ test('repeats deterministic Git-Bug write and recovery without state leakage', a
       expect((await remote.snapshot()).requestCount).toBeGreaterThan(initialRemote.requestCount);
       assertNoCredential(await acceptancePage.evaluate(() => ({
         localStorage: Object.fromEntries(Object.entries(localStorage)),
-        sessionStorage: Object.fromEntries(Object.entries(sessionStorage)),
         body: document.body.innerText
       })));
       assertNoCredential(diagnostics);

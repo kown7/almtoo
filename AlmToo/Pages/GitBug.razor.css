@@ -398,6 +398,36 @@
     gap: 0.65rem;
 }
 
+::deep .gitbug-publication-review {
+    background: #fff;
+    border: 1px solid #bfdbfe;
+    border-radius: 0.65rem;
+    padding: 1rem;
+}
+
+::deep .gitbug-publication-ref {
+    align-items: flex-start;
+    display: grid;
+    gap: 0.35rem;
+}
+
+::deep .gitbug-publication-ref small,
+::deep .gitbug-publication-status {
+    color: #475569;
+}
+
+::deep .gitbug-publication-ref small {
+    overflow-wrap: anywhere;
+}
+
+::deep .gitbug-push-success {
+    background: #f0fdf4;
+    border-left: 0.25rem solid #16a34a;
+    color: #166534;
+    margin: 0;
+    padding: 0.75rem 1rem;
+}
+
 @media (max-width: 640px) {
     .gitbug-shell {
         max-width: 100%;

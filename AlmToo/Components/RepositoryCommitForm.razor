@@ -133,68 +133,93 @@
     </section>
 }
 
-@if (EnablePublicationWorkflow && (State.PublicationReview is not null || State.PublicationReceipt is not null || State.PublicationFailureKind is not null))
+@if (EnablePublicationWorkflow && (State.CreatedCommit is not null
+    || State.PublicationReview is not null
+    || State.GitBugPublication is not null
+    || State.GitBugPublicationReceipt is not null))
 {
-    <section class="repository-push-panel gitbug-push-panel" aria-labelledby="gitbug-publication-heading">
-        <p class="helper-text">Central publication</p>
+    <section class="repository-push-panel gitbug-push-panel gitbug-publication-panel"
+             aria-labelledby="gitbug-publication-heading"
+             data-gitbug-publication-status="@(State.GitBugPublication?.Status.ToString() ?? string.Empty)"
+             data-gitbug-publication-failure-kind="@(State.GitBugPublication?.FailureKind.ToString() ?? string.Empty)">
+        <p class="helper-text">Git-Bug publication</p>
         <h3 id="gitbug-publication-heading">Publish reviewed Git-Bug refs</h3>
-        <p>Review the branch, Git-Bug refs, and remote preconditions before publishing.</p>
-        @if (State.PublicationReview is null && State.Operation != WorkspaceOperation.ReviewPublication)
+        <p>Inspect the exact issue and identity refs first. Publication is a separate explicit action.</p>
+
+        @if (State.Operation == WorkspaceOperation.ReviewPublication && State.GitBugPublicationReview is null)
         {
-            @if (State.PublicationFailureKind is not null)
-            {
-                <div class="gitbug-push-recovery" role="alert" aria-live="assertive">
-                    <p>@(State.Error?.Message ?? "The Git-Bug publication did not complete.")</p>
-                </div>
-                <button class="gitbug-secondary-action" type="button" @onclick="RetryPublicationAsync" disabled="@State.IsBusy">Review and retry</button>
-            }
-            <button class="gitbug-action" type="button" @onclick="ReviewPublicationAsync" disabled="@State.IsBusy">Review Git-Bug refs</button>
+            <p class="gitbug-publication-status" role="status" aria-live="polite" aria-busy="true">Inspecting Git-Bug refs and remote preconditions…</p>
         }
-        else if (State.PublicationReview is { } publicationReview)
+        else if (State.GitBugPublicationReview is { } publicationReview)
         {
-            <div class="repository-push-review gitbug-push-review" role="group" aria-labelledby="gitbug-publication-review-heading">
+            <div class="repository-push-review gitbug-push-review gitbug-publication-review" role="group" aria-labelledby="gitbug-publication-review-heading">
                 <h4 id="gitbug-publication-review-heading">Confirm Git-Bug publication</h4>
                 <dl>
-                    <div><dt>Repository</dt><dd>@publicationReview.RepositoryUrl</dd></div>
-                    <div><dt>Branch</dt><dd>@publicationReview.Branch</dd></div>
-                    <div><dt>Reviewed refs</dt><dd>@publicationReview.BoundedUpdateCount</dd></div>
+                    <div><dt>Repository</dt><dd>@SafeRepositoryUrl(publicationReview.Request.RepositoryUrl)</dd></div>
+                    <div><dt>Branch</dt><dd><code>@publicationReview.Request.Branch</code></dd></div>
+                    <div><dt>Source revision</dt><dd><code>@publicationReview.SourceRevision</code></dd></div>
+                    <div><dt>Reviewed refs</dt><dd>@publicationReview.BoundedRefCount</dd></div>
+                    <div><dt>Required issue refs</dt><dd>@publicationReview.RequiredIssueRefs.Count</dd></div>
+                    <div><dt>Required identity refs</dt><dd>@publicationReview.RequiredIdentityRefs.Count</dd></div>
+                    <div><dt>Remote preconditions</dt><dd>@publicationReview.Request.RemotePreconditions.Count</dd></div>
                 </dl>
                 <ul class="changed-refs__list" aria-label="Reviewed Git-Bug refs">
-                    @foreach (var update in publicationReview.Updates)
+                    @foreach (var update in publicationReview.Request.Updates)
                     {
-                        <li class="changed-refs__item"><code>@update.RefName</code><span class="changed-files__badge">@update.Kind</span></li>
+                        var precondition = publicationReview.Request.RemotePreconditions
+                            .FirstOrDefault(candidate => candidate.RefName == update.RefName);
+                        <li class="changed-refs__item gitbug-publication-ref">
+                            <div><code>@update.RefName</code><span class="changed-files__badge">@update.Kind</span></div>
+                            <small>Local object <code>@update.NewObjectId</code>; remote precondition <code>@(precondition?.ExpectedObjectId ?? "absent")</code></small>
+                        </li>
                     }
                 </ul>
             </div>
-            @if (!State.HasCredential || State.CredentialReplacementRequired)
+            @if (State.GitBugPublicationReceipt is null)
             {
-                <form class="repository-credential-form gitbug-credential-form" @onsubmit="SubmitCredentialAsync" @onsubmit:preventDefault novalidate>
-                    <label for="@CredentialInputId">Tab-scoped credential</label>
-                    <input id="@CredentialInputId" type="password" aria-label="Tab-scoped credential" @bind="Credential" autocomplete="new-password" disabled="@State.IsBusy" />
-                    <small>The credential is kept only for this browser tab and never shown after submission.</small>
-                    <button class="gitbug-action" type="submit" disabled="@State.IsBusy">@(State.CredentialReplacementRequired ? "Replace credential" : "Use credential")</button>
-                </form>
+                @if (!CredentialAccepted && (!State.HasCredential
+                    || State.CredentialReplacementRequired
+                    || ForceCredentialEntry
+                    || (State.GitBugPublication is { } result
+                        && result.Status is not WorkspaceGitBugPublicationStatus.Ready
+                        && result.Status is not WorkspaceGitBugPublicationStatus.NoChanges)))
+                {
+                    <form class="repository-credential-form gitbug-credential-form" @onsubmit="SubmitCredentialAsync" @onsubmit:preventDefault novalidate>
+                        <label for="@CredentialInputId">Tab-scoped credential</label>
+                        <input id="@CredentialInputId" type="password" aria-label="Tab-scoped credential" @bind="Credential" autocomplete="new-password" disabled="@State.IsBusy" />
+                        <small>The credential is kept only for this browser tab and never shown after submission.</small>
+                        <button class="gitbug-action" type="submit" disabled="@State.IsBusy">@(RequiresCredentialReplacement ? "Replace credential" : "Use credential")</button>
+                    </form>
+                }
+                else if (!State.GitBugPublicationConfirmed)
+                {
+                    <p class="gitbug-credential-status" role="status" aria-live="polite">A credential is available for this browser tab.</p>
+                    <button class="gitbug-action" type="button" @onclick="ConfirmPublicationAsync" disabled="@State.IsBusy">Confirm publication</button>
+                }
+                else
+                {
+                    <button class="gitbug-action" type="button" @onclick="PublishPublicationAsync" disabled="@State.IsBusy">Publish reviewed refs</button>
+                }
             }
-            else if (!State.PublicationConfirmed)
-            {
-                <p class="gitbug-credential-status" role="status" aria-live="polite">A credential is available for this browser tab.</p>
-                <button class="gitbug-action" type="button" @onclick="ConfirmPublicationAsync" disabled="@State.IsBusy">Confirm publication</button>
-            }
-            else
-            {
-                <button class="gitbug-action" type="button" @onclick="PublishPublicationAsync" disabled="@State.IsBusy">Publish reviewed refs</button>
-            }
-            @if (State.PublicationFailureKind is not null)
-            {
-                <div class="gitbug-push-recovery" role="alert" aria-live="assertive">
-                    <p>@(State.Error?.Message ?? "The Git-Bug publication did not complete.")</p>
-                    <button class="gitbug-secondary-action" type="button" @onclick="RetryPublicationAsync" disabled="@State.IsBusy">Review and retry</button>
-                </div>
-            }
-            @if (State.PublicationReceipt is not null && State.LastWriteSucceeded == true)
-            {
-                <p class="gitbug-push-success" role="status" aria-live="polite">Git-Bug refs published successfully.</p>
-            }
+        }
+
+        @if (State.GitBugPublication is { } publicationResult
+            && publicationResult.Status is not WorkspaceGitBugPublicationStatus.Ready
+            && publicationResult.Status is not WorkspaceGitBugPublicationStatus.NoChanges)
+        {
+            <div class="gitbug-push-recovery" role="alert" aria-live="assertive">
+                <p>@SafePublicationFailureMessage(publicationResult)</p>
+                <button class="gitbug-secondary-action" type="button" @onclick="RetryPublicationAsync" disabled="@State.IsBusy">Review and retry</button>
+                <button class="gitbug-secondary-action" type="button" @onclick="ReviewPublicationAsync" disabled="@State.IsBusy">Review Git-Bug refs</button>
+            </div>
+        }
+        @if (State.GitBugPublicationReceipt is not null)
+        {
+            <p class="gitbug-push-success" role="status" aria-live="polite">Git-Bug refs published successfully.</p>
+        }
+        @if (State.GitBugPublicationReview is null && State.Operation != WorkspaceOperation.ReviewPublication)
+        {
+            <button class="gitbug-action" type="button" @onclick="ReviewPublicationAsync" disabled="@State.IsBusy">Review Git-Bug refs</button>
         }
     </section>
 }
@@ -224,8 +249,16 @@
     private string AuthorName { get; set; } = string.Empty;
     private string AuthorEmail { get; set; } = string.Empty;
     private string Credential { get; set; } = string.Empty;
+    private bool CredentialAccepted { get; set; }
+    private bool ForceCredentialEntry { get; set; }
     private string? ValidationError { get; set; }
     private bool IsCommitting => State.Operation is WorkspaceOperation.ReviewCommit or WorkspaceOperation.Commit;
+    private bool RequiresCredentialReplacement => State.HasCredential
+        || ForceCredentialEntry
+        || State.CredentialReplacementRequired
+        || (State.GitBugPublication is { } result
+            && result.Status is not WorkspaceGitBugPublicationStatus.Ready
+            && result.Status is not WorkspaceGitBugPublicationStatus.NoChanges);
     private string? CommitErrorMessage => ValidationError ?? (State.Error?.Operation is WorkspaceOperation.ReviewCommit or WorkspaceOperation.Commit
         ? State.Error.Message
         : null);
@@ -246,15 +279,25 @@
 
     private Task ConfirmCommitAsync() => OnCommitConfirmed.InvokeAsync();
     private Task ReviewPushAsync() => OnPushReviewRequested.InvokeAsync();
-    private Task ReviewPublicationAsync() => OnPublicationReviewRequested.InvokeAsync();
+    private async Task ReviewPublicationAsync()
+    {
+        CredentialAccepted = false;
+        ForceCredentialEntry = true;
+        await OnPublicationReviewRequested.InvokeAsync();
+    }
     private Task ConfirmPublicationAsync() => OnPublicationConfirmed.InvokeAsync();
     private Task PublishPublicationAsync() => OnPublicationRequested.InvokeAsync();
-    private Task RetryPublicationAsync() => OnRetryPublicationRequested.InvokeAsync();
+    private async Task RetryPublicationAsync()
+    {
+        CredentialAccepted = false;
+        ForceCredentialEntry = true;
+        await OnRetryPublicationRequested.InvokeAsync();
+    }
     private async Task SubmitCredentialAsync()
     {
         var credential = Credential;
         Credential = string.Empty;
-        if (State.CredentialReplacementRequired)
+        if (RequiresCredentialReplacement)
         {
             await OnCredentialReplacement.InvokeAsync(credential);
         }
@@ -262,6 +305,8 @@
         {
             await OnCredentialSubmitted.InvokeAsync(credential);
         }
+
+        CredentialAccepted = true;
     }
     private Task ConfirmPushAsync() => OnPushConfirmed.InvokeAsync();
     private Task PushAsync() => OnPushRequested.InvokeAsync();
@@ -275,4 +320,25 @@
         if (string.IsNullOrWhiteSpace(authorEmail) || !authorEmail.Contains('@')) return "Enter a valid author email.";
         return null;
     }
+
+    private static string SafeRepositoryUrl(string repositoryUrl)
+    {
+        if (Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var uri)
+            && string.IsNullOrWhiteSpace(uri.UserInfo))
+        {
+            return uri.ToString();
+        }
+
+        return "Reviewed remote (credentials redacted)";
+    }
+
+    private static string SafePublicationFailureMessage(WorkspaceGitBugPublicationResult result) =>
+        result.FailureKind switch
+        {
+            WorkspaceGitBugPublicationFailureKind.UnsupportedRef =>
+                $"{result.Message} Check credential or permission, then review and retry safely.",
+            WorkspaceGitBugPublicationFailureKind.Unknown =>
+                "A credential, permission, network, or publication service failure occurred. Review and retry safely.",
+            _ => result.Message
+        };
 }
