@@ -51,6 +51,55 @@ public sealed class WorkspaceManagerTests
         Assert.Equal("Choose an existing browser repository or enter a new repository URL.", manager.State.Result?.Message);
     }
 
+    [Fact]
+    public void Browser_proxy_contract_rejects_endpoint_values_from_client_code()
+    {
+        Assert.True(BrowserGitProxyContract.IsValidSelection(new BrowserGitProxySelection("isomorphic-git")));
+        Assert.False(BrowserGitProxyContract.IsValidSelection(new BrowserGitProxySelection("https://proxy.example")));
+        Assert.False(BrowserGitProxyContract.IsValidOption(new BrowserGitProxyOption("proxy", "Proxy\nwith diagnostics")));
+    }
+
+    [Fact]
+    public async Task Proxy_selection_requires_explicit_approval_and_invalidates_reviews_when_changed()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            PublicationReviewAsync = _ => ValueTask.FromResult(new GitOperationResult<GitPublicationReview>(
+                "inspectPublication", true, "Review ready.", PublicationReview)),
+            SynchronizeHandler = _ => Task.FromResult(new GitOperationResult<SynchronizationReview>(
+                "synchronize", true, "Review ready.", new(
+                    Repository.RepositoryUrl,
+                    "main",
+                    "local",
+                    new("incoming", "local", "Incoming", "Author", DateTimeOffset.UnixEpoch),
+                    [],
+                    SynchronizationDecisionState.ReadyToApply)))
+        };
+        using var manager = CreateManager(fake);
+
+        Assert.False(await manager.SelectProxyAsync("https://proxy.example"));
+        Assert.Equal(GitOperationFailureKind.ProxySelectionInvalid, manager.State.Error?.FailureKind);
+
+        Assert.True(await manager.OpenRepositoryAsync(Repository.RepositoryUrl));
+        Assert.True(await manager.SelectProxyAsync("isomorphic-git"));
+        Assert.Equal(BrowserGitProxyApprovalState.Pending, manager.State.ProxyApprovalState);
+        Assert.Equal(WorkspaceRouteBlockReason.ProxyApprovalRequired, manager.State.RouteBlockReason);
+        Assert.False(await manager.NavigateToWorkspaceAsync());
+
+        Assert.True(await manager.ApproveProxyAsync("isomorphic-git"));
+        Assert.True(await manager.NavigateToWorkspaceAsync());
+        Assert.Equal(WorkspaceRoute.Workspace, manager.State.Route);
+        Assert.True(await manager.ReviewPublicationAsync());
+        Assert.True(await manager.ReviewSynchronizationAsync());
+        Assert.NotNull(manager.State.PublicationReview);
+        Assert.NotNull(manager.State.SynchronizationReview);
+
+        Assert.True(await manager.SelectProxyAsync("direct"));
+        Assert.Equal(BrowserGitProxyApprovalState.Approved, manager.State.ProxyApprovalState);
+        Assert.Null(manager.State.PublicationReview);
+        Assert.Null(manager.State.SynchronizationReview);
+    }
+
     private static readonly RepositoryInfo Repository = new(
         "https://github.com/example/project.git", "project", "/workspaces/project", true);
     private static readonly RepositoryFileEntry Readme = new(

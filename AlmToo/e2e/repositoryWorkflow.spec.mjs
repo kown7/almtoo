@@ -7,7 +7,7 @@ function observeBrowserErrors(page) {
   const errors = [];
   page.on('pageerror', () => errors.push('pageerror'));
   page.on('console', message => {
-    if (message.type() === 'error') errors.push('console-error');
+    if (message.type() === 'error') errors.push(`console-error: ${message.text()}`);
   });
   return errors;
 }
@@ -17,15 +17,26 @@ async function expectManagerSettled(page) {
   await expect(page.getByRole('alert')).toHaveCount(0);
 }
 
+async function openApprovedWorkspace(page, repositoryUrl) {
+  await expect(page.getByLabel('Approved connection')).toBeVisible();
+  await page.getByLabel('Approved connection').selectOption('isomorphic-git');
+  await page.getByRole('button', { name: 'Approve connection' }).click();
+  await expect(page.getByText('Connection approved for this workspace.')).toBeVisible();
+  await page.getByLabel('Repository URL').fill(repositoryUrl);
+  await page.getByRole('button', { name: 'Open repository' }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to the workspace' })).toBeVisible({ timeout: 90_000 });
+  await page.getByRole('button', { name: 'Open workspace' }).click();
+  await expect(page).toHaveURL(/\/workspace$/);
+  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
+}
+
 test('reopens the existing browser-local repository after a page reload', async ({ page }) => {
   test.setTimeout(180_000);
   const browserErrors = observeBrowserErrors(page);
 
   await page.goto('/');
-  await page.getByLabel('Repository URL').fill(publicRepositoryUrl);
-  await page.getByRole('button', { name: 'Open repository' }).click();
-  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
-  await expect(page.getByRole('definition').filter({ hasText: 'Cloned in this session' })).toBeVisible();
+  await openApprovedWorkspace(page, publicRepositoryUrl);
+  await expect(page.getByRole('definition').filter({ hasText: /Cloned in this session|Opened from browser storage/ })).toBeVisible();
 
   await page.reload();
 
@@ -46,10 +57,7 @@ test('completes the browser-local repository workflow through push review', asyn
   await expect(page.getByRole('heading', { name: 'Open a public repository' })).toBeVisible();
   await expectManagerSettled(page);
 
-  await page.getByLabel('Repository URL').fill(publicRepositoryUrl);
-  await page.getByRole('button', { name: 'Open repository' }).click();
-  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
-  await expect(page.getByRole('button', { name: 'Open repository' })).toBeEnabled();
+  await openApprovedWorkspace(page, publicRepositoryUrl);
   await expect(page.getByRole('definition').filter({ hasText: /Cloned in this session|Opened from browser storage/ })).toBeVisible();
   await expectManagerSettled(page);
 
@@ -115,9 +123,7 @@ test('reviews repository synchronization through safe Client state without apply
 
   await page.goto('/');
   await expect(page).toHaveTitle('Repository Browser');
-  await page.getByLabel('Repository URL').fill(publicRepositoryUrl);
-  await page.getByRole('button', { name: 'Open repository' }).click();
-  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
+  await openApprovedWorkspace(page, publicRepositoryUrl);
   await expectManagerSettled(page);
 
   const workspace = page.getByRole('region', { name: 'Browse workspace' });

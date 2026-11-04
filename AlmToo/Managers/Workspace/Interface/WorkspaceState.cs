@@ -10,6 +10,16 @@ public sealed record WorkspaceState
     public WorkspaceError? Error { get; internal set; }
     public WorkspaceResult? Result { get; internal set; }
 
+    public WorkspaceRoute Route { get; internal set; } = WorkspaceRoute.Home;
+    public WorkspaceRouteBlockReason RouteBlockReason { get; internal set; } = WorkspaceRouteBlockReason.RepositoryUnavailable;
+
+    /// <summary>Only approved identifiers are exposed to Clients; endpoint details never enter this state.</summary>
+    public IReadOnlyList<BrowserGitProxyOption> ApprovedProxyOptions { get; internal set; } = Array.Empty<BrowserGitProxyOption>();
+    public BrowserGitProxySelection? SelectedProxy { get; internal set; }
+    public BrowserGitProxyApproval? ProxyApproval { get; internal set; }
+    public BrowserGitProxyApprovalState ProxyApprovalState { get; internal set; } = BrowserGitProxyApprovalState.NotSelected;
+    public bool ProxyApproved => ProxyApprovalState == BrowserGitProxyApprovalState.Approved;
+
     public RepositoryInfo? Repository { get; internal set; }
     public bool RepositoryAvailable => Repository is not null;
     public IReadOnlyList<LocalRepositoryCandidate> AvailableRepositories { get; internal set; } = Array.Empty<LocalRepositoryCandidate>();

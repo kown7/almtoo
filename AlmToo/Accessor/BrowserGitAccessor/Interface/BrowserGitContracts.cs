@@ -22,6 +22,8 @@ public enum GitOperationFailureKind
     CredentialRejected,
     RemoteAhead,
     NetworkUnavailable,
+    ProxySelectionInvalid,
+    ProxyApprovalRequired,
     UnsupportedRef,
     GitBugDataUnavailable,
     GitBugFormatUnsupported,
@@ -365,7 +367,52 @@ public sealed record GitBugComment(
     string AuthorDisplayName,
     string Body);
 
-public record RepositoryOpenRequest(string RepositoryUrl, string WorkspaceName);
+/// <summary>One proxy configuration approved by the application for browser Git transport.</summary>
+/// <remarks>The identifier is the only value accepted from Client code; endpoint details remain an Accessor concern.</remarks>
+public sealed record BrowserGitProxyOption(
+    string Id,
+    string DisplayName,
+    bool RequiresApproval = true);
+
+/// <summary>Client selection of an approved browser Git proxy by stable identifier.</summary>
+public sealed record BrowserGitProxySelection(string ProxyId);
+
+/// <summary>Explicit user approval for a selected browser Git proxy.</summary>
+public sealed record BrowserGitProxyApproval(string ProxyId, bool Approved);
+
+public static class BrowserGitProxyContract
+{
+    public const int MaximumProxyIdLength = 64;
+
+    public static bool IsValidOption(BrowserGitProxyOption? option) =>
+        option is not null
+        && IsSafeIdentifier(option.Id)
+        && IsSafeDisplayName(option.DisplayName);
+
+    public static bool IsValidSelection(BrowserGitProxySelection? selection) =>
+        selection is not null && IsSafeIdentifier(selection.ProxyId);
+
+    public static bool IsValidApproval(BrowserGitProxyApproval? approval) =>
+        approval is not null && IsSafeIdentifier(approval.ProxyId);
+
+    public static bool IsValidProxyId(string? proxyId) =>
+        proxyId is null || IsSafeIdentifier(proxyId);
+
+    private static bool IsSafeIdentifier(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= MaximumProxyIdLength
+        && value.Trim() == value
+        && value.All(character => char.IsLetterOrDigit(character) || character is '-' or '_');
+
+    private static bool IsSafeDisplayName(string? value) =>
+        value is not null
+        && value.Trim().Length > 0
+        && value.Length <= 128
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+}
+
+public record RepositoryOpenRequest(string RepositoryUrl, string WorkspaceName, string? ProxyId = null);
 public record LocalRepositoryCandidate(string RepositoryUrl, string WorkspaceName, string RootPath);
 public record RepositoryInfo(string RepositoryUrl, string WorkspaceName, string RootPath, bool WasCloned);
 
@@ -438,7 +485,8 @@ public record PushRequest(
     string RepositoryUrl,
     string Branch,
     string OutgoingCommitId,
-    string DestinationRef);
+    string DestinationRef,
+    string? ProxyId = null);
 
 public record PushResult(
     string RepositoryUrl,
@@ -479,7 +527,8 @@ public sealed record GitPublicationRequest(
     string RepositoryUrl,
     string Branch,
     IReadOnlyList<GitRefUpdate> Updates,
-    IReadOnlyList<GitRemotePrecondition> RemotePreconditions);
+    IReadOnlyList<GitRemotePrecondition> RemotePreconditions,
+    string? ProxyId = null);
 
 /// <summary>Credential-free publication review shown before an explicit apply operation.</summary>
 public sealed record GitPublicationReview(
@@ -512,7 +561,8 @@ public sealed record GitBugPublicationRef(
 /// <summary>Request for passive inspection of the remote Git-Bug ref advertisement.</summary>
 public sealed record GitBugRemoteInspectionRequest(
     string RepositoryUrl,
-    string Branch);
+    string Branch,
+    string? ProxyId = null);
 
 /// <summary>One safe Git-Bug ref observed in a remote advertisement.</summary>
 public sealed record GitBugRemoteRef(
@@ -539,7 +589,8 @@ public sealed record GitBugPublicationRequest(
     string Branch,
     string SourceRevision,
     IReadOnlyList<GitRefUpdate> Updates,
-    IReadOnlyList<GitRemotePrecondition> RemotePreconditions);
+    IReadOnlyList<GitRemotePrecondition> RemotePreconditions,
+    string? ProxyId = null);
 
 /// <summary>Safe receipt for a validated Git-Bug publication.</summary>
 public sealed record GitBugPublicationReceipt(
@@ -585,7 +636,8 @@ public static class BrowserGitPublicationContract
         && request.RemotePreconditions is not null
         && request.RemotePreconditions.Count <= MaximumRemotePreconditions
         && request.RemotePreconditions.All(IsValidRemotePrecondition)
-        && HasUniqueRefs(request.RemotePreconditions.Select(precondition => precondition.RefName));
+        && HasUniqueRefs(request.RemotePreconditions.Select(precondition => precondition.RefName))
+        && BrowserGitProxyContract.IsValidProxyId(request.ProxyId);
 
     public static bool IsValidOperation(string? operation) => operation is
         GitBugPublicationOperations.InspectRemote or
@@ -608,7 +660,8 @@ public static class BrowserGitPublicationContract
     public static bool IsValidInspectionRequest(GitBugRemoteInspectionRequest? request) =>
         request is not null
         && IsAllowedRepositoryUri(request.RepositoryUrl)
-        && IsSafeBranch(request.Branch);
+        && IsSafeBranch(request.Branch)
+        && BrowserGitProxyContract.IsValidProxyId(request.ProxyId);
 
     public static bool IsValidRemoteRef(GitBugRemoteRef? remoteRef) =>
         remoteRef is not null
@@ -647,7 +700,8 @@ public static class BrowserGitPublicationContract
         && HasUniqueRefs(request.RemotePreconditions.Select(precondition => precondition.RefName))
         && request.RemotePreconditions.All(precondition => request.Updates.Any(update =>
             string.Equals(update.RefName, precondition.RefName, StringComparison.Ordinal)
-            && string.Equals(update.ExpectedOldObjectId, precondition.ExpectedObjectId, StringComparison.Ordinal)));
+            && string.Equals(update.ExpectedOldObjectId, precondition.ExpectedObjectId, StringComparison.Ordinal)))
+        && BrowserGitProxyContract.IsValidProxyId(request.ProxyId);
 
     public static bool IsValidReceipt(GitBugPublicationReceipt? receipt) =>
         receipt is not null
@@ -829,7 +883,8 @@ public enum SynchronizationFailureCategory
 public record SynchronizationRequest(
     string RepositoryUrl,
     string Branch,
-    SynchronizationIntent Intent);
+    SynchronizationIntent Intent,
+    string? ProxyId = null);
 
 /// <summary>Remote commit information used for review; it contains no credentials or transport diagnostics.</summary>
 public record IncomingCommitMetadata(

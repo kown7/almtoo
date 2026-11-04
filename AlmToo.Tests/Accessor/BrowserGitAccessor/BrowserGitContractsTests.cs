@@ -8,6 +8,16 @@ namespace AlmToo.Tests.Accessor.BrowserGitAccessor;
 public sealed class BrowserGitContractsTests
 {
     [Fact]
+    public void Browser_proxy_contract_accepts_identifiers_only_and_rejects_transport_endpoints()
+    {
+        Assert.True(BrowserGitProxyContract.IsValidOption(new BrowserGitProxyOption("isomorphic-git", "Isomorphic Git public proxy")));
+        Assert.True(BrowserGitProxyContract.IsValidSelection(new BrowserGitProxySelection("isomorphic-git")));
+        Assert.True(BrowserGitProxyContract.IsValidApproval(new BrowserGitProxyApproval("isomorphic-git", true)));
+        Assert.False(BrowserGitProxyContract.IsValidSelection(new BrowserGitProxySelection("https://proxy.example")));
+        Assert.False(BrowserGitProxyContract.IsValidOption(new BrowserGitProxyOption("isomorphic-git", "proxy\nwith diagnostics")));
+    }
+
+    [Fact]
     public void Synchronization_request_and_review_have_data_only_serialization_shape()
     {
         var request = new SynchronizationRequest(

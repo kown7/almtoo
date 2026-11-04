@@ -18,12 +18,40 @@ public enum GitBugWorkspaceStatus
     Failed
 }
 
+/// <summary>Stable routes for the repository selection and repository workspace Clients.</summary>
+public enum WorkspaceRoute
+{
+    Home,
+    Workspace
+}
+
+/// <summary>Safe reasons why navigation to the workspace is currently blocked.</summary>
+public enum WorkspaceRouteBlockReason
+{
+    None,
+    RepositoryUnavailable,
+    ProxySelectionRequired,
+    ProxyApprovalRequired
+}
+
+/// <summary>Manager-owned lifecycle for the selected approved proxy.</summary>
+public enum BrowserGitProxyApprovalState
+{
+    NotSelected,
+    Pending,
+    Approved,
+    Invalidated
+}
+
 /// <summary>Stable application use-case identifiers. These names are safe for Client state and diagnostics.</summary>
 public enum WorkspaceOperation
 {
     None,
     InitializeCredential,
     InitializeWorkspace,
+    SelectProxy,
+    ApproveProxy,
+    NavigateToWorkspace,
     OpenRepository,
     LoadDirectory,
     LoadFile,

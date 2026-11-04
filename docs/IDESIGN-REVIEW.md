@@ -20,6 +20,16 @@ This file contains historical reviews below; those entries are evidence, not aut
 
 The agent must present the current section to the user and stop while it is `PENDING APPROVAL`. No architecture-affecting plan or source-code implementation may begin until the user explicitly approves it. If the scope or interface set changes materially, reset the status to `PENDING APPROVAL` and repeat the stop.
 
+## M018 S01 T01 approved proxy contracts and Manager policy
+
+**Status:** APPROVED
+**Affected layers:** Manager -> Accessor; Client consumes Manager state only
+**Dependency direction:** Client -> WorkspaceManager -> IBrowserGitAccessor
+**Interfaces added or retained:** Retained `IBrowserGitAccessor`; added passive proxy DTO contracts beside the Accessor boundary
+**Interface justifications:** `IBrowserGitAccessor` remains the genuine browser/platform substitution seam; proxy identifiers and approvals are passive boundary data and do not expose transport endpoints to Client code.
+**Exceptions or risks:** The Manager owns the approved proxy identifier allowlist and invalidates reviewed publication/synchronization state when selection changes; endpoint resolution remains deferred to the Accessor/Resource implementation task.
+**User approval:** Autonomous execution authorized by the M018/S01/T01 task dispatch.
+
 ## Manager policy expansion
 
 **Status:** APPROVED
@@ -552,3 +562,26 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Exceptions or risks:** Existing workspaces with missing or malformed origin metadata will be ignored with a stable user-safe diagnostic rather than surfaced as unusable choices. Discovery must not require credentials or remote access, and opening an existing workspace must preserve the current fail-safe error contract.
 **Verification plan:** Add focused Accessor/Resource and Manager state tests, a Home Client contract test for the chooser and auto-open behavior, and serial Chromium coverage proving a reload discovers and reopens a persisted repository or presents a selection when multiple repositories exist.
 **Approval basis:** User approved the scoped architecture review before implementation; verification is recorded by the focused Manager/Resource tests and serial Chromium reload acceptance.
+
+## Workspace page and approved Git proxy selection
+
+**Status:** APPROVED by explicit user approval on 2026-11-03
+**Affected layers:** Client, Manager, Accessor, and browser Git Resource; no new Engine is required.
+**Dependency direction:** Repository landing Client -> WorkspaceManager -> retained IBrowserGitAccessor -> browserGitEngine Resource; dedicated Workspace Client -> WorkspaceManager for the complete repository editing surface.
+**Interfaces added or retained:** Retain the concrete `WorkspaceManager` and `IBrowserGitAccessor`; extend passive Accessor contracts with approved proxy options, proxy selection, and explicit approval state. No new service interface is proposed.
+**Interface justifications:** `IBrowserGitAccessor` remains the platform boundary for proxy-backed browser Git transport; passive proxy contracts carry an approved identifier and display metadata without exposing arbitrary endpoint configuration or requiring a second service seam.
+**Ownership decisions:** The landing Client owns repository selection and navigation to `/workspace`; the dedicated Workspace Client owns repository browsing, editing, synchronization, branch/history, and publication presentation while delegating operations to `WorkspaceManager`. The Manager validates that a proxy is approved before opening or synchronizing a repository. The Accessor and Resource resolve only catalogued proxy identifiers; the Client never calls JavaScript or supplies arbitrary proxy URLs.
+**Proxy trust policy:** GitHub and other origins that require a CORS proxy must show the selected approved proxy, explain that the proxy can observe or relay repository traffic, and require explicit user approval before the first proxied operation. Proxy selection and approval are session-scoped and must not persist credentials.
+**Exceptions or risks:** A direct repository open must fail closed when its origin requires a proxy but no approved proxy is selected. Changing the proxy invalidates any pending review or synchronization result. The dedicated Workspace route must recover persisted local repositories on direct reload and redirect to the landing page when no workspace is available.
+**Verification plan:** Add Client route and Manager contract tests, proxy allowlist and approval-state tests, Accessor/Resource tests proving arbitrary proxy URLs are rejected, and Chromium coverage for landing-page selection, explicit proxy approval, navigation to `/workspace`, direct workspace reload, and safe proxy-change invalidation.
+**Approval basis:** User approved the scoped architecture review before planning; implementation remains pending until this slice is planned and executed.
+
+## M018 S01 T03 approved proxy-aware Resource transport and reload recovery
+
+**Status:** APPROVED
+**Affected layers:** Manager, Accessor, Resource; existing Clients consume Manager state only
+**Dependency direction:** Client -> WorkspaceManager -> IBrowserGitAccessor -> browserGitEngine Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; extend existing passive request contracts with approved proxy identifiers; no new service interface.
+**Interface justifications:** `IBrowserGitAccessor` remains the genuine browser/platform substitution seam for JavaScript and browser storage; proxy identifiers are validated passive data and endpoint resolution remains private to the Resource.
+**Exceptions or risks:** The Resource owns the finite identifier-to-endpoint map and omits proxy credentials/endpoints from returned metadata; direct transport remains an explicit approved option, while unknown identifiers fail closed.
+**Approval basis:** Autonomous execution authorized by the M018/S01/T03 task dispatch.

@@ -31,9 +31,9 @@ test('Git-Bug navigation and composition expose the concrete Manager Client', as
 });
 
 test('WorkspaceManager owns repository, publication, and Git-Bug use-cases', async () => {
-  const [page, home, gitBugManager, gitBugState, repositoryManager, repositoryState] = await Promise.all([
+  const [page, workspace, gitBugManager, gitBugState, repositoryManager, repositoryState] = await Promise.all([
     source('Pages/GitBug.razor'),
-    source('Pages/Home.razor'),
+    source('Pages/Workspace.razor'),
     source('Managers/Workspace/Service/WorkspaceGitBugFacet.cs'),
     source('Managers/Workspace/Interface/WorkspaceState.cs'),
     source('Managers/Workspace/Service/WorkspaceManager.cs'),
@@ -54,8 +54,8 @@ test('WorkspaceManager owns repository, publication, and Git-Bug use-cases', asy
   assert.match(page, /Workspace\.ConfirmGitBugPublication\(true\)/);
   assert.match(page, /Workspace\.PublishGitBugPublicationAsync\(\)/);
   assert.doesNotMatch(page, /AlmToo\.Accessor|IGitBugAccessor|BrowserGitAccessor|GitRefUpdate|GitBugPublicationRef|GitPublicationRequest|RemotePrecondition/);
-  assert.match(home, /Workspace\.State/);
-  assert.match(home, /RepositoryChangedFiles/);
+  assert.match(workspace, /@inject WorkspaceManager Manager/);
+  assert.match(workspace, /RepositoryChangedFiles/);
   assert.doesNotMatch(gitBugManager, /^\s*(?:public|private|protected)[^{\n]*(?:Commit|Push)[^{\n]*\(/m);
   assert.match(gitBugState, /public GitBugState GitBug/);
 
