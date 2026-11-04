@@ -5,18 +5,7 @@ import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
 const source = name => readFile(new URL(name, root), 'utf8');
 
-async function clientSources() {
-  return Promise.all([
-    source('Pages/Home.razor'),
-    source('Components/RepositoryFileBrowser.razor'),
-    source('Components/RepositoryBranchSelector.razor'),
-    source('Components/RepositoryCommitHistory.razor'),
-    source('Components/RepositoryChangedFiles.razor'),
-    source('Components/RepositoryCommitForm.razor')
-  ]);
-}
-
-test('composition registers one scoped browser workspace Accessor and concrete Manager', async () => {
+test('composition registers one scoped browser Git Accessor and concrete workspace Manager', async () => {
   const program = await source('Program.cs');
 
   assert.match(program, /AddScoped<BrowserGitAccessor>\(\)/);
@@ -25,188 +14,49 @@ test('composition registers one scoped browser workspace Accessor and concrete M
   assert.doesNotMatch(program, /IRepositoryWorkspaceManager|IVersionControlAccessor|Resources/);
 });
 
-test('Home injects the concrete repository Manager and has no Client to Accessor edge', async () => {
-  const [home, ...children] = await clientSources();
-  const allClients = [home, ...children].join('\n');
+test('Home is limited to repository selection, local recovery, proxy approval, and navigation', async () => {
+  const home = await source('Pages/Home.razor');
 
+  assert.ok(home.includes('@page "/"'));
   assert.match(home, /@inject WorkspaceManager Workspace/);
-  assert.match(home, /@using AlmToo\.Managers\.Workspace/);
-  assert.doesNotMatch(allClients, /IBrowserGitAccessor|IBrowserFileAccessor|BrowserGitAccessor|AlmToo\.Accessor|AlmToo\.Services\.Git/);
-  assert.doesNotMatch(allClients, /IJSRuntime|IJSObjectReference|JSImport|InvokeAsync<.*>\("(?:storeCredential|getCredentialForPush|forgetCredential|hasCredential)"/);
-  assert.doesNotMatch(allClients, /\.Diagnostic\b|personalAccessToken|accessToken/i);
-  assert.doesNotMatch(allClients, /IRepositoryWorkspaceManager|IVersionControlAccessor|Resources/);
+  assert.match(home, /@inject NavigationManager Navigation/);
+  assert.match(home, /OpenRepositoryAsync/);
+  assert.match(home, /OpenExistingRepositoryAsync/);
+  assert.match(home, /InitializeWorkspaceAsync/);
+  assert.match(home, /State\.AvailableRepositories/);
+  assert.match(home, /State\.ApprovedProxyOptions/);
+  assert.match(home, /SelectProxyAsync/);
+  assert.match(home, /ApproveProxyAsync/);
+  assert.match(home, /NavigateToWorkspaceAsync/);
+  assert.doesNotMatch(home, /RepositoryFileBrowser|RepositoryBranchSelector|RepositoryCommitHistory|RepositoryChangedFiles|RepositoryCommitForm/);
+  assert.doesNotMatch(home, /LoadDirectoryAsync|SelectFileAsync|ApplySynchronizationAsync|PushReviewedCommitAsync/);
 });
 
-test('Home delegates the complete repository workflow to the Manager', async () => {
+test('Home exposes stable proxy identifiers without accepting arbitrary endpoint input', async () => {
   const home = await source('Pages/Home.razor');
 
-  for (const delegation of [
-    'Workspace.InitializeWorkspaceAsync()',
-    'Workspace.OpenRepositoryAsync(repositoryUrl)',
-    'Workspace.LoadDirectoryAsync(path)',
-    'Workspace.SelectFileAsync(path)',
-    'Workspace.EditSelectedFile(',
-    'Workspace.SaveSelectedFileAsync()',
-    'Workspace.RefreshStatusAsync()',
-    'Workspace.LoadBranchHistoryAsync()',
-    'Workspace.SwitchBranchAsync(branchName)',
-    'Workspace.CommitAsync(input)',
-    'Workspace.InspectPushAsync()',
-    'Workspace.StoreCredentialAsync(credentialForAttempt)',
-    'Workspace.ForgetCredentialAsync()',
-    'Workspace.PushReviewedCommitAsync(State.PushReview)',
-    'Workspace.CancelCurrentOperation'
-  ]) assert.ok(home.includes(delegation), `missing Manager delegation: ${delegation}`);
-
-  assert.match(home, /Workspace\.StateChanged \+= HandleStateChanged/);
-  assert.match(home, /Workspace\.StateChanged -= HandleStateChanged/);
-  assert.doesNotMatch(home, /new RepositoryOpenRequest|new PushRequest|NormalizeRepositoryPath|GetPushRecoveryGuidance|CreateWorkspaceName/);
+  assert.match(home, /@onchange="SelectProxyAsync"/);
+  assert.match(home, /@onclick="ApproveProxyAsync"/);
+  assert.match(home, /State\.SelectedProxy\?\.ProxyId/);
+  assert.match(home, /Approved connection/);
+  assert.doesNotMatch(home, /proxyUrl|proxy-url|endpointUrl|endpoint-url|<input[^>]+proxy/i);
 });
 
-test('Home renders Manager-owned state and passes that state to presentation children', async () => {
+test('Home keeps route blocking and approval feedback in Manager-owned state', async () => {
   const home = await source('Pages/Home.razor');
 
-  assert.match(home, /private WorkspaceState State => Workspace\.State/);
-  assert.match(home, /<RepositoryFileBrowser State="State"[\s\S]*OnDirectorySelected="LoadDirectoryAsync"[\s\S]*OnFileSelected="SelectFileAsync"/);
-  assert.match(home, /<RepositoryBranchSelector State="State"[\s\S]*OnRefreshRequested="LoadBranchHistoryAsync"[\s\S]*OnBranchSelected="SwitchBranchAsync"/);
-  assert.match(home, /<RepositoryCommitHistory State="State"[\s\S]*OnRetryRequested="LoadBranchHistoryAsync"\s*\/>/);
-  assert.match(home, /<RepositoryChangedFiles State="State" OnRefreshRequested="RefreshStatusAsync"/);
-  assert.match(home, /<RepositoryCommitForm State="State" OnCommitRequested="CommitAsync"/);
-  assert.match(home, /@State\.Repository\.RepositoryUrl/);
-  assert.match(home, /@State\.EditableFileContent/);
-  assert.match(home, /@State\.Result\.Message/);
-  assert.doesNotMatch(home, /\.Diagnostic/);
+  assert.match(home, /State\.RouteBlockReason/);
+  assert.match(home, /WorkspaceRouteBlockReason\.ProxySelectionRequired/);
+  assert.match(home, /WorkspaceRouteBlockReason\.ProxyApprovalRequired/);
+  assert.match(home, /data-proxy-approval="approved"/);
+  assert.match(home, /disabled="@\(State\.IsBusy \|\| State\.RouteBlockReason/);
 });
 
-test('repository child components are presentation-only Manager state and callback surfaces', async () => {
-  const [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm] = await Promise.all([
-    source('Components/RepositoryFileBrowser.razor'),
-    source('Components/RepositoryBranchSelector.razor'),
-    source('Components/RepositoryCommitHistory.razor'),
-    source('Components/RepositoryChangedFiles.razor'),
-    source('Components/RepositoryCommitForm.razor')
-  ]);
-  const children = [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm].join('\n');
-
-  for (const child of [fileBrowser, branchSelector, commitHistory, changedFiles, commitForm]) {
-    assert.match(child, /@using AlmToo\.Managers\.Workspace/);
-    assert.match(child, /WorkspaceState State/);
-    assert.doesNotMatch(child, /@inject|Workspace\.|Accessor|IJSRuntime/);
-  }
-  assert.match(fileBrowser, /EventCallback<string> OnDirectorySelected/);
-  assert.match(fileBrowser, /EventCallback<string> OnFileSelected/);
-  assert.match(changedFiles, /EventCallback OnRefreshRequested/);
-  assert.match(commitForm, /EventCallback<WorkspaceCommitInput> OnCommitRequested/);
-  assert.doesNotMatch(children, /\b(?:CommitRequest|PushRequest|RepositoryOpenRequest)\b/);
-});
-
-test('file browser distinguishes directories editable text and unsupported files', async () => {
-  const fileBrowser = await source('Components/RepositoryFileBrowser.razor');
-
-  assert.match(fileBrowser, /entry\.Kind\.ToString\(\) == "Directory"/);
-  assert.match(fileBrowser, /OnDirectorySelected\.InvokeAsync\(entry\.Path\)/);
-  assert.match(fileBrowser, /entry\.IsEditableText/);
-  assert.match(fileBrowser, /OnFileSelected\.InvokeAsync\(entry\.Path\)/);
-  assert.match(fileBrowser, /Binary or oversized file not available for text editing/);
-  assert.match(fileBrowser, /aria-disabled="true"/);
-});
-
-test('commit form validates presentation input and delegates a Manager-owned DTO', async () => {
-  const commitForm = await source('Components/RepositoryCommitForm.razor');
-
-  assert.match(commitForm, /@onsubmit="CreateCommitAsync"/);
-  assert.match(commitForm, /CommitMessage\.Trim\(\)/);
-  assert.match(commitForm, /Enter a commit message\./);
-  assert.match(commitForm, /Enter an author name\./);
-  assert.match(commitForm, /Enter a valid author email\./);
-  assert.match(commitForm, /new WorkspaceCommitInput\(message, authorName, authorEmail\)/);
-  assert.match(commitForm, /State\.CreatedCommit\.CommitId/);
-  assert.match(commitForm, /State\.CreatedCommit\.Message/);
-});
-
-test('credential and push presentation reveal presence only and preserve exact review coordinates', async () => {
+test('Home recovers local workspace state through the Manager on first render', async () => {
   const home = await source('Pages/Home.razor');
+  const initIndex = home.indexOf('await Workspace.InitializeWorkspaceAsync()');
+  const managerIndex = home.indexOf('@inject WorkspaceManager Workspace');
 
-  assert.match(home, /id="github-pat"[\s\S]*type="password"[\s\S]*value="@credentialInput"/);
-  assert.match(home, /credentialInput = string\.Empty;[\s\S]*Workspace\.StoreCredentialAsync\(credentialForAttempt\)[\s\S]*credentialForAttempt = string\.Empty/);
-  assert.match(home, /data-credential-state="present"/);
-  assert.match(home, /data-push-review="origin">@State\.PushReview\.RepositoryUrl/);
-  assert.match(home, /data-push-review="branch">@State\.PushReview\.Branch/);
-  assert.match(home, /data-push-review="destination">@State\.PushReview\.DestinationRef/);
-  assert.match(home, /data-push-review="sha">@State\.PushReview\.OutgoingCommitId/);
-  assert.match(home, /checked="@State\.PushConfirmed"/);
-  assert.match(home, /State\.PushReview is not null && State\.PushConfirmed && State\.HasCredential && !State\.IsBusy/);
-  assert.doesNotMatch(home, /sessionStorage|localStorage|getCredentialForPush|personalAccessToken|\.Diagnostic/);
-});
-
-test('failure and cancellation state remain accessible and manually recoverable', async () => {
-  const home = await source('Pages/Home.razor');
-
-  assert.match(home, /Cancel current operation/);
-  assert.match(home, /data-push-failure="@State\.PushFailureCategory"/);
-  assert.match(home, /role="@\(State\.PushFailureCategory is null \? "status" : "alert"\)"/);
-  assert.match(home, /aria-live="@\(State\.PushFailureCategory is null \? "polite" : "assertive"\)"/);
-  assert.match(home, /CredentialReplacementRequired/);
-  assert.match(home, /Review push/);
-  assert.match(home, /Push reviewed commit/);
-});
-
-test('synchronization review remains Manager-only, confirmation-gated, and safe for every stable outcome', async () => {
-  const home = await source('Pages/Home.razor');
-
-  for (const delegation of [
-    'Workspace.ReviewSynchronizationAsync()',
-    'Workspace.ApplySynchronizationAsync(State.SynchronizationReview)',
-    'Workspace.CancelCurrentOperation'
-  ]) assert.ok(home.includes(delegation), `missing synchronization Manager delegation: ${delegation}`);
-
-  assert.match(home, /State\.SynchronizationReview is \{ \} review/);
-  assert.match(home, /review\.IncomingCommit is \{ \} incomingCommit/);
-  assert.match(home, /incomingCommit\.AuthorName/);
-  assert.match(home, /incomingCommit\.Message/);
-  assert.match(home, /incomingCommit\.AuthoredAt/);
-  assert.match(home, /review\.ChangedFiles/);
-  assert.match(home, /id="confirm-synchronization"[\s\S]*checked="@synchronizationConfirmed"/);
-  assert.match(home, /State\.SynchronizationReview is not null && IsSynchronizationDecision\("ReadyToApply"\) && synchronizationConfirmed && !State\.IsBusy/);
-  assert.match(home, /if \(CanApplySynchronization && State\.SynchronizationReview is not null\)/);
-  assert.match(home, /synchronizationConfirmed = false;[\s\S]*Workspace\.ReviewSynchronizationAsync\(\)/);
-  assert.match(home, /data-synchronization-progress="@State\.Operation"[\s\S]*role="status"/);
-  assert.match(home, /data-synchronization-failure="@State\.SynchronizationFailureCode"[\s\S]*role="@\(State\.SynchronizationFailureCode is null \? "status" : "alert"\)/);
-
-  for (const outcome of [
-    'Current', 'Ahead', 'Divergent', 'Cancelled', 'Failed',
-    'unsaved-editor-changes', 'uncommitted-working-tree', 'credential-rejected', 'network-unavailable',
-    'unsupported-ref', 'divergent-history', 'invalid-repository', 'cancelled', 'unknown'
-  ]) assert.match(home, new RegExp(outcome), `missing stable synchronization outcome: ${outcome}`);
-
-  assert.doesNotMatch(home, /IBrowserGitAccessor|BrowserGitAccessor|IJSRuntime|browserGitEngine|\.Diagnostic\b|personalAccessToken|accessToken/i);
-});
-
-test('repository reload discovers persisted workspaces and offers explicit recovery choices', async () => {
-  const home = await source('Pages/Home.razor');
-
-  assert.match(home, /InitializeWorkspaceAsync\(\)/);
-  assert.match(home, /State\.AvailableRepositories\.Count > 1/);
-  assert.match(home, /OpenExistingRepositoryAsync\(repository\.RepositoryUrl\)/);
-  assert.doesNotMatch(home, /IJSRuntime/);
-});
-
-test('repository browser and push review styles retain stateful responsive surfaces', async () => {
-  const [homeStyles, fileBrowserStyles, commitStyles] = await Promise.all([
-    source('Pages/Home.razor.css'),
-    source('Components/RepositoryFileBrowser.razor.css'),
-    source('Components/RepositoryCommitForm.razor.css')
-  ]);
-
-  assert.match(homeStyles, /\.repository-status/);
-  assert.match(homeStyles, /\.file-editor__textarea/);
-  assert.match(homeStyles, /\.push-panel/);
-  assert.match(homeStyles, /\.push-review__sha/);
-  assert.match(homeStyles, /\.status-message\[data-push-failure\]/);
-  assert.match(homeStyles, /\.synchronization-panel/);
-  assert.match(homeStyles, /\.synchronization-review__commit/);
-  assert.match(homeStyles, /\.synchronization-confirmation/);
-  assert.match(homeStyles, /\.status-message\[data-synchronization-failure\]/);
-  assert.match(fileBrowserStyles, /\.file-browser__entry--unsupported/);
-  assert.match(commitStyles, /\.commit-form__confirmation/);
+  assert.notEqual(initIndex, -1);
+  assert.ok(managerIndex < initIndex);
 });
