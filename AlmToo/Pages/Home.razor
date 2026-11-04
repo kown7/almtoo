@@ -80,7 +80,7 @@
         </section>
     }
 
-    @if (State.Repository is not null)
+    @if (State.ApprovedProxyOptions.Count > 0)
     {
         <section class="proxy-policy-card" aria-labelledby="proxy-policy-heading">
             <div>
@@ -116,7 +116,9 @@
             }
         </section>
 
-        <section class="workspace-entry-card" aria-labelledby="workspace-entry-heading">
+        @if (State.Repository is not null)
+        {
+            <section class="workspace-entry-card" aria-labelledby="workspace-entry-heading">
             <div>
                 <p class="helper-text">Dedicated repository workspace</p>
                 <h2 id="workspace-entry-heading">Continue to the workspace</h2>
@@ -130,7 +132,8 @@
             {
                 <p class="@ResultCssClass" role="@(State.Result.Succeeded ? "status" : "alert")">@State.Result.Message</p>
             }
-        </section>
+            </section>
+        }
     }
 </section>
 

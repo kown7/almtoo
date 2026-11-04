@@ -575,3 +575,13 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Exceptions or risks:** A direct repository open must fail closed when its origin requires a proxy but no approved proxy is selected. Changing the proxy invalidates any pending review or synchronization result. The dedicated Workspace route must recover persisted local repositories on direct reload and redirect to the landing page when no workspace is available.
 **Verification plan:** Add Client route and Manager contract tests, proxy allowlist and approval-state tests, Accessor/Resource tests proving arbitrary proxy URLs are rejected, and Chromium coverage for landing-page selection, explicit proxy approval, navigation to `/workspace`, direct workspace reload, and safe proxy-change invalidation.
 **Approval basis:** User approved the scoped architecture review before planning; implementation remains pending until this slice is planned and executed.
+
+## M018 S01 T03 approved proxy-aware Resource transport and reload recovery
+
+**Status:** APPROVED
+**Affected layers:** Manager, Accessor, Resource; existing Clients consume Manager state only
+**Dependency direction:** Client -> WorkspaceManager -> IBrowserGitAccessor -> browserGitEngine Resource
+**Interfaces added or retained:** Retain `IBrowserGitAccessor`; extend existing passive request contracts with approved proxy identifiers; no new service interface.
+**Interface justifications:** `IBrowserGitAccessor` remains the genuine browser/platform substitution seam for JavaScript and browser storage; proxy identifiers are validated passive data and endpoint resolution remains private to the Resource.
+**Exceptions or risks:** The Resource owns the finite identifier-to-endpoint map and omits proxy credentials/endpoints from returned metadata; direct transport remains an explicit approved option, while unknown identifiers fail closed.
+**Approval basis:** Autonomous execution authorized by the M018/S01/T03 task dispatch.

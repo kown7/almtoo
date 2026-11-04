@@ -6,7 +6,20 @@ const vendorScripts = [
 ];
 
 const workspaceRoot = '/almtoo-workspaces';
-const corsProxy = 'https://cors.isomorphic-git.org';
+const approvedProxyConfigurations = Object.freeze({
+  direct: Object.freeze({
+    id: 'direct',
+    displayName: 'Direct connection',
+    requiresApproval: false,
+    endpoint: null
+  }),
+  'isomorphic-git': Object.freeze({
+    id: 'isomorphic-git',
+    displayName: 'Isomorphic Git public proxy',
+    requiresApproval: true,
+    endpoint: 'https://cors.isomorphic-git.org'
+  })
+});
 const maxEditableTextBytes = 1024 * 1024;
 const gitBugLimits = Object.freeze({
   issueCount: 1000,
@@ -44,7 +57,24 @@ let filesystem;
 const pendingGitBugChanges = new Set();
 let activeRepository;
 
-async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
+function resolveApprovedProxy(proxyId) {
+  const normalized = proxyId === undefined || proxyId === null ? 'direct' : proxyId;
+  if (typeof normalized !== 'string'
+      || normalized.length === 0
+      || normalized.length > 64
+      || normalized.trim() !== normalized
+      || !/^[A-Za-z0-9_-]+$/u.test(normalized)
+      || !Object.hasOwn(approvedProxyConfigurations, normalized)) {
+    throw new Error('proxy-selection-invalid');
+  }
+  return approvedProxyConfigurations[normalized];
+}
+
+function withApprovedProxy(options, proxy) {
+  return proxy.endpoint ? { ...options, corsProxy: proxy.endpoint } : options;
+}
+
+async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl, proxy }) {
   const namespaces = [
     { prefix: 'refs/bugs/' },
     { prefix: 'refs/identities/' }
@@ -55,12 +85,11 @@ async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
     let serverRefs;
 
     try {
-      serverRefs = await git.listServerRefs({
+      serverRefs = await git.listServerRefs(withApprovedProxy({
         http,
         url: repositoryUrl,
-        corsProxy,
         prefix
-      });
+      }, proxy));
     } catch {
       // Git-Bug metadata is optional. A repository must still open when its remote
       // cannot advertise optional refs (for example, while offline).
@@ -79,16 +108,15 @@ async function fetchGitBugRefs({ fs, git, http, dir, repositoryUrl }) {
     for (const advertised of refs) {
       const ref = advertised.ref;
       try {
-        const fetched = await git.fetch({
+        const fetched = await git.fetch(withApprovedProxy({
           fs,
           http,
           dir,
           url: repositoryUrl,
-          corsProxy,
           ref,
           remoteRef: ref,
           singleBranch: true
-        });
+        }, proxy));
 
         // Some isomorphic-git versions complete an arbitrary ref fetch without
         // returning fetchHead. The advertised object id is still authoritative
@@ -124,6 +152,18 @@ async function getControlledResourceResponse(operation, request) {
   }
 
   return await adapter[operation](request);
+}
+
+export async function listApprovedProxies() {
+  const controlled = await getControlledResourceResponse('listApprovedProxies');
+  if (controlled) return controlled;
+
+  return success('listApprovedProxies', 'Approved browser Git connections were discovered.',
+    Object.values(approvedProxyConfigurations).map(({ id, displayName, requiresApproval }) => ({
+      id,
+      displayName,
+      requiresApproval
+    })));
 }
 
 export async function initialize() {
@@ -194,12 +234,13 @@ export async function listLocalRepositories() {
 }
 
 export async function cloneOrOpen(request) {
-  const controlled = await getControlledResourceResponse('cloneOrOpen', request);
-  if (controlled) return controlled;
-
   const operation = 'cloneOrOpen';
 
   try {
+    const proxy = resolveApprovedProxy(request?.proxyId);
+    const controlled = await getControlledResourceResponse('cloneOrOpen', request);
+    if (controlled) return controlled;
+
     await ensureDependencies();
     const fs = await ensureFilesystem();
     const repositoryUrl = requireText(request?.repositoryUrl, 'repositoryUrl');
@@ -220,10 +261,9 @@ export async function cloneOrOpen(request) {
         const branchCommit = await git.resolveRef({ fs, dir, ref: `refs/heads/${branch}` });
         await git.checkout({ fs, dir, ref: branchCommit, force: true, noUpdateHead: true });
       }
-      // Reopen the ordinary branch state first, then best-effort refresh optional
-      // Git-Bug metadata without making the local repository depend on the remote.
-      await fetchGitBugRefs({ fs, git, http: getGitHttp(), dir, repositoryUrl });
-      activeRepository = { repositoryUrl, workspaceName, dir };
+      // Reopen persisted browser storage without touching the remote. Remote Git-Bug
+      // metadata is refreshed only by an explicit, proxy-aware inspection operation.
+      activeRepository = { repositoryUrl, workspaceName, dir, proxyId: proxy.id };
       return success(operation, 'Opened the existing browser-local repository.', {
         repositoryUrl,
         workspaceName,
@@ -234,18 +274,17 @@ export async function cloneOrOpen(request) {
 
     await mkdirp(fs, dir);
     const http = getGitHttp();
-    await git.clone({
+    await git.clone(withApprovedProxy({
       fs,
       http,
       dir,
       url: repositoryUrl,
-      corsProxy,
       singleBranch: true,
       depth: 1
-    });
-    await fetchGitBugRefs({ fs, git, http, dir, repositoryUrl });
+    }, proxy));
+    await fetchGitBugRefs({ fs, git, http, dir, repositoryUrl, proxy });
 
-    activeRepository = { repositoryUrl, workspaceName, dir };
+    activeRepository = { repositoryUrl, workspaceName, dir, proxyId: proxy.id };
 
     return success(operation, 'Cloned the repository into browser-local storage.', {
       repositoryUrl,
@@ -874,6 +913,7 @@ export async function synchronize(request) {
   let synchronizationSnapshot;
 
   try {
+    const proxy = resolveApprovedProxy(request?.proxyId);
     const repositoryUrl = canonicalizeGitHubOrigin(requireText(request?.repositoryUrl, 'repositoryUrl'));
     const branch = parseLocalBranchRef(`refs/heads/${requireText(request?.branch, 'branch')}`);
     const rawIntent = request?.intent;
@@ -899,7 +939,15 @@ export async function synchronize(request) {
     const remoteRef = `refs/remotes/origin/${branch}`;
     synchronizationSnapshot = await captureSynchronizationRefs(git, fs, dir, branch, remoteRef);
     if (intent !== 'Apply') {
-      await git.fetch({ fs, http: getGitHttp(), dir, url: origin, corsProxy, ref: branch, singleBranch: true, depth: 50 });
+      await git.fetch(withApprovedProxy({
+        fs,
+        http: getGitHttp(),
+        dir,
+        url: origin,
+        ref: branch,
+        singleBranch: true,
+        depth: 50
+      }, proxy));
     }
     const localCommitId = synchronizationSnapshot.localCommitId;
     const remoteCommitId = await git.resolveRef({ fs, dir, ref: remoteRef });
@@ -933,17 +981,16 @@ export async function synchronize(request) {
         if (typeof git.merge === 'function') {
           await git.merge({ fs, dir, ours: branch, theirs: remoteCommitId, fastForwardOnly: true });
         } else if (typeof git.pull === 'function') {
-          await git.pull({
+          await git.pull(withApprovedProxy({
             fs,
             http: getGitHttp(),
             dir,
             url: origin,
             ref: branch,
-            corsProxy,
             fastForwardOnly: true,
             singleBranch: true,
             depth: 50
-          });
+          }, proxy));
         } else {
           await git.checkout({ fs, dir, ref: remoteCommitId, force: true, noUpdateHead: true });
           await git.writeRef({ fs, dir, ref: `refs/heads/${branch}`, value: remoteCommitId, force: true });
@@ -1469,6 +1516,7 @@ export async function push(review, personalAccessToken) {
   let token;
 
   try {
+    const proxy = resolveApprovedProxy(review?.proxyId);
     token = requireText(personalAccessToken, 'personalAccessToken');
     const reviewed = validatePushReview(review);
     const current = await readPushState(operation);
@@ -1479,12 +1527,11 @@ export async function push(review, personalAccessToken) {
 
     const { fs, dir } = await getActiveWorkspace(operation);
     try {
-      await getGit().push({
+      await getGit().push(withApprovedProxy({
         fs,
         http: getGitHttp(),
         dir,
         url: current.repositoryUrl,
-        corsProxy,
         ref: current.branch,
         remoteRef: current.branch,
         force: false,
@@ -1492,7 +1539,7 @@ export async function push(review, personalAccessToken) {
           username: token,
           password: 'x-oauth-basic'
         })
-      });
+      }, proxy));
     } catch (error) {
       return normalizedPushFailure(classifyPushFailure(error));
     }
@@ -1958,13 +2005,13 @@ async function listLocalPublicationUpdates({ fs, dir, git, branch, outgoingCommi
   return updates;
 }
 
-async function readRemotePublicationPreconditions({ git, http, repositoryUrl, updates }) {
+async function readRemotePublicationPreconditions({ git, http, repositoryUrl, updates, proxy }) {
   const prefixes = ['refs/heads/', 'refs/bugs/', 'refs/identities/'];
   const advertised = new Map();
   for (const prefix of prefixes) {
     let refs;
     try {
-      refs = await git.listServerRefs({ http, url: repositoryUrl, corsProxy, prefix });
+      refs = await git.listServerRefs(withApprovedProxy({ http, url: repositoryUrl, prefix }, proxy));
     } catch {
       if (prefix === 'refs/heads/') {
         throw new Error('publication-network-unavailable');
@@ -2107,11 +2154,13 @@ async function readPublicationState(operation) {
     throw new TypeError('publication-object-malformed');
   }
   const updates = await listLocalPublicationUpdates({ fs, dir, git, branch, outgoingCommitId });
+  const proxy = resolveApprovedProxy(activeRepository?.proxyId);
   const remotePreconditions = await readRemotePublicationPreconditions({
     git,
     http: getGitHttp(),
     repositoryUrl,
-    updates
+    updates,
+    proxy
   });
   return {
     repositoryUrl,
@@ -2156,6 +2205,7 @@ async function withPublicationTimeout(promise, timeoutMs = 15_000) {
 export async function publish(request, personalAccessToken) {
   const operation = 'publish';
   try {
+    const proxy = resolveApprovedProxy(request?.proxyId);
     const token = requireText(personalAccessToken, 'personalAccessToken');
     const destinationRef = `refs/heads/${request?.branch ?? ''}`;
     const outgoingCommitId = Array.isArray(request?.updates)
@@ -2175,16 +2225,15 @@ export async function publish(request, personalAccessToken) {
     const refspecs = reviewed.updates.map(update => `${update.refName}:${update.refName}`);
     const pushRef = getGit().push.bind(getGit());
     for (const update of reviewed.updates) {
-      await withPublicationTimeout(pushRef({
+      await withPublicationTimeout(pushRef(withApprovedProxy({
         fs,
         http: getGitHttp(),
         dir,
         url: current.repositoryUrl,
-        corsProxy,
         ref: update.refName === current.destinationRef ? current.branch : update.refName,
         remoteRef: update.refName,
         onAuth: () => ({ username: token, password: 'x-oauth-basic' })
-      }));
+      }, proxy)));
     }
     return success(operation, 'The reviewed publication set was pushed.', {
       repositoryUrl: current.repositoryUrl,
@@ -2312,6 +2361,7 @@ function normalizeGitBugRef(value, namespace) {
 }
 
 function normalizeGitBugPublicationRequest(request) {
+  const proxy = resolveApprovedProxy(request?.proxyId);
   if (!request || typeof request !== 'object'
       || typeof request.reviewId !== 'string'
       || request.reviewId.length === 0
@@ -2380,7 +2430,8 @@ function normalizeGitBugPublicationRequest(request) {
     branch: request.branch,
     sourceRevision: request.sourceRevision,
     updates,
-    remotePreconditions
+    remotePreconditions,
+    proxyId: proxy.id
   };
 }
 
@@ -2397,11 +2448,11 @@ function normalizeGitBugRemoteAdvertisement(advertisement, namespace) {
   });
 }
 
-async function listGitBugRemoteRefs({ git, http, repositoryUrl, personalAccessToken = null }) {
+async function listGitBugRemoteRefs({ git, http, repositoryUrl, personalAccessToken = null, proxy }) {
   const refs = [];
   const seen = new Set();
   for (const namespace of ['bugs', 'identities']) {
-    const options = { http, url: repositoryUrl, corsProxy, prefix: `refs/${namespace}/` };
+    const options = withApprovedProxy({ http, url: repositoryUrl, prefix: `refs/${namespace}/` }, proxy);
     if (typeof personalAccessToken === 'string' && personalAccessToken.length > 0) {
       options.onAuth = () => ({ username: 'x-access-token', password: personalAccessToken });
     }
@@ -2452,12 +2503,14 @@ export async function inspectGitBugRemote(request) {
   }
 
   try {
+    const proxy = resolveApprovedProxy(request.proxyId);
     await ensureDependencies();
     const { git } = { git: getGit() };
     const refs = await listGitBugRemoteRefs({
       git,
       http: getGitHttp(),
-      repositoryUrl: request.repositoryUrl
+      repositoryUrl: request.repositoryUrl,
+      proxy
     });
     return gitBugPublicationSuccess(operation, 'The remote Git-Bug refs were inspected.', {
       repositoryUrl: request.repositoryUrl,
@@ -2494,11 +2547,13 @@ export async function publishGitBug(request, personalAccessToken) {
     }
     const { fs, dir } = workspace;
     const git = getGit();
+    const proxy = resolveApprovedProxy(review.proxyId);
     const remoteRefs = await listGitBugRemoteRefs({
       git,
       http: getGitHttp(),
       repositoryUrl: review.repositoryUrl,
-      personalAccessToken
+      personalAccessToken,
+      proxy
     });
     const remoteByRef = new Map(remoteRefs.map(ref => [ref.refName, ref.objectId]));
     for (const precondition of review.remotePreconditions) {
@@ -2518,17 +2573,16 @@ export async function publishGitBug(request, personalAccessToken) {
       if (update.kind === 'Update' && update.expectedOldObjectId === null && currentObjectId === null) {
         return gitBugPublicationFailure(operation, 'gitBugPublicationStaleRemote');
       }
-      await withPublicationTimeout(git.push({
+      await withPublicationTimeout(git.push(withApprovedProxy({
         fs,
         http: getGitHttp(),
         dir,
         url: review.repositoryUrl,
-        corsProxy,
         ref: update.refName,
         remoteRef: update.refName,
         force: false,
         onAuth: () => ({ username: 'x-access-token', password: personalAccessToken })
-      }));
+      }, proxy)));
       pushedUpdates.push(update);
     }
 
@@ -2777,7 +2831,8 @@ function failure(operation, message, error, secrets = []) {
     succeeded: false,
     message,
     value: null,
-    diagnostic: redactSecrets(getDiagnostic(error), secrets)
+    diagnostic: redactSecrets(getDiagnostic(error), secrets),
+    failureKind: error?.message === 'proxy-selection-invalid' ? 'proxySelectionInvalid' : null
   };
 }
 

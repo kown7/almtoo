@@ -56,7 +56,19 @@ public sealed partial class WorkspaceManager : IDisposable
 
             if (State.AvailableRepositories.Count == 1)
             {
-                return await OpenRepositoryCoreAsync(State.AvailableRepositories[0].RepositoryUrl, token);
+                var direct = approvedProxyOptions.First(option => option.Id == "direct");
+                State.SelectedProxy = new BrowserGitProxySelection(direct.Id);
+                State.ProxyApproval = new BrowserGitProxyApproval(direct.Id, true);
+                State.ProxyApprovalState = BrowserGitProxyApprovalState.Approved;
+
+                var reopened = await OpenRepositoryCoreAsync(State.AvailableRepositories[0].RepositoryUrl, token);
+                if (reopened)
+                {
+                    State.Route = WorkspaceRoute.Workspace;
+                    UpdateWorkspaceRouteState();
+                }
+
+                return reopened;
             }
 
             var message = State.AvailableRepositories.Count == 0
@@ -170,7 +182,7 @@ public sealed partial class WorkspaceManager : IDisposable
 
         ResetWorkspace();
         var open = await gitAccessor.CloneOrOpenAsync(
-            new RepositoryOpenRequest(trimmedUrl, CreateWorkspaceName(trimmedUrl)), token);
+            new RepositoryOpenRequest(trimmedUrl, CreateWorkspaceName(trimmedUrl), State.SelectedProxy?.ProxyId), token);
         if (!open.Succeeded || open.Value is null)
         {
             return Fail(open, "The repository could not be opened. Check that the URL is public and supported.");
@@ -194,6 +206,7 @@ public sealed partial class WorkspaceManager : IDisposable
             return false;
         }
 
+        UpdateWorkspaceRouteState();
         return Succeed(open.Message);
     }
 
@@ -371,7 +384,7 @@ public sealed partial class WorkspaceManager : IDisposable
             State.SynchronizationFailureCategory = null;
             var repository = State.Repository!;
             var result = await gitAccessor.SynchronizeAsync(
-                new SynchronizationRequest(repository.RepositoryUrl, "main", SynchronizationIntent.Review), token);
+                new SynchronizationRequest(repository.RepositoryUrl, "main", SynchronizationIntent.Review, State.SelectedProxy?.ProxyId), token);
             if (!result.Succeeded || result.Value is null)
             {
                 return FailSynchronization(result);
@@ -420,7 +433,7 @@ public sealed partial class WorkspaceManager : IDisposable
 
             var repository = State.Repository!;
             var result = await gitAccessor.SynchronizeAsync(
-                new SynchronizationRequest(repository.RepositoryUrl, reviewedSynchronization.Branch, SynchronizationIntent.Apply), token);
+                new SynchronizationRequest(repository.RepositoryUrl, reviewedSynchronization.Branch, SynchronizationIntent.Apply, State.SelectedProxy?.ProxyId), token);
             if (!result.Succeeded || result.Value is null)
             {
                 return FailSynchronization(result);
@@ -518,7 +531,7 @@ public sealed partial class WorkspaceManager : IDisposable
             try
             {
                 remote = await gitAccessor.InspectGitBugRemoteAsync(
-                    new GitBugRemoteInspectionRequest(repository.RepositoryUrl, branch), token);
+                    new GitBugRemoteInspectionRequest(repository.RepositoryUrl, branch, State.SelectedProxy?.ProxyId), token);
             }
             catch (NotSupportedException)
             {
@@ -652,7 +665,7 @@ public sealed partial class WorkspaceManager : IDisposable
             try
             {
                 remote = await gitAccessor.InspectGitBugRemoteAsync(
-                    new GitBugRemoteInspectionRequest(repository.RepositoryUrl, review.Request.Branch), token);
+                    new GitBugRemoteInspectionRequest(repository.RepositoryUrl, review.Request.Branch, State.SelectedProxy?.ProxyId), token);
             }
             catch (NotSupportedException)
             {
@@ -714,7 +727,7 @@ public sealed partial class WorkspaceManager : IDisposable
             }
 
             return await PublishPublicationCoreAsync(
-                new GitPublicationRequest(review.RepositoryUrl, review.Branch, review.Updates, review.RemotePreconditions),
+                new GitPublicationRequest(review.RepositoryUrl, review.Branch, review.Updates, review.RemotePreconditions, State.SelectedProxy?.ProxyId),
                 token);
         }, cancellationToken);
 
@@ -890,7 +903,7 @@ public sealed partial class WorkspaceManager : IDisposable
                 return Fail("The push coordinates changed after review. Review the current destination and commit before pushing.");
             }
 
-            var request = new PushRequest(reviewedPush.RepositoryUrl, reviewedPush.Branch, reviewedPush.OutgoingCommitId, reviewedPush.DestinationRef);
+            var request = new PushRequest(reviewedPush.RepositoryUrl, reviewedPush.Branch, reviewedPush.OutgoingCommitId, reviewedPush.DestinationRef, State.SelectedProxy?.ProxyId);
             var result = await gitAccessor.PushAsync(request, token);
             State.PushConfirmed = false;
             if (!result.Succeeded || result.Value is null)
@@ -1463,7 +1476,8 @@ public sealed partial class WorkspaceManager : IDisposable
             branch,
             plan.SourceRevision,
             updates,
-            preconditions);
+            preconditions,
+            State.SelectedProxy?.ProxyId);
         var issueRefs = input.LocalRefs
             .Where(reference => reference.Kind == AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugPublicationRefKind.Issue)
             .ToArray();

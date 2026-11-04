@@ -286,3 +286,28 @@ test('publishGitBug maps auth, network, cancellation, and rejection failures wit
     assert.doesNotMatch(JSON.stringify(result), /secret-token|private token leaked/);
   }
 });
+
+test('approved proxy discovery exposes metadata and rejects arbitrary proxy input', async () => {
+  delete globalThis.document;
+  delete globalThis.LightningFS;
+  delete globalThis.git;
+  delete globalThis.GitHttp;
+
+  const engine = await importFreshModule();
+  const discovered = await engine.listApprovedProxies();
+  assert.equal(discovered.succeeded, true);
+  assert.deepEqual(discovered.value, [
+    { id: 'direct', displayName: 'Direct connection', requiresApproval: false },
+    { id: 'isomorphic-git', displayName: 'Isomorphic Git public proxy', requiresApproval: true }
+  ]);
+  assert.doesNotMatch(JSON.stringify(discovered), /cors\.isomorphic-git\.org/);
+
+  const rejected = await engine.cloneOrOpen({
+    repositoryUrl: 'https://github.com/octocat/Hello-World.git',
+    workspaceName: 'proxy-rejection',
+    proxyId: 'https://arbitrary.example/proxy'
+  });
+  assert.equal(rejected.succeeded, false);
+  assert.equal(rejected.failureKind, 'proxySelectionInvalid');
+  assert.doesNotMatch(JSON.stringify(rejected), /arbitrary\.example|cors\.isomorphic-git\.org/);
+});

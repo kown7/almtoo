@@ -225,3 +225,17 @@ test('reviewed reconciliation apply is preconditioned, bounded, and rollback-saf
   assert.doesNotMatch(applySurface, /git\.(?:fetch|push|commit)\s*\(/);
   assert.doesNotMatch(applySurface, /personalAccessToken|github_pat|credential/i);
 });
+
+test('approved proxy transport is identifier-only and resolved inside the Resource', async () => {
+  const [engine, contracts] = await Promise.all([
+    source('wwwroot/js/browserGitEngine.js'),
+    source('Accessor/BrowserGitAccessor/Interface/BrowserGitContracts.cs')
+  ]);
+  assert.match(engine, /export async function listApprovedProxies\(\)/);
+  assert.match(engine, /approvedProxyConfigurations/);
+  assert.match(engine, /resolveApprovedProxy\(request\?\.proxyId\)/);
+  assert.doesNotMatch(engine, /const corsProxy\s*=/);
+  assert.match(contracts, /string\? ProxyId = null/);
+  assert.match(contracts, /IsValidProxyId/);
+  assert.doesNotMatch(contracts, /ProxyId[^\n]*https?:\/\//);
+});
