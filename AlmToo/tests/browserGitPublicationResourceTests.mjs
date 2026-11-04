@@ -31,7 +31,7 @@ function installLoadingDocument() {
   };
 }
 
-function installFakeRuntime(gitOverrides = {}) {
+function installFakeRuntime(gitOverrides = {}, fsOverrides = {}) {
   class FakeLightningFS {
     constructor() {
       this.promises = {
@@ -47,7 +47,8 @@ function installFakeRuntime(gitOverrides = {}) {
         async readdir() { return []; },
         async readFile() { return new Uint8Array(); },
         async writeFile() {},
-        async flush() {}
+        async flush() {},
+        ...fsOverrides
       };
     }
   }
@@ -81,6 +82,40 @@ async function openRepository(gitOverrides = {}) {
   assert.equal(opened.succeeded, true);
   return engine;
 }
+
+test('listLocalRepositories discovers valid persisted workspaces without remote access', async () => {
+  delete globalThis.document;
+  delete globalThis.LightningFS;
+  delete globalThis.git;
+  delete globalThis.GitHttp;
+  installLoadingDocument();
+  installFakeRuntime(
+    {
+      async getConfig({ dir }) {
+        return dir.endsWith('/alpha')
+          ? 'https://github.com/example/alpha.git'
+          : 'ssh://unsafe.example/beta.git';
+      }
+    },
+    {
+      async stat() { return { isFile: () => true, size: 0 }; },
+      async readdir(path) {
+        return path === '/almtoo-workspaces' ? ['beta', 'alpha'] : [];
+      }
+    });
+
+  const engine = await importFreshModule();
+  const discovered = await engine.listLocalRepositories();
+
+  assert.equal(discovered.succeeded, true);
+  assert.deepEqual(discovered.value, [
+    {
+      repositoryUrl: 'https://github.com/example/alpha.git',
+      workspaceName: 'alpha',
+      rootPath: '/almtoo-workspaces/alpha'
+    }
+  ]);
+});
 
 function publicationRequest(overrides = {}) {
   const refName = `refs/bugs/${'b'.repeat(64)}`;

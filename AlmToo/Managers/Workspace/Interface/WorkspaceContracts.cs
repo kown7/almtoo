@@ -23,6 +23,7 @@ public enum WorkspaceOperation
 {
     None,
     InitializeCredential,
+    InitializeWorkspace,
     OpenRepository,
     LoadDirectory,
     LoadFile,

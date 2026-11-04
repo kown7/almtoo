@@ -145,6 +145,54 @@ export async function initialize() {
   }
 }
 
+export async function listLocalRepositories() {
+  const controlled = await getControlledResourceResponse('listLocalRepositories');
+  if (controlled) return controlled;
+
+  const operation = 'listLocalRepositories';
+
+  try {
+    await ensureDependencies();
+    const fs = await ensureFilesystem();
+    const git = getGit();
+    await mkdirp(fs, workspaceRoot);
+    const names = await fs.promises.readdir(workspaceRoot);
+    const repositories = [];
+
+    for (const workspaceName of Array.isArray(names) ? names : []) {
+      if (typeof workspaceName !== 'string'
+          || !/^[A-Za-z0-9._-]{1,80}$/u.test(workspaceName)) {
+        continue;
+      }
+
+      const dir = `${workspaceRoot}/${workspaceName}`;
+      if (!(await isRepository(fs, git, dir))) {
+        continue;
+      }
+
+      try {
+        const repositoryUrl = canonicalizeGitHubOrigin(
+          await git.getConfig({ fs, dir, path: 'remote.origin.url' }));
+        repositories.push({
+          repositoryUrl,
+          workspaceName,
+          rootPath: dir
+        });
+      } catch {
+        // Ignore incomplete or unsupported local entries instead of exposing unsafe metadata.
+      }
+    }
+
+    repositories.sort((left, right) => left.repositoryUrl.localeCompare(right.repositoryUrl));
+    return success(operation, 'Existing browser repositories were discovered.', repositories);
+  } catch (error) {
+    return failure(
+      operation,
+      'Existing browser repositories could not be discovered.',
+      error);
+  }
+}
+
 export async function cloneOrOpen(request) {
   const controlled = await getControlledResourceResponse('cloneOrOpen', request);
   if (controlled) return controlled;

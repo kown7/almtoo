@@ -9,6 +9,48 @@ namespace AlmToo.Tests.Managers.Workspace;
 
 public sealed class WorkspaceManagerTests
 {
+    [Fact]
+    public async Task InitializeWorkspaceAsync_reopens_the_only_existing_repository()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            LocalRepositories =
+            [
+                new LocalRepositoryCandidate(
+                    "https://github.com/example/project.git",
+                    "project",
+                    "/almtoo-workspaces/project")
+            ]
+        };
+        var manager = CreateManager(fake);
+
+        Assert.True(await manager.InitializeWorkspaceAsync());
+        Assert.Single(fake.OpenRequests);
+        Assert.Equal("https://github.com/example/project.git", fake.OpenRequests[0].RepositoryUrl);
+        Assert.NotNull(manager.State.Repository);
+        Assert.Empty(manager.State.AvailableRepositories);
+    }
+
+    [Fact]
+    public async Task InitializeWorkspaceAsync_keeps_multiple_existing_repositories_for_user_choice()
+    {
+        var fake = new FakeBrowserAccessor
+        {
+            LocalRepositories =
+            [
+                new LocalRepositoryCandidate("https://github.com/example/alpha.git", "alpha", "/almtoo-workspaces/alpha"),
+                new LocalRepositoryCandidate("https://github.com/example/beta.git", "beta", "/almtoo-workspaces/beta")
+            ]
+        };
+        var manager = CreateManager(fake);
+
+        Assert.True(await manager.InitializeWorkspaceAsync());
+        Assert.Empty(fake.OpenRequests);
+        Assert.Null(manager.State.Repository);
+        Assert.Equal(2, manager.State.AvailableRepositories.Count);
+        Assert.Equal("Choose an existing browser repository or enter a new repository URL.", manager.State.Result?.Message);
+    }
+
     private static readonly RepositoryInfo Repository = new(
         "https://github.com/example/project.git", "project", "/workspaces/project", true);
     private static readonly RepositoryFileEntry Readme = new(
@@ -1071,6 +1113,7 @@ public sealed class WorkspaceManagerTests
     {
         public List<string> Calls { get; } = [];
         public List<RepositoryOpenRequest> OpenRequests { get; } = [];
+        public IReadOnlyList<LocalRepositoryCandidate> LocalRepositories { get; set; } = [];
         public List<FilterFilesRequest> FilterRequests { get; } = [];
         public List<UpdateFilesRequest> UpdateRequests { get; } = [];
         public Queue<GitOperationResult<PushReview>> InspectResults { get; } = new();
@@ -1143,6 +1186,10 @@ public sealed class WorkspaceManagerTests
             OpenRequests.Add(request);
             return ValueTask.FromResult(new GitOperationResult<RepositoryInfo>("open", true, "Repository ready.", Repository));
         }
+
+        public ValueTask<GitOperationResult<IReadOnlyList<LocalRepositoryCandidate>>> ListLocalRepositoriesAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(new GitOperationResult<IReadOnlyList<LocalRepositoryCandidate>>(
+                "listLocalRepositories", true, "Repositories discovered.", LocalRepositories));
 
         public async ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(CancellationToken cancellationToken = default)
         {

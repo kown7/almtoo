@@ -17,6 +17,24 @@ async function expectManagerSettled(page) {
   await expect(page.getByRole('alert')).toHaveCount(0);
 }
 
+test('reopens the existing browser-local repository after a page reload', async ({ page }) => {
+  test.setTimeout(180_000);
+  const browserErrors = observeBrowserErrors(page);
+
+  await page.goto('/');
+  await page.getByLabel('Repository URL').fill(publicRepositoryUrl);
+  await page.getByRole('button', { name: 'Open repository' }).click();
+  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByRole('definition').filter({ hasText: 'Cloned in this session' })).toBeVisible();
+
+  await page.reload();
+
+  await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByRole('definition').filter({ hasText: 'Opened from browser storage' })).toBeVisible();
+  await expect(page.getByText(publicRepositoryUrl)).toBeVisible();
+  expect(browserErrors).toEqual([]);
+});
+
 test('completes the browser-local repository workflow through push review', async ({ page }) => {
   test.setTimeout(180_000);
   const browserErrors = observeBrowserErrors(page);

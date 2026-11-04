@@ -26,58 +26,93 @@ public sealed partial class WorkspaceManager : IDisposable
     public event Action? StateChanged;
 
     public Task<bool> InitializeCredentialStateAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(WorkspaceOperation.InitializeCredential, async token =>
+        RunAsync(WorkspaceOperation.InitializeCredential, InitializeCredentialStateCoreAsync, cancellationToken);
+
+    public Task<bool> InitializeWorkspaceAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(WorkspaceOperation.InitializeWorkspace, async token =>
         {
-            var result = await gitAccessor.HasCredentialAsync(token);
-            if (!result.Succeeded)
+            if (!await InitializeCredentialStateCoreAsync(token))
             {
-                State.HasCredential = false;
-                State.CredentialReplacementRequired = true;
-                return Fail(result, "Tab credential storage is unavailable. Enter a token after storage becomes available.");
+                return false;
             }
 
-            State.HasCredential = result.Value;
-            State.CredentialReplacementRequired = false;
-            return Succeed(result.Value ? "A token is available for an explicit push in this tab." : "No token is stored for this tab.");
+            var discovered = await gitAccessor.ListLocalRepositoriesAsync(token);
+            if (!discovered.Succeeded || discovered.Value is null)
+            {
+                State.AvailableRepositories = Array.Empty<LocalRepositoryCandidate>();
+                return Fail(discovered, "Existing browser repositories could not be discovered safely.");
+            }
+
+            State.AvailableRepositories = discovered.Value
+                .OrderBy(repository => repository.RepositoryUrl, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (State.AvailableRepositories.Count == 1)
+            {
+                return await OpenRepositoryCoreAsync(State.AvailableRepositories[0].RepositoryUrl, token);
+            }
+
+            var message = State.AvailableRepositories.Count == 0
+                ? "No existing browser repository was found. Enter a public repository URL to open one."
+                : "Choose an existing browser repository or enter a new repository URL.";
+            return Succeed(message);
         }, cancellationToken);
 
     public Task<bool> OpenRepositoryAsync(string repositoryUrl, CancellationToken cancellationToken = default) =>
-        RunAsync(WorkspaceOperation.OpenRepository, async token =>
+        RunAsync(WorkspaceOperation.OpenRepository, token => OpenRepositoryCoreAsync(repositoryUrl, token), cancellationToken);
+
+    private async Task<bool> InitializeCredentialStateCoreAsync(CancellationToken token)
+    {
+        var result = await gitAccessor.HasCredentialAsync(token);
+        if (!result.Succeeded)
         {
-            var trimmedUrl = repositoryUrl?.Trim() ?? string.Empty;
-            if (trimmedUrl.Length == 0)
-            {
-                ResetWorkspace();
-                return Fail("Enter a public repository URL before opening a workspace.");
-            }
+            State.HasCredential = false;
+            State.CredentialReplacementRequired = true;
+            return Fail(result, "Tab credential storage is unavailable. Enter a token after storage becomes available.");
+        }
 
+        State.HasCredential = result.Value;
+        State.CredentialReplacementRequired = false;
+        return Succeed(result.Value ? "A token is available for an explicit push in this tab." : "No token is stored for this tab.");
+    }
+
+    private async Task<bool> OpenRepositoryCoreAsync(string repositoryUrl, CancellationToken token)
+    {
+        var trimmedUrl = repositoryUrl?.Trim() ?? string.Empty;
+        if (trimmedUrl.Length == 0)
+        {
             ResetWorkspace();
-            var open = await gitAccessor.CloneOrOpenAsync(
-                new RepositoryOpenRequest(trimmedUrl, CreateWorkspaceName(trimmedUrl)), token);
-            if (!open.Succeeded || open.Value is null)
-            {
-                return Fail(open, "The repository could not be opened. Check that the URL is public and supported.");
-            }
+            return Fail("Enter a public repository URL before opening a workspace.");
+        }
 
-            State.Repository = open.Value;
-            SetRepository(open.Value);
-            if (!await LoadDirectoryCoreAsync("/", token))
-            {
-                return false;
-            }
+        ResetWorkspace();
+        var open = await gitAccessor.CloneOrOpenAsync(
+            new RepositoryOpenRequest(trimmedUrl, CreateWorkspaceName(trimmedUrl)), token);
+        if (!open.Succeeded || open.Value is null)
+        {
+            return Fail(open, "The repository could not be opened. Check that the URL is public and supported.");
+        }
 
-            if (!await RefreshStatusCoreAsync(token))
-            {
-                return false;
-            }
+        State.Repository = open.Value;
+        State.AvailableRepositories = Array.Empty<LocalRepositoryCandidate>();
+        SetRepository(open.Value);
+        if (!await LoadDirectoryCoreAsync("/", token))
+        {
+            return false;
+        }
 
-            if (!await LoadBranchHistoryCoreAsync(token))
-            {
-                return false;
-            }
+        if (!await RefreshStatusCoreAsync(token))
+        {
+            return false;
+        }
 
-            return Succeed(open.Message);
-        }, cancellationToken);
+        if (!await LoadBranchHistoryCoreAsync(token))
+        {
+            return false;
+        }
+
+        return Succeed(open.Message);
+    }
 
     public Task<bool> LoadBranchHistoryAsync(CancellationToken cancellationToken = default) =>
         RunAsync(WorkspaceOperation.LoadBranchHistory, LoadBranchHistoryCoreAsync, cancellationToken);

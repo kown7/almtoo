@@ -366,6 +366,7 @@ public sealed record GitBugComment(
     string Body);
 
 public record RepositoryOpenRequest(string RepositoryUrl, string WorkspaceName);
+public record LocalRepositoryCandidate(string RepositoryUrl, string WorkspaceName, string RootPath);
 public record RepositoryInfo(string RepositoryUrl, string WorkspaceName, string RootPath, bool WasCloned);
 
 public enum FileFilterKind { DirectoryEntries, TextContent }

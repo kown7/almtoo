@@ -29,6 +29,24 @@
             </button>
         </form>
 
+        @if (State.Repository is null && State.AvailableRepositories.Count > 1)
+        {
+            <section class="local-repositories" aria-labelledby="local-repositories-heading">
+                <h2 id="local-repositories-heading">Reopen an existing repository</h2>
+                <p class="field-help">This browser has more than one local repository. Choose one to continue where you left off.</p>
+                <div class="local-repository-list">
+                    @foreach (var repository in State.AvailableRepositories)
+                    {
+                        <button class="secondary-action local-repository-choice" type="button"
+                                @onclick="() => OpenExistingRepositoryAsync(repository.RepositoryUrl)"
+                                disabled="@State.IsBusy">
+                            @repository.RepositoryUrl
+                        </button>
+                    }
+                </div>
+            </section>
+        }
+
         @if (IsOperation(WorkspaceOperation.OpenRepository))
         {
             <p class="status-message info" role="status" aria-live="polite">Contacting the Git host and preparing browser storage...</p>
@@ -416,11 +434,13 @@
     {
         if (firstRender)
         {
-            await Workspace.InitializeCredentialStateAsync();
+            await Workspace.InitializeWorkspaceAsync();
         }
     }
 
     private async Task OpenRepositoryAsync() => await Workspace.OpenRepositoryAsync(repositoryUrl);
+    private async Task OpenExistingRepositoryAsync(string repositoryUrl) =>
+        await Workspace.OpenRepositoryAsync(repositoryUrl);
     private async Task LoadDirectoryAsync(string path) => await Workspace.LoadDirectoryAsync(path);
     private async Task SelectFileAsync(string path) => await Workspace.SelectFileAsync(path);
     private async Task SaveSelectedFileAsync() => await Workspace.SaveSelectedFileAsync();

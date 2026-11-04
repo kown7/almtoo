@@ -41,7 +41,7 @@ test('Home delegates the complete repository workflow to the Manager', async () 
   const home = await source('Pages/Home.razor');
 
   for (const delegation of [
-    'Workspace.InitializeCredentialStateAsync()',
+    'Workspace.InitializeWorkspaceAsync()',
     'Workspace.OpenRepositoryAsync(repositoryUrl)',
     'Workspace.LoadDirectoryAsync(path)',
     'Workspace.SelectFileAsync(path)',
@@ -180,6 +180,15 @@ test('synchronization review remains Manager-only, confirmation-gated, and safe 
   ]) assert.match(home, new RegExp(outcome), `missing stable synchronization outcome: ${outcome}`);
 
   assert.doesNotMatch(home, /IBrowserGitAccessor|BrowserGitAccessor|IJSRuntime|browserGitEngine|\.Diagnostic\b|personalAccessToken|accessToken/i);
+});
+
+test('repository reload discovers persisted workspaces and offers explicit recovery choices', async () => {
+  const home = await source('Pages/Home.razor');
+
+  assert.match(home, /InitializeWorkspaceAsync\(\)/);
+  assert.match(home, /State\.AvailableRepositories\.Count > 1/);
+  assert.match(home, /OpenExistingRepositoryAsync\(repository\.RepositoryUrl\)/);
+  assert.doesNotMatch(home, /IJSRuntime/);
 });
 
 test('repository browser and push review styles retain stateful responsive surfaces', async () => {

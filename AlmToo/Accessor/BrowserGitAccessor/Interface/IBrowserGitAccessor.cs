@@ -4,6 +4,7 @@ namespace AlmToo.Accessor.BrowserGitAccessor.Interface;
 public interface IBrowserGitAccessor : IAsyncDisposable
 {
     ValueTask<GitOperationResult<RepositoryInfo>> CloneOrOpenAsync(RepositoryOpenRequest request, CancellationToken cancellationToken = default);
+    ValueTask<GitOperationResult<IReadOnlyList<LocalRepositoryCandidate>>> ListLocalRepositoriesAsync(CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<IReadOnlyList<ChangedFile>>> GetStatusAsync(CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<BranchSnapshot>> GetBranchesAsync(CancellationToken cancellationToken = default);
     ValueTask<GitOperationResult<RemoteSnapshot>> GetRemoteSnapshotAsync(RemoteSnapshotRequest request, CancellationToken cancellationToken = default);

@@ -57,6 +57,29 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             request);
     }
 
+    public async ValueTask<GitOperationResult<IReadOnlyList<LocalRepositoryCandidate>>> ListLocalRepositoriesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var result = await InvokeWithValueAsync<List<LocalRepositoryCandidateDto>, IReadOnlyList<LocalRepositoryCandidate>>(
+            "listLocalRepositories",
+            "listLocalRepositories",
+            repositories => repositories
+                .Where(repository => repository is not null)
+                .Select(repository => repository.ToCandidate())
+                .ToArray(),
+            cancellationToken);
+
+        return result.Value is not null
+            ? result
+            : new GitOperationResult<IReadOnlyList<LocalRepositoryCandidate>>(
+                "listLocalRepositories",
+                false,
+                "Existing browser repositories could not be discovered safely.",
+                Value: Array.Empty<LocalRepositoryCandidate>(),
+                Diagnostic: result.Diagnostic,
+                FailureKind: result.FailureKind ?? GitOperationFailureKind.Unknown);
+    }
+
     public async ValueTask<GitOperationResult<FilterFilesResult>> FilterFilesAsync(
         FilterFilesRequest request,
         CancellationToken cancellationToken = default)
@@ -1824,6 +1847,21 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             : (allowEmpty || value.Length > 0)
                 && value.Length <= maximumLength
                 && value.IndexOfAny(['\0', '\r']) < 0;
+
+    private sealed record LocalRepositoryCandidateDto
+    {
+        [JsonPropertyName("repositoryUrl")]
+        public string RepositoryUrl { get; init; } = string.Empty;
+
+        [JsonPropertyName("workspaceName")]
+        public string WorkspaceName { get; init; } = string.Empty;
+
+        [JsonPropertyName("rootPath")]
+        public string RootPath { get; init; } = string.Empty;
+
+        public LocalRepositoryCandidate ToCandidate() =>
+            new(RepositoryUrl, WorkspaceName, RootPath);
+    }
 
     private sealed record RepositoryInfoDto
     {

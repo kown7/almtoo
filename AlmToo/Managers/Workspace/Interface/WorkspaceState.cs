@@ -12,6 +12,8 @@ public sealed record WorkspaceState
 
     public RepositoryInfo? Repository { get; internal set; }
     public bool RepositoryAvailable => Repository is not null;
+    public IReadOnlyList<LocalRepositoryCandidate> AvailableRepositories { get; internal set; } = Array.Empty<LocalRepositoryCandidate>();
+    public bool HasAvailableRepositories => AvailableRepositories.Count > 0;
     public IReadOnlyList<RepositoryFileEntry> Entries { get; internal set; } = Array.Empty<RepositoryFileEntry>();
     public string CurrentPath { get; internal set; } = "/";
     public string? SelectedFilePath { get; internal set; }
