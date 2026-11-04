@@ -22,6 +22,8 @@ public enum GitOperationFailureKind
     CredentialRejected,
     RemoteAhead,
     NetworkUnavailable,
+    ProxySelectionInvalid,
+    ProxyApprovalRequired,
     UnsupportedRef,
     GitBugDataUnavailable,
     GitBugFormatUnsupported,
@@ -364,6 +366,48 @@ public sealed record GitBugIssueDetail(
 public sealed record GitBugComment(
     string AuthorDisplayName,
     string Body);
+
+/// <summary>One proxy configuration approved by the application for browser Git transport.</summary>
+/// <remarks>The identifier is the only value accepted from Client code; endpoint details remain an Accessor concern.</remarks>
+public sealed record BrowserGitProxyOption(
+    string Id,
+    string DisplayName,
+    bool RequiresApproval = true);
+
+/// <summary>Client selection of an approved browser Git proxy by stable identifier.</summary>
+public sealed record BrowserGitProxySelection(string ProxyId);
+
+/// <summary>Explicit user approval for a selected browser Git proxy.</summary>
+public sealed record BrowserGitProxyApproval(string ProxyId, bool Approved);
+
+public static class BrowserGitProxyContract
+{
+    public const int MaximumProxyIdLength = 64;
+
+    public static bool IsValidOption(BrowserGitProxyOption? option) =>
+        option is not null
+        && IsSafeIdentifier(option.Id)
+        && IsSafeDisplayName(option.DisplayName);
+
+    public static bool IsValidSelection(BrowserGitProxySelection? selection) =>
+        selection is not null && IsSafeIdentifier(selection.ProxyId);
+
+    public static bool IsValidApproval(BrowserGitProxyApproval? approval) =>
+        approval is not null && IsSafeIdentifier(approval.ProxyId);
+
+    private static bool IsSafeIdentifier(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= MaximumProxyIdLength
+        && value.Trim() == value
+        && value.All(character => char.IsLetterOrDigit(character) || character is '-' or '_');
+
+    private static bool IsSafeDisplayName(string? value) =>
+        value is not null
+        && value.Trim().Length > 0
+        && value.Length <= 128
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0;
+}
 
 public record RepositoryOpenRequest(string RepositoryUrl, string WorkspaceName);
 public record LocalRepositoryCandidate(string RepositoryUrl, string WorkspaceName, string RootPath);

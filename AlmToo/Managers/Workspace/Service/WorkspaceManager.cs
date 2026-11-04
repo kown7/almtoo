@@ -12,6 +12,11 @@ public sealed partial class WorkspaceManager : IDisposable
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private CancellationTokenSource? activeOperation;
     private readonly GitBugPublicationEngine gitBugPublicationEngine = new();
+    private static readonly IReadOnlyList<BrowserGitProxyOption> approvedProxyOptions =
+    [
+        new BrowserGitProxyOption("direct", "Direct connection", RequiresApproval: false),
+        new BrowserGitProxyOption("isomorphic-git", "Isomorphic Git public proxy")
+    ];
     private IReadOnlyList<GitBugPublicationRefState> gitBugReviewedRemoteRefs = Array.Empty<GitBugPublicationRefState>();
     private IReadOnlyList<GitBugPublicationRefState> gitBugReviewedLocalRefs = Array.Empty<GitBugPublicationRefState>();
     private bool disposed;
@@ -20,6 +25,8 @@ public sealed partial class WorkspaceManager : IDisposable
     {
         this.gitAccessor = gitAccessor;
         this.gitBugAccessor = gitBugAccessor;
+        State.ApprovedProxyOptions = approvedProxyOptions;
+        UpdateWorkspaceRouteState();
     }
 
     public WorkspaceState State { get; } = new();
@@ -56,6 +63,82 @@ public sealed partial class WorkspaceManager : IDisposable
                 ? "No existing browser repository was found. Enter a public repository URL to open one."
                 : "Choose an existing browser repository or enter a new repository URL.";
             return Succeed(message);
+        }, cancellationToken);
+
+    public Task<bool> SelectProxyAsync(string proxyId, CancellationToken cancellationToken = default) =>
+        RunAsync(WorkspaceOperation.SelectProxy, _ =>
+        {
+            var selection = new BrowserGitProxySelection(proxyId?.Trim() ?? string.Empty);
+            var option = approvedProxyOptions.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, selection.ProxyId, StringComparison.OrdinalIgnoreCase));
+            if (!BrowserGitProxyContract.IsValidSelection(selection) || option is null)
+            {
+                return Task.FromResult(Fail(
+                    "Choose one of the approved browser Git proxies.",
+                    GitOperationFailureKind.ProxySelectionInvalid));
+            }
+
+            var changed = !string.Equals(State.SelectedProxy?.ProxyId, option.Id, StringComparison.Ordinal);
+            State.SelectedProxy = new BrowserGitProxySelection(option.Id);
+            State.ProxyApproval = new BrowserGitProxyApproval(option.Id, !option.RequiresApproval);
+            State.ProxyApprovalState = option.RequiresApproval
+                ? BrowserGitProxyApprovalState.Pending
+                : BrowserGitProxyApprovalState.Approved;
+            if (changed)
+            {
+                InvalidatePendingReviews();
+            }
+
+            UpdateWorkspaceRouteState();
+            return Task.FromResult(Succeed($"Selected approved proxy: {option.DisplayName}."));
+        }, cancellationToken);
+
+    public Task<bool> ApproveProxyAsync(string proxyId, CancellationToken cancellationToken = default) =>
+        RunAsync(WorkspaceOperation.ApproveProxy, _ =>
+        {
+            var normalizedProxyId = proxyId?.Trim() ?? string.Empty;
+            var option = approvedProxyOptions.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, normalizedProxyId, StringComparison.OrdinalIgnoreCase));
+            if (!BrowserGitProxyContract.IsValidApproval(new BrowserGitProxyApproval(normalizedProxyId, true))
+                || option is null
+                || State.SelectedProxy is null
+                || !string.Equals(State.SelectedProxy.ProxyId, option.Id, StringComparison.Ordinal))
+            {
+                return Task.FromResult(Fail(
+                    "Select an approved browser Git proxy before approving trust.",
+                    GitOperationFailureKind.ProxySelectionInvalid));
+            }
+
+            if (!option.RequiresApproval)
+            {
+                State.ProxyApproval = new BrowserGitProxyApproval(option.Id, true);
+                State.ProxyApprovalState = BrowserGitProxyApprovalState.Approved;
+                UpdateWorkspaceRouteState();
+                return Task.FromResult(Succeed("The selected browser Git proxy is approved."));
+            }
+
+            State.ProxyApproval = new BrowserGitProxyApproval(option.Id, true);
+            State.ProxyApprovalState = BrowserGitProxyApprovalState.Approved;
+            UpdateWorkspaceRouteState();
+            return Task.FromResult(Succeed("The selected browser Git proxy is approved for this tab."));
+        }, cancellationToken);
+
+    public Task<bool> NavigateToWorkspaceAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(WorkspaceOperation.NavigateToWorkspace, _ =>
+        {
+            UpdateWorkspaceRouteState();
+            if (State.RouteBlockReason != WorkspaceRouteBlockReason.None)
+            {
+                var failureKind = State.RouteBlockReason == WorkspaceRouteBlockReason.ProxyApprovalRequired
+                    ? GitOperationFailureKind.ProxyApprovalRequired
+                    : GitOperationFailureKind.ProxySelectionInvalid;
+                return Task.FromResult(Fail(
+                    GetWorkspaceRouteBlockMessage(State.RouteBlockReason),
+                    failureKind));
+            }
+
+            State.Route = WorkspaceRoute.Workspace;
+            return Task.FromResult(Succeed("The repository workspace is ready."));
         }, cancellationToken);
 
     public Task<bool> OpenRepositoryAsync(string repositoryUrl, CancellationToken cancellationToken = default) =>
@@ -1188,6 +1271,40 @@ public sealed partial class WorkspaceManager : IDisposable
         return false;
     }
 
+    private void InvalidatePendingReviews()
+    {
+        State.SynchronizationReview = null;
+        State.SynchronizationDecision = null;
+        State.SynchronizationFailureCategory = null;
+        InvalidatePushReview();
+        InvalidatePublicationReview();
+        InvalidateGitBugPublicationReview();
+    }
+
+    private void UpdateWorkspaceRouteState()
+    {
+        State.RouteBlockReason = State.Repository is null
+            ? WorkspaceRouteBlockReason.RepositoryUnavailable
+            : State.SelectedProxy is null
+                ? WorkspaceRouteBlockReason.ProxySelectionRequired
+                : State.ProxyApprovalState != BrowserGitProxyApprovalState.Approved
+                    ? WorkspaceRouteBlockReason.ProxyApprovalRequired
+                    : WorkspaceRouteBlockReason.None;
+
+        if (State.RouteBlockReason != WorkspaceRouteBlockReason.None)
+        {
+            State.Route = WorkspaceRoute.Home;
+        }
+    }
+
+    private static string GetWorkspaceRouteBlockMessage(WorkspaceRouteBlockReason reason) => reason switch
+    {
+        WorkspaceRouteBlockReason.RepositoryUnavailable => "Open a repository before entering the workspace.",
+        WorkspaceRouteBlockReason.ProxySelectionRequired => "Choose an approved browser Git proxy before entering the workspace.",
+        WorkspaceRouteBlockReason.ProxyApprovalRequired => "Approve the selected browser Git proxy before entering the workspace.",
+        _ => "The workspace is not ready to open."
+    };
+
     private void ResetWorkspace()
     {
         State.SynchronizationReview = null;
@@ -1216,6 +1333,8 @@ public sealed partial class WorkspaceManager : IDisposable
         InvalidatePushReview();
         InvalidatePublicationReview();
         InvalidateGitBugPublicationReview();
+        State.Route = WorkspaceRoute.Home;
+        UpdateWorkspaceRouteState();
     }
 
     private void ClearSelection()
