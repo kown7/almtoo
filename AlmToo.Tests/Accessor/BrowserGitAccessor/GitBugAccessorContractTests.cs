@@ -498,7 +498,8 @@ public sealed class GitBugAccessorContractTests
 
         Assert.NotNull(pushMethod);
         Assert.Equal("refs/heads/main", request.DestinationRef);
-        Assert.Equal(4, typeof(PushRequest).GetProperties().Length);
+        Assert.Null(request.ProxyId);
+        Assert.Equal(5, typeof(PushRequest).GetProperties().Length);
         Assert.DoesNotContain(typeof(PushRequest).GetProperties(), property =>
             property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
             property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase));

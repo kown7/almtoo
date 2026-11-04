@@ -279,7 +279,8 @@ test('cloneOrOpen routes public repository clones through the browser CORS proxy
   const engine = await importFreshModule();
   const result = await engine.cloneOrOpen({
     repositoryUrl: 'https://github.com/octocat/Hello-World.git',
-    workspaceName: 'hello-world'
+    workspaceName: 'hello-world',
+    proxyId: 'isomorphic-git'
   });
 
   assert.equal(result.succeeded, true);
@@ -300,7 +301,7 @@ test('cloneOrOpen routes public repository clones through the browser CORS proxy
   ]);
 });
 
-test('cloneOrOpen reopens an existing browser-local repository and refreshes bounded Git-Bug refs', async () => {
+test('cloneOrOpen reopens an existing browser-local repository without implicit Git-Bug refresh', async () => {
   resetBrowserGlobals();
   installLoadingDocument();
   let cloneCalls = 0;
@@ -342,21 +343,16 @@ test('cloneOrOpen reopens an existing browser-local repository and refreshes bou
   const engine = await importFreshModule();
   const result = await engine.cloneOrOpen({
     repositoryUrl: 'https://github.com/octocat/Hello-World.git',
-    workspaceName: 'already-local'
+    workspaceName: 'already-local',
+    proxyId: 'isomorphic-git'
   });
 
   assert.equal(result.succeeded, true);
   assert.equal(result.value.wasCloned, false);
   assert.equal(cloneCalls, 0);
-  assert.deepEqual(serverRefsOptions.map(({ prefix }) => prefix), ['refs/bugs/', 'refs/identities/']);
-  assert.deepEqual(fetchOptions.map(({ ref }) => ref), [
-    `refs/bugs/${issueId}`,
-    `refs/identities/${identityId}`
-  ]);
-  assert.deepEqual(writtenRefs.map(({ ref, value }) => ({ ref, value })), [
-    { ref: `refs/bugs/${issueId}`, value: 'bug-tip' },
-    { ref: `refs/identities/${identityId}`, value: 'identity-tip' }
-  ]);
+  assert.deepEqual(serverRefsOptions, []);
+  assert.deepEqual(fetchOptions, []);
+  assert.deepEqual(writtenRefs, []);
 });
 
 test('cloneOrOpen keeps ordinary repository open successful when optional Git-Bug discovery fails', async () => {
@@ -381,7 +377,8 @@ test('cloneOrOpen keeps ordinary repository open successful when optional Git-Bu
   const engine = await importFreshModule();
   const result = await engine.cloneOrOpen({
     repositoryUrl: 'https://github.com/octocat/Hello-World.git',
-    workspaceName: 'optional-metadata-failure'
+    workspaceName: 'optional-metadata-failure',
+    proxyId: 'isomorphic-git'
   });
 
   assert.equal(result.succeeded, true);
@@ -389,7 +386,7 @@ test('cloneOrOpen keeps ordinary repository open successful when optional Git-Bu
   assert.equal(cloneCalls, 1);
 });
 
-test('cloneOrOpen reopens an existing browser-local repository with optional Git-Bug discovery', async () => {
+test('cloneOrOpen keeps persisted repositories offline during optional Git-Bug discovery', async () => {
   resetBrowserGlobals();
   installLoadingDocument();
   let cloneCalls = 0;
@@ -418,13 +415,14 @@ test('cloneOrOpen reopens an existing browser-local repository with optional Git
   const engine = await importFreshModule();
   const result = await engine.cloneOrOpen({
     repositoryUrl: 'https://github.com/octocat/Hello-World.git',
-    workspaceName: 'already-local'
+    workspaceName: 'already-local',
+    proxyId: 'isomorphic-git'
   });
 
   assert.equal(result.succeeded, true);
   assert.equal(result.value.wasCloned, false);
   assert.equal(cloneCalls, 0);
-  assert.equal(remoteDiscoveryCalls, 2);
+  assert.equal(remoteDiscoveryCalls, 0);
 });
 
 test('cloneOrOpen ignores malformed Git-Bug advertisements without leaking remote diagnostics', async () => {
@@ -694,10 +692,11 @@ test('push revalidates the review and performs one exact-branch non-force transp
   const engine = await importFreshModule();
   await engine.cloneOrOpen({
     repositoryUrl: 'https://github.com/octocat/Hello-World.git',
-    workspaceName: 'hello-world'
+    workspaceName: 'hello-world',
+    proxyId: 'isomorphic-git'
   });
   const review = (await engine.inspectPush()).value;
-  const result = await engine.push(review, token);
+  const result = await engine.push({ ...review, proxyId: 'isomorphic-git' }, token);
 
   assert.equal(result.succeeded, true);
   assert.equal(result.value.pushedCommitId, oid);
@@ -1298,7 +1297,7 @@ test('Blazor push boundary keeps credentials input-only and preserves reviewed a
   assert.doesNotMatch(interfaceSource, /personalAccessToken/);
 
   assert.match(resultContractSource, /public record PushReview\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string OutgoingCommitId,[\s\S]*?string DestinationRef\);/);
-  assert.match(resultContractSource, /public record PushRequest\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string OutgoingCommitId,[\s\S]*?string DestinationRef\);/);
+  assert.match(resultContractSource, /public record PushRequest\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string OutgoingCommitId,[\s\S]*?string DestinationRef(?:,|\);)/);
   assert.match(resultContractSource, /public record PushResult\([\s\S]*?string RepositoryUrl,[\s\S]*?string Branch,[\s\S]*?string DestinationRef,[\s\S]*?string PushedCommitId\);/);
 
   const recordParameters = [...resultContractSource.matchAll(/public record\s+\w+(?:<[^>]+>)?\s*\(([\s\S]*?)\);/g)]
