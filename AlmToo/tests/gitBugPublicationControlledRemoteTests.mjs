@@ -119,6 +119,82 @@ test('controlled remote supports documented failure modes and rejects unknown mo
   );
 });
 
+test('controlled remote publishes backup and repaired refs idempotently without touching unrelated refs', async () => {
+  const remote = await startControlledGitBugRemote({ username, password, seedRepository: seedUnrelatedRef });
+  try {
+    const before = await remote.snapshot();
+    const targetRef = before.bugs[0];
+    const replacementRef = before.bugs.find(ref => ref !== targetRef);
+    assert.ok(targetRef, 'the seeded fixture must contain a repair target');
+    assert.ok(replacementRef, 'the seeded fixture must contain a distinct valid replacement');
+
+    const backupRef = `backup/git-bug-repair/${targetRef.slice('bugs/'.length)}`;
+    const backup = await remote.publishRef({
+      sourceRef: `refs/${targetRef}`,
+      remoteRef: `refs/${backupRef}`
+    });
+    assert.equal(backup.ok, true);
+
+    const afterBackup = await remote.snapshot();
+    assert.equal(afterBackup.refOids[backupRef], before.refOids[targetRef]);
+    assert.equal(afterBackup.refOids['heads/unrelated-contract-ref'], before.refOids['heads/unrelated-contract-ref']);
+
+    const repaired = await remote.publishRef({
+      sourceRef: `refs/${replacementRef}`,
+      remoteRef: `refs/${targetRef}`,
+      force: true
+    });
+    assert.equal(repaired.ok, true);
+
+    const afterRepair = await remote.snapshot();
+    assert.equal(afterRepair.refOids[targetRef], before.refOids[replacementRef]);
+    assert.equal(afterRepair.refOids[backupRef], before.refOids[targetRef]);
+    for (const ref of before.refs) {
+      if (ref !== targetRef) assert.equal(afterRepair.refOids[ref], before.refOids[ref], `unrelated ref ${ref}`);
+    }
+
+    const repeatedRepair = await remote.publishRef({
+      sourceRef: `refs/${replacementRef}`,
+      remoteRef: `refs/${targetRef}`,
+      force: true
+    });
+    assert.equal(repeatedRepair.ok, true);
+    const afterRepeatedRepair = await remote.snapshot();
+    assert.deepEqual(afterRepeatedRepair.refOids, afterRepair.refOids);
+    assert.equal(afterRepeatedRepair.snapshotDigest, afterRepair.snapshotDigest);
+
+    const stale = await remote.publishRef({
+      sourceRef: `refs/${targetRef}`,
+      remoteRef: `refs/${targetRef}`,
+      force: false
+    });
+    assert.equal(stale.ok, false);
+    assert.equal(stale.failureKind, 'non-fast-forward');
+    assert.deepEqual(stale.snapshot.refOids, afterRepair.refOids);
+
+    remote.setFailureMode('auth');
+    const authFailure = await remote.publishRef({
+      sourceRef: `refs/${replacementRef}`,
+      remoteRef: `refs/${targetRef}`,
+      force: true
+    });
+    assert.equal(authFailure.ok, false);
+    assert.equal(authFailure.failureKind, 'auth');
+
+    remote.setFailureMode('network');
+    const networkFailure = await remote.publishRef({
+      sourceRef: `refs/${replacementRef}`,
+      remoteRef: `refs/${targetRef}`,
+      force: true
+    });
+    assert.equal(networkFailure.ok, false);
+    assert.equal(networkFailure.failureKind, 'network');
+    assert.deepEqual(networkFailure.snapshot.refOids, afterRepair.refOids);
+  } finally {
+    await remote.close();
+  }
+});
+
 test('controlled remote snapshots redact credentials and clean up idempotently', async () => {
   const remote = await startControlledGitBugRemote({ username, password });
   const repository = remote.repository;

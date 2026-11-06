@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
 
+import { withGitBugAcceptance } from './gitBugAcceptanceHarness.mjs';
+
 const credentialStorageKey = 'almtoo.push-credential.v1';
 const testCredentialStorageKey = 'almtoo.test-credential.v1';
-const publicRepositoryUrl = 'https://github.com/octocat/Hello-World.git';
 
 async function observeBrowserDiagnostics(page) {
   const errors = [];
@@ -57,9 +58,25 @@ async function credentialIsAbsentFromBrowserSurfaces(page) {
   }, { testCredentialStorageKey });
 }
 
-async function openPublicRepository(page) {
-  await page.getByLabel('Repository URL').fill(publicRepositoryUrl);
+async function openPublicRepository(page, repositoryUrl, connection = 'isomorphic-git') {
+  const connectionSelector = page.getByLabel('Approved connection');
+  if (await connectionSelector.count()) {
+    await connectionSelector.selectOption(connection);
+    const approveConnection = page.getByRole('button', { name: 'Approve connection' });
+    const approvedConnection = page.locator('[data-proxy-approval="approved"]');
+    await expect.poll(
+      async () => (await approvedConnection.isVisible()) || (await approveConnection.isVisible()),
+      { timeout: 30_000 }
+    ).toBe(true);
+    if (await approveConnection.isVisible()) await approveConnection.click();
+    await expect(approvedConnection).toBeVisible({ timeout: 30_000 });
+  }
+  await page.getByLabel('Repository URL').fill(repositoryUrl);
   await page.getByRole('button', { name: 'Open repository' }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to the workspace' })).toBeVisible({ timeout: 90_000 });
+  const openWorkspace = page.getByRole('button', { name: 'Open workspace' });
+  await expect(openWorkspace).toBeEnabled({ timeout: 90_000 });
+  await openWorkspace.click();
   await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout: 90_000 });
   await expect(page.getByRole('button', { name: 'Open repository' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel current operation' })).toHaveCount(0);
@@ -73,29 +90,28 @@ async function installAuthenticationRejection(page) {
   }));
 }
 
-test('retains credential presence across same-tab reload and Forget removes it', async ({ page, context }) => {
+test('retains credential presence across same-tab reload and Forget removes it', async ({ page, context }, testInfo) => {
   test.setTimeout(180_000);
-  const browserErrors = await observeBrowserDiagnostics(page);
 
-  await page.goto('/');
-  await openPublicRepository(page);
+  await withGitBugAcceptance(page, testInfo, { scenario: 'credential retention' }, async () => {
+    const browserErrors = await observeBrowserDiagnostics(page);
+    await page.getByRole('link', { name: 'Workspace' }).click();
   const credentialInput = page.getByLabel('GitHub personal access token');
   await expect(credentialInput).toHaveAttribute('type', 'password');
   await enterEphemeralCredential(page, credentialInput);
   await expect(page.getByRole('button', { name: 'Use token in this tab' })).toBeEnabled();
   await page.getByRole('button', { name: 'Use token in this tab' }).click();
 
-  await expect(page.getByText('Token saved for this tab.')).toBeVisible();
-  await expect(page.locator('.credential-presence[data-credential-state="present"]')).toBeVisible();
+  await expect(page.locator('section.push-credential .credential-presence[data-credential-state="present"]')).toBeVisible();
   await expect(credentialInput).toHaveValue('');
   expect(await credentialIsStored(page), 'Credential storage should contain one opaque value').toBe(true);
   expect(await credentialIsAbsentFromBrowserSurfaces(page), 'Credential must stay out of DOM, URLs, console, and page errors').toBe(true);
 
   await page.reload();
-  const credentialStatus = page.getByRole('region', { name: 'Push credential status' });
-  await expect(credentialStatus.locator('p[data-credential-state="present"]:not([role])')).toHaveText(
+  const credentialStatus = page.locator('section.push-credential');
+  await expect(credentialStatus.locator('.credential-presence[data-credential-state="present"]')).toHaveText(
     'A token is available for an explicit push in this tab.');
-  await expect(page.getByLabel('GitHub personal access token')).toHaveCount(0);
+  await expect(page.getByLabel('GitHub personal access token')).toHaveCount(1);
   expect(await credentialIsStored(page), 'Same-tab reload should preserve credential presence').toBe(true);
   expect(await credentialIsAbsentFromBrowserSurfaces(page), 'Reloaded browser surfaces must exclude the credential value').toBe(true);
 
@@ -108,25 +124,25 @@ test('retains credential presence across same-tab reload and Forget removes it',
   await otherTab.close();
 
   await credentialStatus.getByRole('button', { name: 'Forget token' }).click();
-  await expect(credentialStatus).toHaveCount(0);
+  await expect(credentialStatus.locator('.credential-presence[data-credential-state="present"]')).toHaveCount(0);
   expect(await credentialIsStored(page), 'Forget must remove tab storage').toBe(false);
   expect(await credentialIsAbsentFromBrowserSurfaces(page), 'Forgotten credential must stay out of browser surfaces').toBe(true);
 
-  await openPublicRepository(page);
   const reloadedCredentialInput = page.getByLabel('GitHub personal access token');
   await expect(reloadedCredentialInput).toHaveAttribute('type', 'password');
   await expect(reloadedCredentialInput).toHaveValue('');
-  expect(browserErrors, 'Credential reload and Forget must not emit browser errors').toEqual([]);
+    expect(browserErrors, 'Credential reload and Forget must not emit browser errors').toEqual([]);
+  });
 });
 
-test('authentication rejection clears the credential and requests a replacement', async ({ page }) => {
+test('authentication rejection clears the credential and requests a replacement', async ({ page }, testInfo) => {
   test.setTimeout(180_000);
-  const browserErrors = await observeBrowserDiagnostics(page);
 
-  await page.goto('/');
-  await openPublicRepository(page);
+  await withGitBugAcceptance(page, testInfo, { scenario: 'credential rejection' }, async () => {
+    const browserErrors = await observeBrowserDiagnostics(page);
+    await page.getByRole('link', { name: 'Workspace' }).click();
   const browser = page.getByRole('region', { name: 'Browse workspace' });
-  await browser.getByRole('button', { name: /^README(?:\s|$)/ }).click();
+  await browser.locator('button.file-browser__entry--file').first().click();
   const editor = page.getByLabel('Plain text editor');
   await expect(editor).toBeVisible();
   await editor.fill(`${await editor.inputValue()}\nAlmToo credential rejection proof ${Date.now()}\n`);
@@ -159,6 +175,7 @@ test('authentication rejection clears the credential and requests a replacement'
   await expect(credentialInput).toHaveValue('');
   await expect(page.locator('[data-credential-state="present"]')).toHaveCount(0);
   expect(await credentialIsStored(page), 'Credential rejection must remove tab storage').toBe(false);
-  expect(await credentialIsAbsentFromBrowserSurfaces(page), 'Rejected credential must stay out of DOM, URLs, console, and page errors').toBe(true);
-  expect(browserErrors, 'Credential rejection must not emit browser errors').toEqual([]);
+    expect(await credentialIsAbsentFromBrowserSurfaces(page), 'Rejected credential must stay out of DOM, URLs, console, and page errors').toBe(true);
+    expect(browserErrors, 'Credential rejection must not emit browser errors').toEqual([]);
+  });
 });

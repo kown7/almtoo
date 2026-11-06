@@ -111,13 +111,27 @@ async function installControlledCorsProxy(page, repositoryUrl, remoteUrl, diagno
   });
 }
 
-async function openFixture(page, repositoryUrl, timeout = defaultTimeout) {
+async function openFixture(page, repositoryUrl, timeout = defaultTimeout, workspacePath) {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Open a public repository' })).toBeVisible({ timeout });
-  await seedGitBugFixture(page, 'supported', { repositoryUrl });
+  const connectionSelector = page.getByLabel('Approved connection');
+  if (await connectionSelector.count()) {
+    await connectionSelector.selectOption('direct');
+    const approveConnection = page.getByRole('button', { name: 'Approve connection' });
+    const approvedConnection = page.locator('[data-proxy-approval="approved"]');
+    await expect.poll(
+      async () => (await approvedConnection.isVisible()) || (await approveConnection.isVisible()),
+      { timeout }
+    ).toBe(true);
+    if (await approveConnection.isVisible()) await approveConnection.click();
+    await expect(approvedConnection).toBeVisible({ timeout });
+  }
+  await seedGitBugFixture(page, 'supported', { repositoryUrl, workspacePath });
   await waitForGitBugFixture(page, { timeout });
   await page.getByLabel('Repository URL').fill(repositoryUrl);
   await page.getByRole('button', { name: 'Open repository' }).click();
+  await expect(page.getByRole('heading', { name: 'Continue to the workspace' })).toBeVisible({ timeout });
+  await page.getByRole('button', { name: 'Open workspace' }).click();
   await expect(page.getByRole('heading', { name: 'Repository ready' })).toBeVisible({ timeout });
   await page.getByRole('link', { name: 'Git-Bug Issues' }).click();
   await expect(page).toHaveURL(/\/git-bug$/);
@@ -182,7 +196,8 @@ export async function withGitBugAcceptance(page, testInfo, options = {}, action)
 
     phase = 'browser fixture readiness';
     diagnosticsContext.setPhase(phase);
-    await openFixture(page, remote.url, options.timeout ?? defaultTimeout);
+    const workspacePath = '/almtoo-workspaces/git-bug-fixture';
+    await openFixture(page, remote.url, options.timeout ?? defaultTimeout, workspacePath);
     diagnostics.lifecycle.browserReady = true;
 
     phase = 'scenario';
@@ -190,12 +205,13 @@ export async function withGitBugAcceptance(page, testInfo, options = {}, action)
     return await action({
       page,
       remote,
+      workspacePath,
       diagnostics,
       setPhase(nextPhase) {
         phase = nextPhase;
         diagnosticsContext.setPhase(nextPhase);
       },
-      openFixture: () => openFixture(page, remote.url, options.timeout ?? defaultTimeout),
+      openFixture: () => openFixture(page, remote.url, options.timeout ?? defaultTimeout, workspacePath),
       assertNoCredential(value) {
         const serialized = JSON.stringify(value);
         expect(serialized, 'credential must not cross a browser-visible diagnostic surface')

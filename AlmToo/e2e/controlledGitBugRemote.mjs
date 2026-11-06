@@ -185,9 +185,15 @@ export async function startControlledGitBugRemote(options = {}) {
     await rm(root, { recursive: true, force: true });
     throw error;
   }
+  let publicationRepository;
   let failureMode = parseFailure(options.failureMode);
   let requestCount = 0;
   let closed = false;
+  const corsHeaders = {
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': '*',
+    'access-control-allow-methods': 'GET,POST,OPTIONS'
+  };
 
   const server = http.createServer(async (request, response) => {
     requestCount += 1;
@@ -196,23 +202,28 @@ export async function startControlledGitBugRemote(options = {}) {
     request.on('error', () => response.destroy());
     request.on('end', async () => {
       const bytes = Buffer.concat(body);
+      if (request.method === 'OPTIONS') {
+        response.writeHead(204, corsHeaders);
+        response.end();
+        return;
+      }
       const isReceivePack = request.url?.includes('git-receive-pack');
       if (failureMode === 'network' && isReceivePack) {
         response.destroy();
         return;
       }
       if (failureMode === 'auth' && isReceivePack) {
-        response.writeHead(401, { 'content-type': 'text/plain', 'www-authenticate': 'Basic realm="controlled-gitbug"' });
+        response.writeHead(401, { ...corsHeaders, 'content-type': 'text/plain', 'www-authenticate': 'Basic realm="controlled-gitbug"' });
         response.end('controlled remote authentication failed');
         return;
       }
       if (isReceivePack && headerValue(request.headers, 'authorization') !== expectedAuthorization) {
-        response.writeHead(401, { 'content-type': 'text/plain', 'www-authenticate': 'Basic realm="controlled-gitbug"' });
+        response.writeHead(401, { ...corsHeaders, 'content-type': 'text/plain', 'www-authenticate': 'Basic realm="controlled-gitbug"' });
         response.end('controlled remote authentication required');
         return;
       }
       if (failureMode === 'non-fast-forward' && isReceivePack) {
-        response.writeHead(403, { 'content-type': 'text/plain' });
+        response.writeHead(403, { ...corsHeaders, 'content-type': 'text/plain' });
         response.end('controlled remote rejected non-fast-forward update');
         return;
       }
@@ -227,10 +238,13 @@ export async function startControlledGitBugRemote(options = {}) {
           body: bytes,
           authorization: headerValue(request.headers, 'authorization')
         });
-        response.writeHead(result.status, Object.fromEntries(Object.entries(result.headers).filter(([key]) => key !== 'status')));
+        response.writeHead(result.status, {
+          ...Object.fromEntries(Object.entries(result.headers).filter(([key]) => key !== 'status')),
+          ...corsHeaders
+        });
         response.end(result.body);
       } catch {
-        response.writeHead(502, { 'content-type': 'text/plain' });
+        response.writeHead(502, { ...corsHeaders, 'content-type': 'text/plain' });
         response.end('controlled remote transport failure');
       }
     });
@@ -256,6 +270,46 @@ export async function startControlledGitBugRemote(options = {}) {
     },
     setFailureMode(mode) { failureMode = parseFailure(mode); },
     clearFailureMode() { failureMode = null; },
+    async publishRef({ sourceRef, remoteRef, force = false } = {}) {
+      if (typeof sourceRef !== 'string' || sourceRef.length === 0) {
+        throw new TypeError('sourceRef is required for controlled publication.');
+      }
+      if (typeof remoteRef !== 'string' || remoteRef.length === 0) {
+        throw new TypeError('remoteRef is required for controlled publication.');
+      }
+      if (typeof force !== 'boolean') {
+        throw new TypeError('force must be a boolean for controlled publication.');
+      }
+      try {
+        if (!publicationRepository) {
+          publicationRepository = path.join(root, 'publisher');
+          await cp(repository, publicationRepository, { recursive: true });
+        }
+        const { default: gitHttp } = await import('isomorphic-git/http/node');
+        const result = await git.push({
+          fs,
+          http: gitHttp,
+          dir: publicationRepository,
+          gitdir: publicationRepository,
+          url,
+          ref: sourceRef,
+          remoteRef,
+          force,
+          onAuth: () => ({ username, password })
+        });
+        return {
+          ok: result.ok === true,
+          refs: result.refs,
+          snapshot: await repositorySnapshot(repository, requestCount)
+        };
+      } catch {
+        return {
+          ok: false,
+          failureKind: failureMode ?? 'non-fast-forward',
+          snapshot: await repositorySnapshot(repository, requestCount)
+        };
+      }
+    },
     async snapshot() {
       return repositorySnapshot(repository, requestCount);
     },

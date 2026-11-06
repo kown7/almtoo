@@ -217,7 +217,7 @@ test('Git-Bug browser acceptance is fixture-backed and enforces the read-only Cl
   assert.match(specification, /input\[type="password"\]/);
   assert.match(specification, /Back to issues/);
   assert.match(fixture, /tests\/fixtures\/gitBug\/v0\.11\.0/);
-  assert.match(fixture, /new globalThis\.LightningFS\('almtoo-git', \{ wipe: true \}\)/);
+  assert.match(fixture, /new globalThis\.LightningFS\('almtoo-git', \{ wipe: false \}\)/);
   assert.match(fixture, /crypto\.subtle\.digest\('SHA-256'/);
   assert.doesNotMatch(`${specification}\n${fixture}`, /personalAccessToken|sessionStorage|localStorage/);
 });
