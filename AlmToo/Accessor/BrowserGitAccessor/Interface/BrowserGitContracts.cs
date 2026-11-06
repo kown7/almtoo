@@ -28,6 +28,8 @@ public enum GitOperationFailureKind
     GitBugDataUnavailable,
     GitBugFormatUnsupported,
     GitBugDataMalformed,
+    GitBugDiagnosisCancelled,
+    GitBugTransportFailure,
     GitBugWriteInvalidRequest,
     GitBugWritePreconditionFailed,
     GitBugWriteConflict,

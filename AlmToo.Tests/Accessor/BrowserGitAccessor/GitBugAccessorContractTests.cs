@@ -108,6 +108,93 @@ public sealed class GitBugAccessorContractTests
     }
 
     [Fact]
+    public async Task Diagnosis_maps_bounded_safe_result_and_drops_bridge_message_and_diagnostic()
+    {
+        var parent = new string('b', 40);
+        var sourceRevision = new string('a', 40);
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["diagnoseGitBugRef"] = Success("gitBug.diagnoseRef", new
+            {
+                invariantCode = "missingNonce",
+                sourceRevision,
+                affectedRef = $"refs/bugs/{IssueId}",
+                latestValidParent = parent,
+                repairability = "repairable",
+                counts = new { refsInspected = 1, commitsInspected = 2, operationsInspected = 4 }
+            })
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+
+        var result = await accessor.DiagnoseRefAsync(new(IssueId));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(GitBugDiagnosisContract.DiagnosisOperation, result.Operation);
+        Assert.Equal("The Git-Bug ref was diagnosed without mutation.", result.Message);
+        Assert.Null(result.Diagnostic);
+        Assert.Null(result.FailureKind);
+        Assert.Equal(GitBugDiagnosisInvariantCode.MissingNonce, result.Value!.InvariantCode);
+        Assert.Equal(GitBugDiagnosisRepairability.Repairable, result.Value.Repairability);
+        Assert.Equal(parent, result.Value.LatestValidParent);
+        Assert.Equal(new GitBugDiagnosisCounts(1, 2, 4), result.Value.Counts);
+        Assert.Equal(new[] { "initialize", "diagnoseGitBugRef" }, module.Invocations);
+        Assert.Equal(IssueId, module.Arguments["diagnoseGitBugRef"].Single());
+        Assert.DoesNotContain(PrivateValue, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("gitBugDataUnavailable", GitOperationFailureKind.GitBugDataUnavailable)]
+    [InlineData("gitBugFormatUnsupported", GitOperationFailureKind.GitBugFormatUnsupported)]
+    [InlineData("gitBugDataMalformed", GitOperationFailureKind.GitBugDataMalformed)]
+    public async Task Diagnosis_failures_are_normalized_without_raw_bridge_data(
+        string bridgeFailure,
+        GitOperationFailureKind expectedFailure)
+    {
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["diagnoseGitBugRef"] = Failure("gitBug.diagnoseRef", bridgeFailure)
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+
+        var result = await accessor.DiagnoseRefAsync(new(IssueId));
+
+        AssertSafeFailure(result, expectedFailure, expectedFailure switch
+        {
+            GitOperationFailureKind.GitBugDataUnavailable => "no supported Git-Bug issue data",
+            GitOperationFailureKind.GitBugFormatUnsupported => "not supported",
+            _ => "read safely"
+        });
+    }
+
+    [Fact]
+    public async Task Diagnosis_transport_and_cancellation_fail_closed_with_safe_kinds()
+    {
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["diagnoseGitBugRef"] = FakeModule.ThrowResponse
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+
+        var transport = await accessor.DiagnoseRefAsync(new(IssueId));
+
+        AssertSafeFailure(transport, GitOperationFailureKind.GitBugTransportFailure, "could not be reached safely");
+    }
+
+    [Fact]
+    public async Task Canceled_diagnosis_is_normalized_without_bridge_details()
+    {
+        var module = new FakeModule(new Dictionary<string, string>
+        {
+            ["diagnoseGitBugRef"] = FakeModule.CancelResponse
+        });
+        await using var accessor = new BrowserGitAccessorService(new FakeJsRuntime(module));
+
+        var result = await accessor.DiagnoseRefAsync(new(IssueId), new CancellationToken(canceled: true));
+
+        AssertSafeFailure(result, GitOperationFailureKind.GitBugDiagnosisCancelled, "canceled safely");
+    }
+
+    [Fact]
     public async Task Null_detail_description_maps_to_safe_empty_text()
     {
         var module = new FakeModule(new Dictionary<string, string>

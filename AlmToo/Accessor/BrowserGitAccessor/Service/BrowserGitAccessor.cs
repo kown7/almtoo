@@ -685,6 +685,24 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             issueId.Value);
     }
 
+    public async ValueTask<GitOperationResult<GitBugDiagnosisResult>> DiagnoseRefAsync(
+        GitBugIssueId issueId,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = GitBugDiagnosisContract.DiagnosisOperation;
+        if (!IsValidGitBugIssueId(issueId.Value))
+        {
+            return SanitizedGitBugFailure<GitBugDiagnosisResult>(operation, GitOperationFailureKind.Unknown);
+        }
+
+        return await InvokeGitBugWithValueAsync<GitBugDiagnosisDto, GitBugDiagnosisResult>(
+            operation,
+            "diagnoseGitBugRef",
+            value => value.ToDiagnosisResult(),
+            cancellationToken,
+            issueId.Value);
+    }
+
     public async ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
         GitBugIssueEditRequest request,
         CancellationToken cancellationToken = default)
@@ -971,7 +989,10 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
         var result = await InvokeResponseAsync<TInteropValue>(operation, identifier, cancellationToken, args);
         if (!result.Succeeded)
         {
-            return SanitizedGitBugFailure<TValue>(operation, ParseGitBugFailureKind(result.FailureKind));
+            var failureKind = operation == GitBugDiagnosisContract.DiagnosisOperation
+                ? NormalizeGitBugFailureKind(result.FailureKind, result.Message)
+                : ParseGitBugFailureKind(result.FailureKind);
+            return SanitizedGitBugFailure<TValue>(operation, failureKind);
         }
 
         if (result.Value is null)
@@ -984,7 +1005,11 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             return new GitOperationResult<TValue>(
                 operation,
                 true,
-                operation == "gitBug.listIssues" ? "Git-Bug issues were loaded." : "The Git-Bug issue was loaded.",
+                operation == GitBugDiagnosisContract.DiagnosisOperation
+                    ? "The Git-Bug ref was diagnosed without mutation."
+                    : operation == "gitBug.listIssues"
+                        ? "Git-Bug issues were loaded."
+                        : "The Git-Bug issue was loaded.",
                 mapValue(result.Value),
                 Diagnostic: null,
                 FailureKind: null);
@@ -1046,11 +1071,13 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             Diagnostic: null,
             FailureKind: failureKind);
 
-    private static GitOperationFailureKind ParseGitBugFailureKind(string? failureKind) => failureKind switch
+    private static GitOperationFailureKind NormalizeGitBugFailureKind(string? failureKind, string? message) => failureKind switch
     {
         "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
         "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
         "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+        "gitBugDiagnosisCancelled" => GitOperationFailureKind.GitBugDiagnosisCancelled,
+        "gitBugTransportFailure" => GitOperationFailureKind.GitBugTransportFailure,
         "gitBugWriteInvalidRequest" => GitOperationFailureKind.GitBugWriteInvalidRequest,
         "gitBugWritePreconditionFailed" => GitOperationFailureKind.GitBugWritePreconditionFailed,
         "gitBugWriteConflict" => GitOperationFailureKind.GitBugWriteConflict,
@@ -1058,8 +1085,17 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
         "gitBugWriteUnavailable" => GitOperationFailureKind.GitBugWriteUnavailable,
         "gitBugWriteSerializationFailed" => GitOperationFailureKind.GitBugWriteSerializationFailed,
         "gitBugWriteUnknown" => GitOperationFailureKind.GitBugWriteUnknown,
+        "unknown" => GitOperationFailureKind.Unknown,
+        _ when message?.Contains("canceled", StringComparison.OrdinalIgnoreCase) == true
+            || message?.Contains("cancelled", StringComparison.OrdinalIgnoreCase) == true => GitOperationFailureKind.GitBugDiagnosisCancelled,
+        _ when string.IsNullOrWhiteSpace(failureKind) => GitOperationFailureKind.GitBugTransportFailure,
         _ => GitOperationFailureKind.Unknown
     };
+
+    private static GitOperationFailureKind ParseGitBugFailureKind(string? failureKind) =>
+        string.IsNullOrWhiteSpace(failureKind)
+            ? GitOperationFailureKind.Unknown
+            : NormalizeGitBugFailureKind(failureKind, null);
 
     private static GitOperationResult<TValue> SanitizedGitBugWriteFailure<TValue>(
         string operation,
@@ -1084,6 +1120,8 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             GitOperationFailureKind.GitBugDataUnavailable => "This repository has no supported Git-Bug issue data.",
             GitOperationFailureKind.GitBugFormatUnsupported => "This Git-Bug data version is not supported yet.",
             GitOperationFailureKind.GitBugDataMalformed => "Git-Bug issue data could not be read safely.",
+            GitOperationFailureKind.GitBugDiagnosisCancelled => "The Git-Bug diagnosis was canceled safely.",
+            GitOperationFailureKind.GitBugTransportFailure => "The Git-Bug data source could not be reached safely.",
             _ => "Git-Bug issues could not be loaded."
         };
 
@@ -1197,6 +1235,8 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
         "gitBugDataUnavailable" => GitOperationFailureKind.GitBugDataUnavailable,
         "gitBugFormatUnsupported" => GitOperationFailureKind.GitBugFormatUnsupported,
         "gitBugDataMalformed" => GitOperationFailureKind.GitBugDataMalformed,
+        "gitBugDiagnosisCancelled" => GitOperationFailureKind.GitBugDiagnosisCancelled,
+        "gitBugTransportFailure" => GitOperationFailureKind.GitBugTransportFailure,
         "gitBugWriteInvalidRequest" => GitOperationFailureKind.GitBugWriteInvalidRequest,
         "gitBugWritePreconditionFailed" => GitOperationFailureKind.GitBugWritePreconditionFailed,
         "gitBugWriteConflict" => GitOperationFailureKind.GitBugWriteConflict,
@@ -1684,6 +1724,50 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
 
         private static string RequireValue(string? value) =>
             !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException("Git-Bug write response was incomplete.");
+    }
+
+    private sealed record GitBugDiagnosisDto
+    {
+        [JsonPropertyName("invariantCode")] public string InvariantCode { get; init; } = string.Empty;
+        [JsonPropertyName("sourceRevision")] public string SourceRevision { get; init; } = string.Empty;
+        [JsonPropertyName("affectedRef")] public string AffectedRef { get; init; } = string.Empty;
+        [JsonPropertyName("latestValidParent")] public string? LatestValidParent { get; init; }
+        [JsonPropertyName("repairability")] public string Repairability { get; init; } = string.Empty;
+        [JsonPropertyName("counts")] public GitBugDiagnosisCountsDto? Counts { get; init; }
+
+        public GitBugDiagnosisResult ToDiagnosisResult()
+        {
+            if (!Enum.TryParse<GitBugDiagnosisInvariantCode>(InvariantCode, ignoreCase: true, out var invariantCode)
+                || !Enum.TryParse<GitBugDiagnosisRepairability>(Repairability, ignoreCase: true, out var repairability)
+                || Counts is null)
+            {
+                throw new FormatException("The Git-Bug diagnosis response was not valid.");
+            }
+
+            var result = new GitBugDiagnosisResult(
+                invariantCode,
+                SourceRevision,
+                AffectedRef,
+                LatestValidParent,
+                repairability,
+                new GitBugDiagnosisCounts(
+                    Counts.RefsInspected,
+                    Counts.CommitsInspected,
+                    Counts.OperationsInspected));
+            if (!GitBugDiagnosisContract.IsValidResult(result))
+            {
+                throw new FormatException("The Git-Bug diagnosis response was not valid.");
+            }
+
+            return result;
+        }
+    }
+
+    private sealed record GitBugDiagnosisCountsDto
+    {
+        [JsonPropertyName("refsInspected")] public int RefsInspected { get; init; }
+        [JsonPropertyName("commitsInspected")] public int CommitsInspected { get; init; }
+        [JsonPropertyName("operationsInspected")] public int OperationsInspected { get; init; }
     }
 
     private sealed record GitBugIssueQueryDto

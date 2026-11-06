@@ -1,5 +1,11 @@
 using AlmToo.Engines.Workspace;
 using AlmToo.Managers.Workspace.Interface;
+using GitBugDiagnosisContract = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisContract;
+using GitBugDiagnosisCounts = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisCounts;
+using GitBugDiagnosisInvariantCode = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisInvariantCode;
+using GitBugDiagnosisRepairability = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisRepairability;
+using GitBugDiagnosisResult = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisResult;
+using GitOperationFailureKind = AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationFailureKind;
 using Xunit;
 
 namespace AlmToo.Tests.Engines.Workspace;
@@ -198,6 +204,57 @@ public sealed class GitBugPublicationEngineTests
         var identitySpec = result.Plan.RefSpecs.Single(spec => spec.Kind == GitBugPublicationRefKind.Identity);
         Assert.Equal(GitBugPublicationChangeKind.Update, identitySpec.ChangeKind);
         Assert.Equal(identitySpec.LocalObjectId, identitySpec.ExpectedRemoteObjectId);
+    }
+
+    [Fact]
+    public void Recovery_engine_marks_only_contract_valid_repairable_diagnoses_as_ready()
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            GitBugDiagnosisInvariantCode.MissingNonce,
+            new string('a', 40),
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+
+        var result = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "bridge detail must not be used",
+                diagnosis,
+                Diagnostic: "secret transport detail"));
+
+        Assert.Equal(GitBugRecoveryStatus.ReadyToRepair, result.Status);
+        Assert.Same(diagnosis, result.Diagnosis);
+        Assert.Null(result.FailureKind);
+        Assert.DoesNotContain("bridge", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(GitOperationFailureKind.GitBugDataUnavailable, GitBugRecoveryStatus.DataUnavailable)]
+    [InlineData(GitOperationFailureKind.GitBugFormatUnsupported, GitBugRecoveryStatus.FormatUnsupported)]
+    [InlineData(GitOperationFailureKind.GitBugDataMalformed, GitBugRecoveryStatus.DataMalformed)]
+    [InlineData(GitOperationFailureKind.GitBugDiagnosisCancelled, GitBugRecoveryStatus.Cancelled)]
+    [InlineData(GitOperationFailureKind.GitBugTransportFailure, GitBugRecoveryStatus.TransportFailure)]
+    public void Recovery_engine_normalizes_safe_failure_kinds(
+        GitOperationFailureKind failureKind,
+        GitBugRecoveryStatus expectedStatus)
+    {
+        var result = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                false,
+                "unsafe bridge message",
+                Diagnostic: "raw transport detail",
+                FailureKind: failureKind));
+
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.Null(result.Diagnosis);
+        Assert.Equal(failureKind, result.FailureKind);
+        Assert.DoesNotContain("unsafe", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("raw", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static GitBugPublicationRefState Ref(string refName, char objectIdPrefix) =>
