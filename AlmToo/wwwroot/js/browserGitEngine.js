@@ -49,6 +49,11 @@ const publicationLimits = Object.freeze({
 });
 const gitBugSupportedMarker = 'version-4';
 const gitBugIssueIdPattern = /^[0-9a-f]{64}$/i;
+const gitBugDiagnosisLimits = Object.freeze({
+  refsInspected: 1,
+  commitsInspected: 128,
+  operationsInspected: 512
+});
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 const textEncoder = new TextEncoder();
 
@@ -1424,6 +1429,169 @@ export async function getGitBugIssue(issueId) {
   } catch (error) {
     return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
   }
+}
+
+export async function diagnoseGitBugRef(request) {
+  const operation = 'gitBug.diagnoseRef';
+
+  try {
+    const issueId = requireBoundedGitBugText(
+      typeof request === 'string' ? request : request?.issueId,
+      'issueId',
+      64);
+    if (!gitBugIssueIdPattern.test(issueId)) {
+      throw new GitBugReadError('malformed');
+    }
+
+    const workspace = await getActiveWorkspace(operation);
+    const { fs, dir } = workspace;
+    const git = getGit();
+    const affectedRef = `refs/bugs/${issueId}`;
+    const sourceRevision = await git.resolveRef({ fs, dir, ref: affectedRef });
+    if (!isSafeRemoteSnapshotObjectId(sourceRevision)) {
+      throw new GitBugReadError('malformed');
+    }
+    const result = await readGitBugDiagnosis(git, fs, dir, sourceRevision, affectedRef);
+    return success(operation, 'The Git-Bug ref was diagnosed without mutation.', result);
+  } catch (error) {
+    return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
+  }
+}
+
+async function readGitBugDiagnosis(git, fs, dir, sourceRevision, affectedRef) {
+  const history = [];
+  const visited = new Set();
+  let currentRevision = sourceRevision;
+  const refsInspected = gitBugDiagnosisLimits.refsInspected;
+  let commitsInspected = 0;
+  let operationsInspected = 0;
+
+  while (currentRevision) {
+    if (visited.has(currentRevision)) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    if (commitsInspected >= gitBugDiagnosisLimits.commitsInspected) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    visited.add(currentRevision);
+    const { commit } = await git.readCommit({ fs, dir, oid: currentRevision });
+    commitsInspected += 1;
+    if (!Array.isArray(commit.parent) || commit.parent.length > 1) {
+      return createGitBugDiagnosis(
+        'invalidParentTopology', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    const { tree } = await git.readTree({ fs, dir, oid: commit.tree });
+    const markers = tree.filter((entry) => /^version-\d+$/u.test(entry.path));
+    if (markers.length !== 1 || markers[0].type !== 'blob'
+        || markers[0].path !== gitBugSupportedMarker) {
+      return createGitBugDiagnosis(
+        'unsupportedMarker', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    const opsEntries = tree.filter((entry) => entry.path === 'ops' && entry.type === 'blob');
+    if (opsEntries.length !== 1) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    const payload = await readGitBugJsonBlob(git, fs, dir, opsEntries[0].oid);
+    if (!payload || !Array.isArray(payload.ops) || payload.ops.length === 0
+        || payload.ops.length > gitBugLimits.operationsPerCommit) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    const nextOperationsInspected = operationsInspected + payload.ops.length;
+    if (nextOperationsInspected > gitBugDiagnosisLimits.operationsInspected) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, gitBugDiagnosisLimits.operationsInspected);
+    }
+    operationsInspected = nextOperationsInspected;
+
+    const editClocks = tree.filter((entry) => /^edit-clock-\d+$/u.test(entry.path));
+    if (editClocks.length === 0) {
+      return createGitBugDiagnosis(
+        'missingEditClock', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    if (editClocks.length > 1) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    history.push({
+      oid: currentRevision,
+      parent: commit.parent[0] ?? null,
+      editClock: Number.parseInt(editClocks[0].path.slice('edit-clock-'.length), 10),
+      operations: payload.ops
+    });
+    currentRevision = commit.parent[0] ?? null;
+  }
+
+  const operationIds = new Set();
+  let previousEditClock = null;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (!Number.isSafeInteger(entry.editClock)) {
+      return createGitBugDiagnosis(
+        'missingEditClock', sourceRevision, affectedRef,
+        index === history.length - 1 ? null : history[index + 1].oid,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    if (previousEditClock !== null && entry.editClock <= previousEditClock) {
+      return createGitBugDiagnosis(
+        'staleEditClock', sourceRevision, affectedRef,
+        index === history.length - 1 ? null : history[index + 1].oid,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    previousEditClock = entry.editClock;
+
+    const commitOperationIds = new Set();
+    for (const gitBugOperation of entry.operations) {
+      const nonce = gitBugOperation?.nonce;
+      if (!isBoundedGitBugText(nonce, 128)) {
+        return createGitBugDiagnosis(
+          'missingNonce', sourceRevision, affectedRef,
+          index === history.length - 1 ? null : history[index + 1].oid,
+          refsInspected, commitsInspected, operationsInspected);
+      }
+      if (commitOperationIds.has(nonce) || operationIds.has(nonce)) {
+        return createGitBugDiagnosis(
+          'duplicateOperations', sourceRevision, affectedRef,
+          index === history.length - 1 ? null : history[index + 1].oid,
+          refsInspected, commitsInspected, operationsInspected);
+      }
+      commitOperationIds.add(nonce);
+      operationIds.add(nonce);
+    }
+  }
+
+  return createGitBugDiagnosis(
+    'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+    refsInspected, commitsInspected, operationsInspected);
+}
+
+function createGitBugDiagnosis(code, sourceRevision, affectedRef, latestValidParent,
+  refsInspected, commitsInspected, operationsInspected) {
+  const repairable = code === 'missingNonce' || code === 'missingEditClock';
+  return {
+    invariantCode: code,
+    sourceRevision,
+    affectedRef,
+    latestValidParent,
+    repairability: repairable ? 'repairable' : 'notRepairable',
+    counts: { refsInspected, commitsInspected, operationsInspected }
+  };
 }
 
 async function writeGitBugOperation(request, operation, operations) {

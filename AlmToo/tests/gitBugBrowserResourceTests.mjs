@@ -65,6 +65,69 @@ async function makeUnsupported(root) {
   return id;
 }
 
+async function makeDiagnosisScenario(root, scenario) {
+  const gitdir = path.join(root, 'repository');
+  const id = (await git.listRefs({ fs, gitdir, filepath: 'refs/bugs' })).sort()[0];
+  const parent = await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${id}` });
+  const parentCommit = (await git.readCommit({ fs, gitdir, oid: parent })).commit;
+  const parentTree = (await git.readTree({ fs, gitdir, oid: parentCommit.tree })).tree;
+  const opsEntry = parentTree.find(entry => entry.path === 'ops');
+  const opsPayload = JSON.parse(new TextDecoder().decode((await git.readBlob({
+    fs, gitdir, oid: opsEntry.oid
+  })).blob));
+  const operation = { ...opsPayload.ops[0], nonce: `diagnosis-${scenario}` };
+  let operations = [operation];
+  let treeEntries = parentTree.filter(entry => entry.path !== 'ops');
+  let parents = [parent];
+  const parentClock = treeEntries.find(entry => /^edit-clock-\d+$/u.test(entry.path));
+
+  if (scenario === 'duplicate-operations') {
+    operations = [operation, { ...operation }];
+  } else if (scenario === 'missing-nonce') {
+    const { nonce, ...withoutNonce } = operation;
+    operations = [withoutNonce];
+  } else if (scenario === 'ambiguous-history') {
+    operations = [];
+  } else if (scenario === 'unsupported-marker') {
+    treeEntries = treeEntries.map(entry => entry.path === 'version-4'
+      ? { ...entry, path: 'version-5' }
+      : entry);
+  } else if (scenario === 'invalid-parent-topology') {
+    parents = [parent, parent];
+  } else if (scenario === 'stale-edit-clock') {
+    treeEntries = treeEntries.map(entry => entry);
+  } else if (scenario === 'missing-edit-clock') {
+    treeEntries = treeEntries.filter(entry => !/^edit-clock-\d+$/u.test(entry.path));
+  } else {
+    throw new Error(`unknown diagnosis scenario: ${scenario}`);
+  }
+
+  if (parentClock && !['stale-edit-clock', 'missing-edit-clock', 'unsupported-marker'].includes(scenario)) {
+    const clock = Number.parseInt(parentClock.path.slice('edit-clock-'.length), 10);
+    treeEntries = treeEntries.map(entry => entry.path === parentClock.path
+      ? { ...entry, path: `edit-clock-${clock + 1}` }
+      : entry);
+  }
+
+  const ops = await git.writeBlob({
+    fs,
+    gitdir,
+    blob: new TextEncoder().encode(JSON.stringify({ ...opsPayload, ops: operations }))
+  });
+  const tree = await git.writeTree({
+    fs,
+    gitdir,
+    tree: [{ mode: '100644', path: 'ops', oid: ops, type: 'blob' }, ...treeEntries]
+  });
+  const sourceRevision = await git.writeCommit({ fs, gitdir, commit: {
+    tree, parent: parents, message: '',
+    author: { name: 'fixture', email: 'fixture@example.invalid', timestamp: 1, timezoneOffset: 0 },
+    committer: { name: 'fixture', email: 'fixture@example.invalid', timestamp: 1, timezoneOffset: 0 }
+  } });
+  await git.writeRef({ fs, gitdir, ref: `refs/bugs/${id}`, value: sourceRevision, force: true });
+  return { id, sourceRevision, latestValidParent: parent };
+}
+
 async function makeEmptyCreationIssue(root) {
   const gitdir = path.join(root, 'repository');
   const id = 'f'.repeat(64);
@@ -293,6 +356,43 @@ test('Resource exports preserve an empty creation description without synthesizi
     description: '',
     comments: []
   });
+});
+
+test('Resource diagnosis classifies approved malformed refs without network or Git mutation', async () => {
+  const scenarios = new Map([
+    ['duplicate-operations', 'duplicateOperations'],
+    ['missing-nonce', 'missingNonce'],
+    ['stale-edit-clock', 'staleEditClock'],
+    ['missing-edit-clock', 'missingEditClock'],
+    ['invalid-parent-topology', 'invalidParentTopology'],
+    ['unsupported-marker', 'unsupportedMarker'],
+    ['ambiguous-history', 'ambiguousHistory']
+  ]);
+
+  for (const [scenario, invariantCode] of scenarios) {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, scenario);
+    const result = await assertUnchangedRead(fixture,
+      engine => engine.diagnoseGitBugRef({ issueId: expected.id }));
+
+    assert.equal(result.operation, 'gitBug.diagnoseRef');
+    assert.equal(result.succeeded, true, result.message);
+    assert.equal(result.value.invariantCode, invariantCode);
+    assert.equal(result.value.sourceRevision, expected.sourceRevision);
+    assert.equal(result.value.affectedRef, `refs/bugs/${expected.id}`);
+    assert.equal(result.value.latestValidParent,
+      invariantCode === 'invalidParentTopology' ? null : expected.latestValidParent);
+    assert.equal(result.value.repairability,
+      ['missingNonce', 'missingEditClock'].includes(invariantCode)
+        ? 'repairable'
+        : 'notRepairable');
+    assert.equal(result.value.counts.refsInspected, 1);
+    assert.ok(Number.isInteger(result.value.counts.commitsInspected));
+    assert.ok(result.value.counts.commitsInspected > 0);
+    assert.ok(Number.isInteger(result.value.counts.operationsInspected));
+    assert.ok(result.value.counts.operationsInspected >= 0);
+    assert.equal(result.diagnostic, null);
+  }
 });
 
 test('Resource exports reject malformed and oversized bridge requests before Git object reads', async () => {

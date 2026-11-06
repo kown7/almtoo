@@ -108,6 +108,15 @@ public sealed record GitBugDiagnosisResult(
     GitBugDiagnosisRepairability Repairability,
     GitBugDiagnosisCounts Counts);
 
+/// <summary>Stable operation names for the Git-Bug write boundary.</summary>
+public static class GitBugWriteOperations
+{
+    public const string IssueEdit = "gitBug.issue.edit";
+    public const string CommentCreate = "gitBug.comment.create";
+    public const string WriteReview = "gitBug.write.review";
+    public const string WriteCommit = "gitBug.write.commit";
+}
+
 /// <summary>Bounds and validation for the diagnosis result crossing the Accessor boundary.</summary>
 public static class GitBugDiagnosisContract
 {
@@ -146,15 +155,6 @@ public static class GitBugDiagnosisContract
         && value.StartsWith("refs/bugs/", StringComparison.Ordinal)
         && value.IndexOfAny(['\0', '\r', '\n']) < 0
         && !value.Contains("..", StringComparison.Ordinal);
-}
-
-/// <summary>Stable operation names for the Git-Bug write boundary.</summary>
-public static class GitBugWriteOperations
-{
-    public const string IssueEdit = "gitBug.issue.edit";
-    public const string CommentCreate = "gitBug.comment.create";
-    public const string WriteReview = "gitBug.write.review";
-    public const string WriteCommit = "gitBug.write.commit";
 }
 
 /// <summary>Stable operation names for the reviewed reconciliation write boundary.</summary>
