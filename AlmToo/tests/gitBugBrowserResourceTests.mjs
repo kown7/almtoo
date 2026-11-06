@@ -111,6 +111,8 @@ async function makeDiagnosisScenario(root, scenario) {
 
   if (scenario === 'duplicate-operations') {
     operations = [operation, { ...operation }];
+  } else if (scenario === 'multi-operation-edit') {
+    operations = [operation, { ...operation, nonce: `diagnosis-${scenario}-second` }];
   } else if (scenario === 'missing-nonce') {
     const { nonce, ...withoutNonce } = operation;
     operations = [withoutNonce];
@@ -122,15 +124,23 @@ async function makeDiagnosisScenario(root, scenario) {
       : entry);
   } else if (scenario === 'invalid-parent-topology') {
     parents = [parent, parent];
+  } else if (scenario === 'backward-clock-skew') {
+    treeEntries = treeEntries.map(entry => /^edit-clock-\d+$/u.test(entry.path)
+      ? { ...entry, path: `edit-clock-${Number.parseInt(entry.path.slice('edit-clock-'.length), 10) - 1}` }
+      : entry);
   } else if (scenario === 'stale-edit-clock') {
     treeEntries = treeEntries.map(entry => entry);
+  } else if (scenario === 'malformed-legacy-history') {
+    treeEntries = treeEntries.map(entry => entry.path === 'version-4'
+      ? { ...entry, path: 'version-3' }
+      : entry);
   } else if (scenario === 'missing-edit-clock') {
     treeEntries = treeEntries.filter(entry => !/^edit-clock-\d+$/u.test(entry.path));
   } else {
     throw new Error(`unknown diagnosis scenario: ${scenario}`);
   }
 
-  if (parentClock && !['stale-edit-clock', 'missing-edit-clock', 'unsupported-marker'].includes(scenario)) {
+  if (parentClock && !['backward-clock-skew', 'stale-edit-clock', 'malformed-legacy-history', 'missing-edit-clock', 'unsupported-marker'].includes(scenario)) {
     const clock = Number.parseInt(parentClock.path.slice('edit-clock-'.length), 10);
     treeEntries = treeEntries.map(entry => entry.path === parentClock.path
       ? { ...entry, path: `edit-clock-${clock + 1}` }
@@ -394,8 +404,11 @@ test('Resource exports preserve an empty creation description without synthesizi
 test('Resource diagnosis classifies approved malformed refs without network or Git mutation', async () => {
   const scenarios = new Map([
     ['duplicate-operations', 'duplicateOperations'],
+    ['multi-operation-edit', 'ambiguousHistory'],
     ['missing-nonce', 'missingNonce'],
+    ['backward-clock-skew', 'staleEditClock'],
     ['stale-edit-clock', 'staleEditClock'],
+    ['malformed-legacy-history', 'unsupportedMarker'],
     ['missing-edit-clock', 'missingEditClock'],
     ['invalid-parent-topology', 'invalidParentTopology'],
     ['unsupported-marker', 'unsupportedMarker'],
@@ -413,8 +426,14 @@ test('Resource diagnosis classifies approved malformed refs without network or G
     assert.equal(result.value.invariantCode, invariantCode);
     assert.equal(result.value.sourceRevision, expected.sourceRevision);
     assert.equal(result.value.affectedRef, `refs/bugs/${expected.id}`);
-    assert.equal(result.value.latestValidParent,
-      invariantCode === 'invalidParentTopology' ? null : expected.latestValidParent);
+    if (scenario === 'multi-operation-edit') {
+      assert.match(result.value.latestValidParent, /^[0-9a-f]{40}$/,
+        'multi-operation history must expose a concrete valid parent candidate');
+    } else {
+      assert.equal(result.value.latestValidParent,
+        invariantCode === 'invalidParentTopology' ? null : expected.latestValidParent,
+        `${scenario} latestValidParent`);
+    }
     assert.equal(result.value.repairability,
       ['missingNonce', 'missingEditClock'].includes(invariantCode)
         ? 'repairable'
@@ -424,6 +443,10 @@ test('Resource diagnosis classifies approved malformed refs without network or G
     assert.ok(result.value.counts.commitsInspected > 0);
     assert.ok(Number.isInteger(result.value.counts.operationsInspected));
     assert.ok(result.value.counts.operationsInspected >= 0);
+    if (scenario === 'multi-operation-edit') {
+      assert.equal(result.value.counts.operationsInspected, 6,
+        'multi-operation history must remain within the bounded inspection budget');
+    }
     assert.equal(result.diagnostic, null);
   }
 });
@@ -625,4 +648,20 @@ test('Resource Git-Bug writes remain readable by the v0.11.0 command-line reader
     }
   )));
   assert.ok(bugs.some(bug => bug.id === issueId), `CLI ids: ${bugs.map(bug => bug.id).join(',')}; expected ${issueId}`);
+
+  const shown = JSON.parse(execFileSync(
+    gitBugBinary,
+    ['bug', 'show', issueId, '--format', 'json'],
+    { cwd: root, env: { ...process.env, HOME: home }, encoding: 'utf8' }
+  ));
+  assert.equal(shown.id, issueId);
+  assert.equal(shown.status, 'closed');
+  assert.equal(shown.title, 'Closed issue with history');
+  assert.match(shown.edit_time?.time ?? '', /^2026-/);
+
+  assert.equal(execFileSync(
+    gitBugBinary,
+    ['bug', 'status', issueId],
+    { cwd: root, env: { ...process.env, HOME: home }, encoding: 'utf8' }
+  ).trim(), 'closed');
 });

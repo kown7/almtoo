@@ -133,7 +133,10 @@ test('malformed-ref descriptors cover every approved invariant and remain bounde
   const scenarios = Object.entries(manifest.scenarios);
   const expectedCodes = [
     'DuplicateOperations',
+    'AmbiguousHistory',
     'MissingNonce',
+    'StaleEditClock',
+    'UnsupportedMarker',
     'StaleEditClock',
     'MissingEditClock',
     'InvalidParentTopology',
