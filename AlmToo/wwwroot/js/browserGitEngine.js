@@ -1620,7 +1620,8 @@ async function resolveOptionalRef(git, fs, dir, ref) {
     return await git.resolveRef({ fs, dir, ref });
   } catch (error) {
     const message = String(error?.message ?? error ?? '').toLowerCase();
-    if (message.includes('not found') || message.includes('does not exist') || message.includes('unknown ref')) {
+    if (message.includes('not found') || message.includes('could not find')
+        || message.includes('does not exist') || message.includes('unknown ref')) {
       return null;
     }
     throw error;
@@ -1638,7 +1639,7 @@ async function readRepairSource(git, fs, dir, sourceRevision) {
   const tree = (await git.readTree({ fs, dir, oid: commit.tree })).tree;
   const markerEntries = tree.filter((entry) => entry.path === gitBugSupportedMarker && entry.type === 'blob');
   const opsEntries = tree.filter((entry) => entry.path === 'ops' && entry.type === 'blob');
-  const editClockEntries = tree.filter((entry) => /^edit-clock-\\d+$/u.test(entry.path));
+  const editClockEntries = tree.filter((entry) => /^edit-clock-\d+$/u.test(entry.path));
   if (markerEntries.length !== 1 || opsEntries.length !== 1 || editClockEntries.length > 1) {
     throw repairFailure('unsupported-format');
   }
@@ -1658,7 +1659,7 @@ async function readRepairParentEditClock(git, fs, dir, parentRevision) {
   }
   const parentCommit = (await git.readCommit({ fs, dir, oid: parentRevision })).commit;
   const parentTree = (await git.readTree({ fs, dir, oid: parentCommit.tree })).tree;
-  const clocks = parentTree.filter((entry) => /^edit-clock-\\d+$/u.test(entry.path));
+  const clocks = parentTree.filter((entry) => /^edit-clock-\d+$/u.test(entry.path));
   if (clocks.length !== 1) {
     throw repairFailure('unsupported-format');
   }

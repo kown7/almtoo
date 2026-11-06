@@ -37,6 +37,34 @@ async function snapshot(root) {
   ])));
 }
 
+async function refSnapshot(root) {
+  const gitdir = path.join(root, 'repository');
+  const refs = await git.listRefs({ fs, gitdir, filepath: 'refs' });
+  return Object.fromEntries(await Promise.all(refs.sort().map(async ref => [
+    ref,
+    await git.resolveRef({ fs, gitdir, ref: `refs/${ref}` })
+  ])));
+}
+
+function repairRequest(diagnosis, overrides = {}) {
+  return {
+    sourceRevision: diagnosis.sourceRevision,
+    targetRef: diagnosis.affectedRef,
+    backupRef: `refs/almtoo/recovery/${diagnosis.sourceRevision}/${diagnosis.affectedRef.slice('refs/'.length)}`,
+    expectedOldObjectId: diagnosis.sourceRevision,
+    expectedNewObjectId: diagnosis.latestValidParent,
+    operation: diagnosis.invariantCode === 'missingEditClock'
+      ? 'gitBug.repair.editClock'
+      : 'gitBug.repair.nonce',
+    editClockStrategy: diagnosis.invariantCode === 'missingEditClock'
+      ? 'advance-from-valid-parent'
+      : 'preserve-valid-parent',
+    editClockDelta: diagnosis.invariantCode === 'missingEditClock' ? 1 : 0,
+    confirmed: true,
+    ...overrides
+  };
+}
+
 async function copyFixture() {
   const destination = await mkdtemp(path.join(fixtureParent, '.resource-'));
   temporaryFixtures.push(destination);
@@ -161,7 +189,7 @@ function resetGlobals() {
   delete globalThis.GitHttp;
 }
 
-async function openFixture(root, { writable = false } = {}) {
+async function openFixture(root, { writable = false, failWriteRefAt = null } = {}) {
   resetGlobals();
   const gitdir = path.join(root, 'repository');
   const calls = [];
@@ -188,15 +216,20 @@ async function openFixture(root, { writable = false } = {}) {
     };
   }
   if (writable) {
-    for (const operation of ['writeBlob', 'writeTree', 'commit', 'writeRef']) {
+    let writeRefCalls = 0;
+    for (const operation of ['writeBlob', 'writeTree', 'commit', 'writeCommit', 'writeRef']) {
       runtime[operation] = async (options) => {
         calls.push(operation);
+        if (operation === 'writeRef' && failWriteRefAt !== null
+            && writeRefCalls++ === failWriteRefAt) {
+          throw new Error('controlled-write-ref-failure');
+        }
         return git[operation]({ ...options, fs, gitdir, dir: undefined });
       };
     }
   }
   for (const operation of forbiddenOperations) {
-    if (writable && ['writeBlob', 'writeTree', 'commit', 'writeRef'].includes(operation)) {
+    if (writable && ['writeBlob', 'writeTree', 'commit', 'writeCommit', 'writeRef'].includes(operation)) {
       continue;
     }
     runtime[operation] = async () => assert.fail(`${operation} must not run during a Git-Bug read.`);
@@ -392,6 +425,125 @@ test('Resource diagnosis classifies approved malformed refs without network or G
     assert.ok(Number.isInteger(result.value.counts.operationsInspected));
     assert.ok(result.value.counts.operationsInspected >= 0);
     assert.equal(result.diagnostic, null);
+  }
+});
+
+test('Resource repair application preserves malformed tips, unrelated refs, and idempotent repeats', async () => {
+  const fixture = await copyFixture();
+  const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+  const gitdir = path.join(fixture, 'repository');
+  const unrelatedRef = 'refs/heads/unrelated-repair-test';
+  await git.writeRef({ fs, gitdir, ref: unrelatedRef, value: expected.latestValidParent, force: false });
+
+  const beforePreview = await snapshot(fixture);
+  const beforeRefs = await refSnapshot(fixture);
+  const runtime = await openFixture(fixture, { writable: true });
+  const diagnosis = await runtime.engine.diagnoseGitBugRef({ issueId: expected.id });
+  assert.equal(diagnosis.succeeded, true, JSON.stringify(diagnosis));
+  assert.equal(diagnosis.value.repairability, 'repairable');
+  assert.deepEqual(await snapshot(fixture), beforePreview, 'preview and diagnosis must not mutate the repository');
+  assert.deepEqual(await refSnapshot(fixture), beforeRefs, 'preview must not create backup refs');
+
+  const request = repairRequest(diagnosis.value);
+  const applied = await runtime.engine.applyGitBugRepair(request);
+  assert.equal(applied.operation, 'gitBug.applyRepair');
+  assert.equal(applied.succeeded, true, applied.message);
+  assert.equal(applied.value.sourceRevision, expected.sourceRevision);
+  assert.equal(applied.value.targetRef, `refs/bugs/${expected.id}`);
+  assert.equal(applied.value.backupRef, request.backupRef);
+  assert.equal(applied.value.objectId, expected.latestValidParent);
+  assert.equal(applied.value.alreadyApplied, false);
+  assert.equal(await git.resolveRef({ fs, gitdir, ref: request.targetRef }), expected.latestValidParent);
+  assert.equal(await git.resolveRef({ fs, gitdir, ref: request.backupRef }), expected.sourceRevision);
+
+  const afterApplication = await snapshot(fixture);
+  const afterRefs = await refSnapshot(fixture);
+  for (const [ref, objectId] of Object.entries(beforeRefs)) {
+    if (ref !== request.targetRef.slice('refs/'.length)) assert.equal(afterRefs[ref], objectId, `${ref} must be preserved`);
+  }
+  assert.equal(afterRefs[request.backupRef.slice('refs/'.length)], expected.sourceRevision);
+
+  const repeated = await runtime.engine.applyGitBugRepair(request);
+  assert.equal(repeated.succeeded, true, repeated.message);
+  assert.equal(repeated.value.alreadyApplied, true);
+  assert.deepEqual(await snapshot(fixture), afterApplication, 'repeated repair must be idempotent');
+  assert.deepEqual(await refSnapshot(fixture), afterRefs, 'repeated repair must not change refs');
+});
+
+test('Resource repair application rejects stale, ambiguous, unsupported, colliding, and faulted mutations safely', async () => {
+  for (const scenario of ['duplicate-operations', 'ambiguous-history', 'unsupported-marker']) {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, scenario);
+    const readRuntime = await openFixture(fixture);
+    const diagnosis = await readRuntime.engine.diagnoseGitBugRef({ issueId: expected.id });
+    assert.equal(diagnosis.succeeded, true, JSON.stringify(diagnosis));
+    const targetRef = `refs/bugs/${expected.id}`;
+    const beforeTarget = await git.resolveRef({ fs, gitdir: path.join(fixture, 'repository'), ref: targetRef });
+    const runtime = await openFixture(fixture, { writable: true });
+    const result = await runtime.engine.applyGitBugRepair(repairRequest(diagnosis.value));
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({
+      fs,
+      gitdir: path.join(fixture, 'repository'),
+      ref: targetRef
+    }), beforeTarget, `${scenario} must leave the target unchanged`);
+  }
+
+  {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+    const gitdir = path.join(fixture, 'repository');
+    await makeUnsupported(fixture);
+    const staleTarget = await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${expected.id}` });
+    const runtime = await openFixture(fixture, { writable: true });
+    const result = await runtime.engine.applyGitBugRepair(repairRequest({
+      sourceRevision: expected.sourceRevision,
+      affectedRef: `refs/bugs/${expected.id}`,
+      latestValidParent: expected.latestValidParent,
+      invariantCode: 'missingNonce'
+    }));
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${expected.id}` }), staleTarget);
+    assert.equal(result.message.includes('controlled'), false);
+  }
+
+  {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+    const gitdir = path.join(fixture, 'repository');
+    const backupRef = `refs/almtoo/recovery/${expected.sourceRevision}/bugs/${expected.id}`;
+    await git.writeRef({ fs, gitdir, ref: backupRef, value: 'f'.repeat(40), force: false });
+    const runtime = await openFixture(fixture, { writable: true });
+    const result = await runtime.engine.applyGitBugRepair(repairRequest({
+      sourceRevision: expected.sourceRevision,
+      affectedRef: `refs/bugs/${expected.id}`,
+      latestValidParent: expected.latestValidParent,
+      invariantCode: 'missingNonce'
+    }));
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${expected.id}` }), expected.sourceRevision);
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: backupRef }), 'f'.repeat(40));
+  }
+
+  for (const failWriteRefAt of [0, 1]) {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+    const gitdir = path.join(fixture, 'repository');
+    const request = repairRequest({
+      sourceRevision: expected.sourceRevision,
+      affectedRef: `refs/bugs/${expected.id}`,
+      latestValidParent: expected.latestValidParent,
+      invariantCode: 'missingNonce'
+    });
+    const runtime = await openFixture(fixture, { writable: true, failWriteRefAt });
+    const result = await runtime.engine.applyGitBugRepair(request);
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: request.targetRef }), expected.sourceRevision, JSON.stringify(result));
+    if (failWriteRefAt === 0) {
+      await assert.rejects(() => git.resolveRef({ fs, gitdir, ref: request.backupRef }));
+    } else {
+      assert.equal(await git.resolveRef({ fs, gitdir, ref: request.backupRef }), expected.sourceRevision, JSON.stringify(result));
+    }
   }
 });
 
