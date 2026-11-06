@@ -703,6 +703,26 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
             issueId.Value);
     }
 
+    public async ValueTask<GitOperationResult<GitBugRepairApplicationResult>> ApplyRepairAsync(
+        GitBugRepairApplicationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = "gitBug.applyRepair";
+        if (!GitBugRepairContract.IsValidApplicationRequest(request))
+        {
+            return SanitizedGitBugFailure<GitBugRepairApplicationResult>(
+                operation,
+                GitOperationFailureKind.GitBugWriteInvalidRequest);
+        }
+
+        return await InvokeGitBugWithValueAsync<GitBugRepairApplicationDto, GitBugRepairApplicationResult>(
+            operation,
+            "applyGitBugRepair",
+            value => value.ToResult(),
+            cancellationToken,
+            request);
+    }
+
     public async ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
         GitBugIssueEditRequest request,
         CancellationToken cancellationToken = default)
@@ -1724,6 +1744,31 @@ public sealed class BrowserGitAccessor : IBrowserGitAccessor, IGitBugAccessor
 
         private static string RequireValue(string? value) =>
             !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException("Git-Bug write response was incomplete.");
+    }
+
+    private sealed record GitBugRepairApplicationDto
+    {
+        [JsonPropertyName("sourceRevision")]
+        public string SourceRevision { get; init; } = string.Empty;
+
+        [JsonPropertyName("targetRef")]
+        public string TargetRef { get; init; } = string.Empty;
+
+        [JsonPropertyName("backupRef")]
+        public string BackupRef { get; init; } = string.Empty;
+
+        [JsonPropertyName("objectId")]
+        public string ObjectId { get; init; } = string.Empty;
+
+        [JsonPropertyName("alreadyApplied")]
+        public bool AlreadyApplied { get; init; }
+
+        public GitBugRepairApplicationResult ToResult() => new(
+            SourceRevision,
+            TargetRef,
+            BackupRef,
+            ObjectId,
+            AlreadyApplied);
     }
 
     private sealed record GitBugDiagnosisDto

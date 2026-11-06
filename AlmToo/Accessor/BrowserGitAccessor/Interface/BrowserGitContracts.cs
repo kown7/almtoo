@@ -164,6 +164,24 @@ public static class GitBugDiagnosisContract
 }
 
 /// <summary>Stable operation names and ref rules for the reviewed repair boundary.</summary>
+public sealed record GitBugRepairApplicationRequest(
+    string SourceRevision,
+    string TargetRef,
+    string BackupRef,
+    string ExpectedOldObjectId,
+    string ExpectedNewObjectId,
+    string Operation,
+    string EditClockStrategy,
+    int EditClockDelta,
+    bool Confirmed);
+
+public sealed record GitBugRepairApplicationResult(
+    string SourceRevision,
+    string TargetRef,
+    string BackupRef,
+    string ObjectId,
+    bool AlreadyApplied);
+
 public static class GitBugRepairContract
 {
     public const string BackupRefPrefix = "refs/almtoo/recovery/";
@@ -218,6 +236,18 @@ public static class GitBugRepairContract
         IsSafeRef(value)
         && (value!.StartsWith("refs/bugs/", StringComparison.Ordinal)
             || value.StartsWith("refs/identities/", StringComparison.Ordinal));
+
+    public static bool IsValidApplicationRequest(GitBugRepairApplicationRequest? request) =>
+        request is not null
+        && IsObjectId(request.SourceRevision)
+        && IsAllowedTargetRef(request.TargetRef)
+        && IsAllowedBackupRef(request.BackupRef)
+        && IsObjectId(request.ExpectedOldObjectId)
+        && IsObjectId(request.ExpectedNewObjectId)
+        && request.Operation is RebuildDuplicateOperations or RebuildMissingNonce or NormalizeEditClock
+        && request.EditClockStrategy is "preserve-valid-parent" or "advance-from-valid-parent"
+        && request.EditClockDelta is >= 0 and <= 1
+        && request.Confirmed;
 
     public static bool IsAllowedBackupRef(string? value) =>
         value is not null

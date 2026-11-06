@@ -17,6 +17,10 @@ public interface IGitBugAccessor
         GitBugIssueId issueId,
         CancellationToken cancellationToken = default);
 
+    ValueTask<GitOperationResult<GitBugRepairApplicationResult>> ApplyRepairAsync(
+        GitBugRepairApplicationRequest request,
+        CancellationToken cancellationToken = default);
+
     ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
         GitBugIssueEditRequest request,
         CancellationToken cancellationToken = default);

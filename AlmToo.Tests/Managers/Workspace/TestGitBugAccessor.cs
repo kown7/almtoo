@@ -19,6 +19,11 @@ internal sealed class NoOpGitBugAccessor : IGitBugAccessor
         CancellationToken cancellationToken = default) =>
         Unsupported<GitBugDiagnosisResult>("diagnose-ref");
 
+    public ValueTask<GitOperationResult<GitBugRepairApplicationResult>> ApplyRepairAsync(
+        GitBugRepairApplicationRequest request,
+        CancellationToken cancellationToken = default) =>
+        Unsupported<GitBugRepairApplicationResult>("apply-repair");
+
     public ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
         GitBugIssueEditRequest request,
         CancellationToken cancellationToken = default) =>

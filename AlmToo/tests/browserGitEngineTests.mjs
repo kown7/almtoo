@@ -1852,3 +1852,31 @@ test('publication source keeps branch and Git-Bug namespaces bounded and pushes 
   assert.ok(moduleSource.includes('publication-network-unavailable'));
   assert.ok(moduleSource.includes('publication-remote-malformed'));
 });
+
+test('applyGitBugRepair rejects arbitrary target namespaces before opening a mutation path', async () => {
+  let writeCalls = 0;
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async writeRef() {
+        writeCalls += 1;
+      }
+    }
+  });
+  const sourceRevision = 'a'.repeat(40);
+  const result = await engine.applyGitBugRepair({
+    sourceRevision,
+    targetRef: 'refs/heads/main',
+    backupRef: `refs/almtoo/recovery/${sourceRevision}/heads/main`,
+    expectedOldObjectId: sourceRevision,
+    expectedNewObjectId: 'b'.repeat(40),
+    operation: 'gitBug.repair.nonce',
+    editClockStrategy: 'preserve-valid-parent',
+    editClockDelta: 0,
+    confirmed: true
+  });
+
+  assert.equal(result.succeeded, false);
+  assert.equal(result.value, null);
+  assert.equal(result.diagnostic, null);
+  assert.equal(writeCalls, 0);
+});
