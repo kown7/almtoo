@@ -138,9 +138,13 @@ public static class GitBugDiagnosisContract
         && counts.CommitsInspected is >= 1 and <= MaximumCommitsInspected
         && counts.OperationsInspected is >= 0 and <= MaximumOperationsInspected;
 
+    public static bool IsValidRepairability(GitBugDiagnosisRepairability repairability) =>
+        Enum.IsDefined(repairability);
+
     public static bool IsValidResult(GitBugDiagnosisResult? result) =>
         result is not null
         && IsValidInvariantCode(result.InvariantCode)
+        && IsValidRepairability(result.Repairability)
         && IsObjectId(result.SourceRevision)
         && IsSafeRef(result.AffectedRef)
         && (result.LatestValidParent is null || IsObjectId(result.LatestValidParent))
@@ -157,6 +161,86 @@ public static class GitBugDiagnosisContract
         && value.StartsWith("refs/bugs/", StringComparison.Ordinal)
         && value.IndexOfAny(['\0', '\r', '\n']) < 0
         && !value.Contains("..", StringComparison.Ordinal);
+}
+
+/// <summary>Stable operation names and ref rules for the reviewed repair boundary.</summary>
+public static class GitBugRepairContract
+{
+    public const string BackupRefPrefix = "refs/almtoo/recovery/";
+    public const int MaximumBackupRefLength = 256;
+
+    public const string RebuildDuplicateOperations = "gitBug.repair.deduplicate";
+    public const string RebuildMissingNonce = "gitBug.repair.nonce";
+    public const string NormalizeEditClock = "gitBug.repair.editClock";
+
+    public static bool IsRepairableInvariant(GitBugDiagnosisInvariantCode invariantCode) =>
+        invariantCode is GitBugDiagnosisInvariantCode.DuplicateOperations
+            or GitBugDiagnosisInvariantCode.MissingNonce
+            or GitBugDiagnosisInvariantCode.StaleEditClock
+            or GitBugDiagnosisInvariantCode.MissingEditClock;
+
+    public static string? OperationFor(GitBugDiagnosisInvariantCode invariantCode) =>
+        invariantCode switch
+        {
+            GitBugDiagnosisInvariantCode.DuplicateOperations => RebuildDuplicateOperations,
+            GitBugDiagnosisInvariantCode.MissingNonce => RebuildMissingNonce,
+            GitBugDiagnosisInvariantCode.StaleEditClock or GitBugDiagnosisInvariantCode.MissingEditClock => NormalizeEditClock,
+            _ => null
+        };
+
+    public static string? EditClockStrategyFor(GitBugDiagnosisInvariantCode invariantCode) =>
+        invariantCode switch
+        {
+            GitBugDiagnosisInvariantCode.StaleEditClock or GitBugDiagnosisInvariantCode.MissingEditClock => "advance-from-valid-parent",
+            GitBugDiagnosisInvariantCode.DuplicateOperations or GitBugDiagnosisInvariantCode.MissingNonce => "preserve-valid-parent",
+            _ => null
+        };
+
+    public static int EditClockDeltaFor(GitBugDiagnosisInvariantCode invariantCode) =>
+        invariantCode is GitBugDiagnosisInvariantCode.StaleEditClock
+            or GitBugDiagnosisInvariantCode.MissingEditClock
+            ? 1
+            : 0;
+
+    public static string? CreateBackupRef(string? sourceRevision, string? targetRef)
+    {
+        if (!IsObjectId(sourceRevision) || !IsAllowedTargetRef(targetRef))
+        {
+            return null;
+        }
+
+        var targetSuffix = targetRef!["refs/".Length..];
+        var backupRef = $"{BackupRefPrefix}{sourceRevision}/{targetSuffix}";
+        return IsAllowedBackupRef(backupRef) ? backupRef : null;
+    }
+
+    public static bool IsAllowedTargetRef(string? value) =>
+        IsSafeRef(value)
+        && (value!.StartsWith("refs/bugs/", StringComparison.Ordinal)
+            || value.StartsWith("refs/identities/", StringComparison.Ordinal));
+
+    public static bool IsAllowedBackupRef(string? value) =>
+        value is not null
+        && value.Length <= MaximumBackupRefLength
+        && value.StartsWith(BackupRefPrefix, StringComparison.Ordinal)
+        && IsSafeRef(value)
+        && value[BackupRefPrefix.Length..].Contains('/', StringComparison.Ordinal);
+
+    private static bool IsObjectId(string? value) =>
+        value is not null
+        && value.Length is 40 or 64
+        && value.All(Uri.IsHexDigit);
+
+    private static bool IsSafeRef(string? value) =>
+        value is not null
+        && value.Length > 0
+        && value.Length <= GitBugDiagnosisContract.MaximumRefLength
+        && value.IndexOfAny(['\\', '\0', '\r', '\n', ' ', '\t', '~', '^', ':', '?', '*', '[']) < 0
+        && !value.StartsWith("/", StringComparison.Ordinal)
+        && !value.EndsWith("/", StringComparison.Ordinal)
+        && !value.Contains("//", StringComparison.Ordinal)
+        && !value.Contains("..", StringComparison.Ordinal)
+        && !value.Contains("@{", StringComparison.Ordinal);
 }
 
 /// <summary>Stable operation names for the reviewed reconciliation write boundary.</summary>

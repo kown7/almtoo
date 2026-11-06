@@ -5,6 +5,7 @@ using GitBugDiagnosisCounts = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBu
 using GitBugDiagnosisInvariantCode = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisInvariantCode;
 using GitBugDiagnosisRepairability = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisRepairability;
 using GitBugDiagnosisResult = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisResult;
+using GitBugRepairContract = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugRepairContract;
 using GitOperationFailureKind = AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationFailureKind;
 using Xunit;
 
@@ -230,6 +231,103 @@ public sealed class GitBugPublicationEngineTests
         Assert.Null(result.FailureKind);
         Assert.DoesNotContain("bridge", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("secret", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Recovery_engine_builds_a_deterministic_source_bound_repair_preview()
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            GitBugDiagnosisInvariantCode.MissingNonce,
+            SourceRevision,
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+        var decision = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "ignored",
+                diagnosis));
+
+        var result = new GitBugRecoveryEngine().BuildRepairPlan(decision, SourceRevision);
+
+        Assert.Equal(GitBugRepairPreviewStatus.Ready, result.Status);
+        Assert.Null(result.RejectionReason);
+        Assert.Equal(GitBugRepairIdempotencyState.NotApplied, result.Idempotency);
+        Assert.NotNull(result.Plan);
+        Assert.Equal(SourceRevision, result.Plan.SourceRevision);
+        Assert.Equal(SourceRevision, result.Plan.ExpectedOldObjectId);
+        Assert.Equal(new string('b', 40), result.Plan.ExpectedNewObjectId);
+        Assert.Equal("refs/bugs/issue-1", result.Plan.TargetRef);
+        Assert.Equal($"refs/almtoo/recovery/{SourceRevision}/bugs/issue-1", result.Plan.BackupRef);
+        Assert.Equal(GitBugRepairContract.RebuildMissingNonce, result.Plan.Mutation.Operation);
+        Assert.Equal("preserve-valid-parent", result.Plan.Mutation.EditClockChange.Strategy);
+        Assert.Equal(0, result.Plan.Mutation.EditClockChange.Delta);
+        Assert.True(result.Plan.RequiresExplicitConfirmation);
+        Assert.DoesNotContain("ignored", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Recovery_engine_rejects_a_stale_source_revision_before_planning()
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            GitBugDiagnosisInvariantCode.MissingNonce,
+            SourceRevision,
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+        var decision = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "ignored",
+                diagnosis));
+
+        var result = new GitBugRecoveryEngine().BuildRepairPlan(decision, new string('c', 40));
+
+        Assert.Equal(GitBugRepairPreviewStatus.Stale, result.Status);
+        Assert.Equal(GitBugRepairRejectionReason.StaleSourceRevision, result.RejectionReason);
+        Assert.Null(result.Plan);
+    }
+
+    [Theory]
+    [InlineData(GitBugDiagnosisInvariantCode.AmbiguousHistory, GitBugRepairPreviewStatus.Ambiguous, GitBugRepairRejectionReason.AmbiguousHistory)]
+    [InlineData(GitBugDiagnosisInvariantCode.UnsupportedMarker, GitBugRepairPreviewStatus.Unsupported, GitBugRepairRejectionReason.UnsupportedInvariant)]
+    public void Recovery_engine_rejects_ambiguous_or_unsupported_repair_invariants(
+        GitBugDiagnosisInvariantCode invariantCode,
+        GitBugRepairPreviewStatus expectedStatus,
+        GitBugRepairRejectionReason expectedReason)
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            invariantCode,
+            SourceRevision,
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+        var decision = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "ignored",
+                diagnosis));
+
+        var result = new GitBugRecoveryEngine().BuildRepairPlan(decision, SourceRevision);
+
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.Equal(expectedReason, result.RejectionReason);
+        Assert.Null(result.Plan);
+    }
+
+    [Theory]
+    [InlineData("refs/heads/main")]
+    [InlineData("refs/bugs/issue..1")]
+    public void Repair_contract_rejects_backup_refs_outside_the_allowlist(string targetRef)
+    {
+        Assert.Null(GitBugRepairContract.CreateBackupRef(SourceRevision, targetRef));
+        Assert.False(GitBugRepairContract.IsAllowedBackupRef(targetRef));
     }
 
     [Theory]
