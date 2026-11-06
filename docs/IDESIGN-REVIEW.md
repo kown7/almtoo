@@ -598,6 +598,16 @@ None. Synchronization uses the established Browser Git Accessor boundary and con
 **Verification plan:** Run focused JavaScript Resource/fixture tests, the relevant .NET contract tests, and a controlled `git-bug` CLI pull/read regression against a repository containing a browser-style write. Re-review is required if the fix changes a service boundary, write contract, or introduces migration behavior.
 **Approval basis:** User explicitly approved this scoped Resource serialization correction on 2026-11-04; no new interface or boundary change is authorized by the review.
 
+## M019 S03 T03 operational recovery evidence review
+
+**Status:** APPROVED by autonomous execution authorization on 2026-11-06
+**Affected layers:** Resource and Accessor documentation/test evidence only; existing Manager and Engine contracts are exercised but not changed; Client is out of scope because recovery remains an operator-run, explicit-confirmation workflow.
+**Dependency direction:** Existing Client -> Workspace Manager -> `IGitBugAccessor` / `IBrowserGitAccessor` -> `BrowserGitAccessor` -> browser Git Resource remains unchanged. Operational evidence inspects the same Resource contract and controlled remote harness without adding a parallel storage service.
+**Interfaces added or retained:** Retain `IGitBugAccessor` and `IBrowserGitAccessor`; no new interface.
+**Interface justifications:** `IGitBugAccessor` remains the Git-Bug storage/fixture substitution seam, while `IBrowserGitAccessor` remains the browser Git, filesystem, remote transport, and credential substitution seam; both protect genuine external boundaries.
+**Exceptions or risks:** The recovery runbook is intentionally not a Client feature and never authorizes an external remote mutation by itself. Evidence uses sealed fixtures, disposable repositories, and the controlled remote only.
+**Review outcome:** Documentation, traceability tests, and source-bound UAT may proceed without a production service or contract change.
+
 ## Git-Bug malformed-ref recovery and validation planning review
 
 **Status:** APPROVED by explicit user approval on 2026-11-05
