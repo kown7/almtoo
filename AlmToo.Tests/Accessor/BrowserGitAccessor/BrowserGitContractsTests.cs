@@ -523,4 +523,34 @@ public sealed class BrowserGitContractsTests
         Assert.False(BrowserGitReconciliationContract.IsValidFailure(GitOperationFailureKind.Unknown));
         Assert.True(BrowserGitReconciliationContract.IsValidFailure(GitOperationFailureKind.ReconciliationStaleRemote));
     }
+
+    [Fact]
+    public void GitBug_diagnosis_contract_is_bounded_and_credential_free()
+    {
+        var result = new GitBugDiagnosisResult(
+            GitBugDiagnosisInvariantCode.MissingNonce,
+            new string('a', 40),
+            "refs/bugs/" + new string('b', 64),
+            new string('c', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(RefsInspected: 1, CommitsInspected: 2, OperationsInspected: 3));
+
+        Assert.True(GitBugDiagnosisContract.IsValidResult(result));
+        Assert.Equal("gitBug.diagnoseRef", GitBugDiagnosisContract.DiagnosisOperation);
+        Assert.DoesNotContain(result.GetType().GetProperties(), property =>
+            property.Name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("diagnostic", StringComparison.OrdinalIgnoreCase));
+        Assert.False(GitBugDiagnosisContract.IsValidCounts(new(
+            GitBugDiagnosisContract.MaximumRefsInspected + 1, 1, 0)));
+        Assert.False(GitBugDiagnosisContract.IsValidResult(result with
+        {
+            AffectedRef = "refs/bugs/../private"
+        }));
+        Assert.False(GitBugDiagnosisContract.IsValidResult(result with
+        {
+            LatestValidParent = "not-an-object-id"
+        }));
+    }
 }

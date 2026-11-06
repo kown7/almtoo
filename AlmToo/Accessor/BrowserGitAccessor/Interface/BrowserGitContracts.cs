@@ -70,6 +70,84 @@ public enum GitOperationFailureKind
     Unknown
 }
 
+/// <summary>Stable invariant codes emitted by the read-only malformed-ref diagnosis boundary.</summary>
+public enum GitBugDiagnosisInvariantCode
+{
+    DuplicateOperations,
+    MissingNonce,
+    StaleEditClock,
+    MissingEditClock,
+    InvalidParentTopology,
+    UnsupportedMarker,
+    AmbiguousHistory
+}
+
+/// <summary>Whether a malformed Git-Bug history can be repaired without guessing or force-writing.</summary>
+public enum GitBugDiagnosisRepairability
+{
+    NotRepairable,
+    Repairable
+}
+
+/// <summary>Bounded traversal counters returned by malformed-ref diagnosis.</summary>
+public sealed record GitBugDiagnosisCounts(
+    int RefsInspected,
+    int CommitsInspected,
+    int OperationsInspected);
+
+/// <summary>
+/// Credential-free read-only diagnosis facts for one Git-Bug ref. The affected ref and source
+/// revision are opaque object identifiers; transport details and raw object payloads are not part
+/// of this contract.
+/// </summary>
+public sealed record GitBugDiagnosisResult(
+    GitBugDiagnosisInvariantCode InvariantCode,
+    string SourceRevision,
+    string AffectedRef,
+    string? LatestValidParent,
+    GitBugDiagnosisRepairability Repairability,
+    GitBugDiagnosisCounts Counts);
+
+/// <summary>Bounds and validation for the diagnosis result crossing the Accessor boundary.</summary>
+public static class GitBugDiagnosisContract
+{
+    public const int MaximumObjectIdLength = 64;
+    public const int MaximumRefLength = 128;
+    public const int MaximumRefsInspected = 64;
+    public const int MaximumCommitsInspected = 128;
+    public const int MaximumOperationsInspected = 512;
+    public const string DiagnosisOperation = "gitBug.diagnoseRef";
+
+    public static bool IsValidInvariantCode(GitBugDiagnosisInvariantCode code) =>
+        Enum.IsDefined(code);
+
+    public static bool IsValidCounts(GitBugDiagnosisCounts? counts) =>
+        counts is not null
+        && counts.RefsInspected is >= 1 and <= MaximumRefsInspected
+        && counts.CommitsInspected is >= 1 and <= MaximumCommitsInspected
+        && counts.OperationsInspected is >= 0 and <= MaximumOperationsInspected;
+
+    public static bool IsValidResult(GitBugDiagnosisResult? result) =>
+        result is not null
+        && IsValidInvariantCode(result.InvariantCode)
+        && IsObjectId(result.SourceRevision)
+        && IsSafeRef(result.AffectedRef)
+        && (result.LatestValidParent is null || IsObjectId(result.LatestValidParent))
+        && IsValidCounts(result.Counts);
+
+    private static bool IsObjectId(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length <= MaximumObjectIdLength
+        && value.All(static character => Uri.IsHexDigit(character));
+
+    private static bool IsSafeRef(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length <= MaximumRefLength
+        && value.StartsWith("refs/bugs/", StringComparison.Ordinal)
+        && value.IndexOfAny(['\0', '\r', '\n']) < 0
+        && !value.Contains("..", StringComparison.Ordinal);
+}
+
 /// <summary>Stable operation names for the Git-Bug write boundary.</summary>
 public static class GitBugWriteOperations
 {

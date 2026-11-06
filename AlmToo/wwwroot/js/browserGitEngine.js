@@ -52,6 +52,20 @@ const gitBugIssueIdPattern = /^[0-9a-f]{64}$/i;
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 const textEncoder = new TextEncoder();
 
+function createGitBugNonce() {
+  const bytes = new Uint8Array(20);
+  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== 'function'
+      || typeof globalThis.btoa !== 'function') {
+    throw new Error('git-bug-nonce-unavailable');
+  }
+  globalThis.crypto.getRandomValues(bytes);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return globalThis.btoa(binary);
+}
+
 let dependenciesPromise;
 let filesystem;
 const pendingGitBugChanges = new Set();
@@ -1445,18 +1459,36 @@ async function writeGitBugOperation(request, operation, operations) {
   if (!gitBugIssueIdPattern.test(actorId ?? '') || !Array.isArray(envelope.ops)) {
     throw new GitBugReadError('malformed');
   }
-  const timestamp = Math.floor(Date.now() / 1000);
-  const operationRecords = [
-    ...envelope.ops,
-    ...operations.map(({ type, ...fields }) => ({ type, timestamp, ...fields }))
-  ];
+  const parentTimestamp = envelope.ops.reduce((latest, operationRecord) => {
+    const timestamp = Number.isInteger(operationRecord?.timestamp)
+      ? operationRecord.timestamp
+      : latest;
+    return Math.max(latest, timestamp);
+  }, 0);
+  const timestamp = Math.max(Math.floor(Date.now() / 1000), parentTimestamp);
+  const operationRecords = operations.map(({ type, ...fields }) => ({
+    type,
+    timestamp,
+    nonce: createGitBugNonce(),
+    ...fields
+  }));
+  const editClockEntries = tree.filter(entry => /^edit-clock-\d+$/u.test(entry.path));
+  if (editClockEntries.length !== 1) {
+    throw new GitBugReadError('malformed');
+  }
+  const currentEditClock = Number.parseInt(editClockEntries[0].path.slice('edit-clock-'.length), 10);
+  if (!Number.isSafeInteger(currentEditClock) || currentEditClock >= Number.MAX_SAFE_INTEGER) {
+    throw new GitBugReadError('malformed');
+  }
+  const nextEditClock = `edit-clock-${currentEditClock + 1}`;
   const payload = JSON.stringify({ author: { id: actorId }, ops: operationRecords });
   const opsBlob = await git.writeBlob({ fs, dir, blob: textEncoder.encode(payload) });
   const treeOid = await git.writeTree({
     fs,
     dir,
     tree: [
-      ...tree.filter(entry => entry.path !== 'ops'),
+      ...tree.filter(entry => entry.path !== 'ops' && entry.path !== editClockEntries[0].path),
+      { mode: '100644', path: nextEditClock, oid: editClockEntries[0].oid },
       { mode: '100644', path: 'ops', oid: opsBlob }
     ]
   });

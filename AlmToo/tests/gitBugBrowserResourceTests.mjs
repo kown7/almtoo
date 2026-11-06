@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import { cp, mkdtemp, readFile, readdir, rm, unlink } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, readdir, rm, symlink, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, test } from 'node:test';
@@ -97,7 +98,7 @@ function resetGlobals() {
   delete globalThis.GitHttp;
 }
 
-async function openFixture(root) {
+async function openFixture(root, { writable = false } = {}) {
   resetGlobals();
   const gitdir = path.join(root, 'repository');
   const calls = [];
@@ -123,7 +124,18 @@ async function openFixture(root) {
       return git[operation]({ ...options, fs, gitdir, dir: undefined });
     };
   }
+  if (writable) {
+    for (const operation of ['writeBlob', 'writeTree', 'commit', 'writeRef']) {
+      runtime[operation] = async (options) => {
+        calls.push(operation);
+        return git[operation]({ ...options, fs, gitdir, dir: undefined });
+      };
+    }
+  }
   for (const operation of forbiddenOperations) {
+    if (writable && ['writeBlob', 'writeTree', 'commit', 'writeRef'].includes(operation)) {
+      continue;
+    }
     runtime[operation] = async () => assert.fail(`${operation} must not run during a Git-Bug read.`);
   }
 
@@ -300,4 +312,65 @@ test('Resource exports reject malformed and oversized bridge requests before Git
   assertSafeFailure(await runtime.engine.getGitBugIssue('not-an-id'), 'gitBugDataMalformed');
   assert.deepEqual(runtime.calls, []);
   assert.deepEqual(await snapshot(sourceFixture), before);
+});
+
+const gitBugBinary = process.env.GIT_BUG_BIN
+  ?? fileURLToPath(new URL('../../.tmp/git-bug-v0.11.0/git-bug', import.meta.url));
+
+test('Resource Git-Bug writes remain readable by the v0.11.0 command-line reader', {
+  skip: !fs.existsSync(gitBugBinary)
+}, async () => {
+  const root = await copyFixture();
+  await symlink('repository', path.join(root, '.git'));
+  const home = await mkdtemp(path.join(fixtureParent, '.git-bug-home-'));
+  temporaryFixtures.push(home);
+  const runtime = await openFixture(root, { writable: true });
+  const gitdir = path.join(root, 'repository');
+  const issueId = (await git.listRefs({ fs, gitdir, filepath: 'refs/bugs' })).sort()[0];
+  const expectedRevision = await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${issueId}` });
+
+  const result = await runtime.engine.createGitBugComment({
+    issueId,
+    body: 'Written by the browser Resource.',
+    preconditions: { expectedRevision },
+    serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
+  });
+
+  assert.equal(result.succeeded, true, result.message);
+  const childRevision = result.value.revision;
+  assert.equal(await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${issueId}` }), childRevision);
+  const childCommit = await git.readCommit({ fs, gitdir, oid: childRevision });
+  assert.deepEqual(childCommit.commit.parent, [expectedRevision]);
+  const childTree = await git.readTree({ fs, gitdir, oid: childCommit.commit.tree });
+  const parentTree = await git.readTree({ fs, gitdir, oid: (await git.readCommit({
+    fs,
+    gitdir,
+    oid: expectedRevision
+  })).commit.tree });
+  const parentClock = parentTree.tree.find(entry => /^edit-clock-\d+$/u.test(entry.path));
+  const childClock = childTree.tree.find(entry => /^edit-clock-\d+$/u.test(entry.path));
+  assert.equal(childClock.path, `edit-clock-${Number.parseInt(parentClock.path.slice('edit-clock-'.length), 10) + 1}`);
+  const opsEntry = childTree.tree.find(entry => entry.path === 'ops');
+  const payload = JSON.parse(new TextDecoder().decode((await git.readBlob({
+    fs,
+    gitdir,
+    oid: opsEntry.oid
+  })).blob));
+
+  assert.equal(payload.ops.length, 1, 'a Git-Bug commit must contain only its new operation');
+  assert.equal(payload.ops[0].type, 3);
+  assert.equal(payload.ops[0].message, 'Written by the browser Resource.');
+  assert.match(payload.ops[0].nonce, /^[A-Za-z0-9+/]{27}=$/);
+  assert.ok(Number.isInteger(payload.ops[0].timestamp));
+
+  const bugs = ['open', 'closed'].flatMap(status => JSON.parse(execFileSync(
+    gitBugBinary,
+    ['bug', '--status', status, '--format', 'json'],
+    {
+      cwd: root,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8'
+    }
+  )));
+  assert.ok(bugs.some(bug => bug.id === issueId), `CLI ids: ${bugs.map(bug => bug.id).join(',')}; expected ${issueId}`);
 });

@@ -127,3 +127,39 @@ test('fixture validation requires both Git-Bug ref namespaces in the pinned repo
 
   await rejectsWithCategory(() => validateFixture(fixture), 'fixture-contract-mismatch');
 });
+
+test('malformed-ref descriptors cover every approved invariant and remain bounded', async () => {
+  const manifest = JSON.parse(await readFile(path.join(fixtureParent, 'malformed-scenarios.json'), 'utf8'));
+  const scenarios = Object.entries(manifest.scenarios);
+  const expectedCodes = [
+    'DuplicateOperations',
+    'MissingNonce',
+    'StaleEditClock',
+    'MissingEditClock',
+    'InvalidParentTopology',
+    'UnsupportedMarker',
+    'AmbiguousHistory'
+  ];
+
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.format, 'git-bug-v0.11.0');
+  assert.equal(manifest.baseFixture, '../v0.11.0');
+  assert.deepEqual(scenarios.map(([, scenario]) => scenario.invariantCode), expectedCodes);
+  assert.equal(new Set(scenarios.map(([id]) => id)).size, expectedCodes.length);
+
+  for (const [scenarioId, scenario] of scenarios) {
+    assert.match(scenario.baseIssueRef, /^[a-f0-9]{64}$/);
+    assert.match(scenario.sourceRevision, /^[a-f0-9]{40}$/);
+    assert.match(scenario.latestValidParent ?? scenario.sourceRevision, /^[a-f0-9]{40}$/);
+    assert.match(scenario.mutation, /^[a-z0-9-]+$/);
+    assert.ok(['NotRepairable', 'Repairable'].includes(scenario.repairability), scenarioId);
+    assert.deepEqual(Object.keys(scenario.boundedCounts).sort(), [
+      'commitsInspected',
+      'operationsInspected',
+      'refsInspected'
+    ]);
+    assert.ok(scenario.boundedCounts.refsInspected >= 1 && scenario.boundedCounts.refsInspected <= 64);
+    assert.ok(scenario.boundedCounts.commitsInspected >= 1 && scenario.boundedCounts.commitsInspected <= 128);
+    assert.ok(scenario.boundedCounts.operationsInspected >= 0 && scenario.boundedCounts.operationsInspected <= 512);
+  }
+});

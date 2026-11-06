@@ -1060,6 +1060,7 @@ test('Git-Bug issue edits and comments write only the approved bug ref without p
     async readTree({ oid }) {
       assert.equal(oid, 'tree-oid');
       return { tree: [
+        { path: 'edit-clock-1', type: 'blob', oid: markerOid },
         { path: 'version-4', type: 'blob', oid: markerOid },
         { path: 'ops', type: 'blob', oid: opsOid }
       ] };
@@ -1109,6 +1110,7 @@ test('Git-Bug issue edits and comments write only the approved bug ref without p
   assert.equal(comment.value.commitCreated, false);
   assert.equal(writes.commits.length, 3, 'Git-Bug history requires local commits, but no ordinary repository commit is created');
   assert.ok(writes.commits.every(({ ref, parent, tree }) => ref === `refs/bugs/${issueId}` && parent[0] === currentRevision && tree === 'new-tree-oid'));
+  assert.ok(writes.trees.every(tree => tree.some(({ path }) => path === 'edit-clock-2')));
   assert.deepEqual(writes.refs.map(({ ref }) => ref), [`refs/bugs/${issueId}`, `refs/bugs/${issueId}`, `refs/bugs/${issueId}`]);
   assert.equal(writes.pushes, 0);
   assert.equal(writes.adds, 0);
