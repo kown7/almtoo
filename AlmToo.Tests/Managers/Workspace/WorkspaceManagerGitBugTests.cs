@@ -505,6 +505,16 @@ public sealed class WorkspaceManagerGitBugTests
             return DetailHandler(issueId, cancellationToken);
         }
 
+        public ValueTask<GitOperationResult<GitBugDiagnosisResult>> DiagnoseRefAsync(
+            GitBugIssueId issueId,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Failure<GitBugDiagnosisResult>(GitOperationFailureKind.GitBugDataUnavailable));
+
+        public ValueTask<GitOperationResult<GitBugRepairApplicationResult>> ApplyRepairAsync(
+            GitBugRepairApplicationRequest request,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(Failure<GitBugRepairApplicationResult>(GitOperationFailureKind.GitBugWriteUnavailable));
+
         public ValueTask<GitOperationResult<GitBugIssueEditResult>> EditIssueAsync(
             GitBugIssueEditRequest request,
             CancellationToken cancellationToken = default)

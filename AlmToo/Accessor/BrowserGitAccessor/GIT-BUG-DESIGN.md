@@ -398,6 +398,41 @@ A successful receipt identifies the published ref/object outcome without exposin
 
 The M013 S04 acceptance proof uses a disposable controlled Git smart-HTTP remote. Before/after snapshots compare refs, Git-Bug partitions, required identity refs, and aggregate reachable-object evidence using a stable digest. Browser diagnostics assert that credentials are absent from visible state and failure artifacts. See `docs/M013-GIT-BUG-PUBLICATION-TRACEABILITY.md` for the scenario and command matrix.
 
+## One-time malformed-ref recovery runbook
+
+The recovery path is an operator-run, source-bound procedure, not an automatic repair loop and not a Client feature. It is intentionally limited to a disposable copy of a pinned Git-Bug v0.11.0 repository or an explicitly reviewed local checkout; the controlled smart-HTTP remote is used for proof only. No external remote may be changed unless the operator has separately reviewed the preview and supplied an explicit confirmation.
+
+### 1. Diagnose without mutation
+
+1. Record the repository path, target `refs/bugs/<64-hex-issue-id>` ref, current object ID, and a before-snapshot of all refs. Do not include credentials in the snapshot.
+2. Call `IGitBugAccessor.DiagnoseRefAsync` (`gitBug.diagnoseRef` in the Resource) against the issue ref. The operation must return only the bounded diagnosis: invariant code, source revision, affected ref, latest valid parent, repairability, and inspection counts.
+3. Confirm the result says `The Git-Bug ref was diagnosed without mutation.` and that the before-snapshot is byte-for-byte unchanged. `AmbiguousHistory`, unsupported markers, invalid parent topology, duplicate operations, stale clocks, and malformed envelopes are refusal signals unless the exact Resource operation is proven for that invariant.
+
+### 2. Build and review a source-bound preview
+
+1. Build the preview from the diagnosis and the current observed source revision. A changed observed revision is a stale-plan rejection; discard the preview and diagnose again.
+2. Verify the preview binds `ExpectedOldObjectId` and `SourceRevision` to the diagnosed tip, `ExpectedNewObjectId` to the identified valid parent, and creates a backup under `refs/almtoo/recovery/`.
+3. Verify the operation, edit-clock strategy, delta, target ref, and backup ref are allow-listed. The preview must require explicit confirmation and must contain no credential, URL user-info, or raw transport diagnostic.
+4. Refuse ambiguous history and every unsupported invariant. Do not guess a parent, merge history, nonce, clock, or target ref.
+
+### 3. Apply only after explicit confirmation
+
+`ApplyRepairAsync` (`gitBug.applyRepair`) is the only mutating step. The Accessor rechecks the target ref, rejects stale or conflicting backup state, writes the original malformed tip to the backup ref before publication, rechecks the target again, and then advances only the reviewed target ref. The operation preserves unrelated refs and returns safe failure categories (`invalid-request`, `precondition-failed`, `conflict`, `unsupported-format`, `serialization-failed`, `unavailable`, or transport-safe equivalents) rather than raw Git or credential diagnostics.
+
+A second application of the identical plan is a successful `alreadyApplied` result only when the target is already the expected repaired object and the backup still points to the original source. Any other target or backup state is a refusal, never a force-overwrite.
+
+### 4. Verify and close out
+
+After application, capture target and backup refs, the repaired object ID, the original source object ID, and an unchanged-ref comparison. Run the installed Git-Bug v0.11.0 compatibility helper against an isolated copy and verify `version`, `list`, `show`, `pull`, and `status`; the helper must fail explicitly when the binary is unavailable or the version is not v0.11.0. Remove disposable copies in `finally` blocks. The acceptance matrix is kept in `AlmToo/tests/gitBugRecoveryOperationalTests.mjs`; controlled publication and CLI proof remain in their dedicated suites.
+
+### Credential and external-remote safety
+
+Credentials are supplied only through the existing credential-session boundary and are never placed in repository URLs, ref names, preview objects, logs, screenshots, or assertion messages. The runbook's default remote is the in-process controlled remote. A real external remote is outside this task's authority and must not be modified by automated acceptance.
+
+### Known implementation boundary
+
+The deterministic Engine contract can describe additional repair candidates, but the browser Resource currently applies only the operations it implements (`gitBug.repair.nonce` and `gitBug.repair.editClock`). Duplicate-operation and other ambiguous histories therefore remain refusal cases at the Resource boundary until an independently reviewed implementation and fixture proof exists. This mismatch is deliberately visible in the operational matrix rather than hidden by a skip.
+
 ## Shared write-contract reference
 
 The canonical write contract is named **Git-Bug S01 Write Contract**. `AlmToo/Accessor/BrowserGitAccessor/DESIGN.md` must retain matching operation names, failure kinds, storage invariants, redaction rules, layer constraints, and proof boundary. Any future change to this vocabulary requires updating both documents and repeating the iDesign review.

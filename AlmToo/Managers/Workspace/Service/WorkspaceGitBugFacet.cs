@@ -43,6 +43,35 @@ public sealed partial class WorkspaceManager
     }
 
     /// <summary>Loads the default bounded issue list for Client callers.</summary>
+    public async ValueTask<GitOperationResult<GitBugRepairApplicationResult>> ApplyGitBugRepairAsync(
+        GitBugRepairPlan? plan,
+        bool confirmed,
+        CancellationToken cancellationToken = default)
+    {
+        const string operation = "gitBug.applyRepair";
+        if (plan is null || !confirmed)
+        {
+            return new GitOperationResult<GitBugRepairApplicationResult>(
+                operation,
+                Succeeded: false,
+                Message: "The Git-Bug repair requires a valid plan and explicit confirmation.",
+                FailureKind: GitOperationFailureKind.GitBugWriteInvalidRequest);
+        }
+
+        var request = new GitBugRepairApplicationRequest(
+            plan.SourceRevision,
+            plan.TargetRef,
+            plan.BackupRef,
+            plan.ExpectedOldObjectId,
+            plan.ExpectedNewObjectId,
+            plan.Mutation.Operation,
+            plan.Mutation.EditClockChange.Strategy,
+            plan.Mutation.EditClockChange.Delta,
+            Confirmed: true);
+
+        return await gitBugAccessor.ApplyRepairAsync(request, cancellationToken);
+    }
+
     public Task<bool> LoadIssuesAsync() =>
         LoadIssuesAsync(new GitBugIssueQuery(PageSize: 50));
 

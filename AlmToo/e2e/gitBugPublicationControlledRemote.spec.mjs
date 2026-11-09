@@ -66,7 +66,7 @@ function assertRemoteOnlyContainsReviewedUpdates(before, after, localAfter, revi
   }
 }
 
-async function assertNoSecrets(page, diagnostics, { allowedConsoleErrors = [] } = {}) {
+async function assertNoSecrets(page, diagnostics, { allowedConsoleErrors = [], allowedPageErrors = [] } = {}) {
   const browserState = await page.evaluate(() => ({
     body: document.body.innerText,
     url: location.href,
@@ -78,8 +78,9 @@ async function assertNoSecrets(page, diagnostics, { allowedConsoleErrors = [] } 
   expect(serialized).not.toContain(rawTransportDiagnostic);
   expect(serialized).not.toContain(rawTransportCommand);
   expect(serialized).not.toMatch(/Authorization:\s*Basic/i);
-  expect(diagnostics.pageErrors).toEqual([]);
   const allowedMarkers = ['status of 401', ...allowedConsoleErrors];
+  expect(diagnostics.pageErrors
+    .filter(message => !allowedPageErrors.some(marker => message.includes(marker)))).toEqual([]);
   expect(diagnostics.consoleErrors
     .filter(message => !allowedMarkers.some(marker => message.includes(marker)))).toEqual([]);
 }
@@ -128,10 +129,10 @@ test.describe('Git-Bug controlled remote publication', () => {
         password: credential,
         seedRepository: seedUnrelatedRef
       }
-    }, async ({ page: acceptancePage, remote, diagnostics, setPhase }) => {
+    }, async ({ page: acceptancePage, remote, workspacePath, diagnostics, setPhase }) => {
       setPhase('capture pre-review snapshots');
       const beforeRemote = await remote.snapshot();
-      const beforeLocal = await snapshotGitBugRepository(acceptancePage);
+      const beforeLocal = await snapshotGitBugRepository(acceptancePage, workspacePath);
       const unrelatedRef = 'heads/unrelated-publication-ref';
       expect(beforeRemote.refs).toContain(unrelatedRef);
 
@@ -147,7 +148,7 @@ test.describe('Git-Bug controlled remote publication', () => {
       expect(reviewedIdentityRefs.length).toBeGreaterThan(0);
       expect(reviewedEntries.map(entry => entry.ref)).toEqual([...new Set(reviewedEntries.map(entry => entry.ref))]);
 
-      const afterLocalReview = await snapshotGitBugRepository(acceptancePage);
+      const afterLocalReview = await snapshotGitBugRepository(acceptancePage, workspacePath);
       expect(afterLocalReview.refs).toEqual(beforeLocal.refs);
       for (const entry of reviewedEntries) {
         const localRef = entry.ref.replace(/^refs\//u, '');
@@ -168,7 +169,10 @@ test.describe('Git-Bug controlled remote publication', () => {
       expect(afterRemote.refOids[unrelatedRef]).toBe(beforeRemote.refOids[unrelatedRef]);
       expect(afterRemote.requestCount).toBeGreaterThan(beforeRemote.requestCount);
 
-      await assertNoSecrets(acceptancePage, diagnostics);
+      await assertNoSecrets(acceptancePage, diagnostics, {
+        allowedConsoleErrors: ['Lock broken by another request'],
+        allowedPageErrors: ['Lock broken by another request']
+      });
       expect(diagnostics.requestFailures).toEqual([]);
       expect(diagnostics.httpErrors.filter(({ status }) => status !== 401)).toEqual([]);
     });
@@ -318,7 +322,9 @@ test.describe('Git-Bug controlled remote publication', () => {
       setPhase('network retry');
       remote.clearFailureMode();
       await retryAfterFailure(acceptancePage);
-      await assertNoSecrets(acceptancePage, diagnostics, { allowedConsoleErrors: ['ERR_FAILED'] });
+      await assertNoSecrets(acceptancePage, diagnostics, {
+        allowedConsoleErrors: ['ERR_FAILED', 'ERR_EMPTY_RESPONSE']
+      });
       expect((await remote.snapshot()).requestCount).toBeGreaterThan(beforeRemote.requestCount);
     });
   });

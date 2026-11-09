@@ -351,6 +351,41 @@ Cancellation publishes `WasCancelled`, a failed result, and credential-free text
 - Accessor contract records contain no methods, factory helpers, validation, computed workflow properties, mutable orchestration state, I/O, or executable bodies.
 - `WorkspaceState`, `WorkspaceError`, `WorkspaceResult`, and `RepositoryCommitInput` remain Manager-owned.
 
+## M019 malformed-ref recovery operations and acceptance
+
+Malformed Git-Bug recovery remains an operator-run Accessor/Resource workflow. The Client and ordinary repository publication workflow do not expose or invoke it. This keeps diagnosis read-only, makes the repair preview source-bound, and prevents a credential-bearing remote action from being inferred from a local repair.
+
+### Recovery boundary
+
+| Stage | Owner | Allowed effect | Required proof |
+|---|---|---|---|
+| Diagnosis | `BrowserGitAccessor` -> `browserGitEngine.js` Resource | Read one approved `refs/bugs/<issue-id>` history; no ref, object, index, worktree, or remote mutation | Diagnosis result, bounded counts, unchanged pre/post snapshot |
+| Preview | `GitBugRecoveryEngine` | Pure policy only; bind source revision, valid parent, operation, edit-clock strategy, and recovery backup ref | Ready/NotRepairable/Stale/Ambiguous result and no credentials |
+| Application | `BrowserGitAccessor` -> Resource | Write the reviewed backup ref, then the reviewed target ref only after current-ref recheck | Repair receipt, backup preservation, target state, unrelated-ref digest |
+| Compatibility | `gitBugCliCompatibilityTests.mjs` | Read isolated disposable copies only | Mandatory v0.11.0 version plus list/show/pull/status results |
+| Remote proof | controlled remote suite | Publish only to the in-process controlled remote when the test supplies confirmation | Remote ref state, auth/network safe categories, idempotent repeat |
+
+### One-time operator procedure
+
+1. Clone or copy the pinned fixture into a disposable directory and capture all refs and a repository digest. Never use a credential-bearing URL and never reuse the sealed source directory as a write target.
+2. Diagnose the affected issue ref. A successful response is read-only and contains only `InvariantCode`, `SourceRevision`, `AffectedRef`, `LatestValidParent`, `Repairability`, and bounded inspection counts. Any ambiguous history, unsupported marker, invalid parent topology, duplicate operation, stale clock, malformed envelope, or missing precondition is a refusal unless the Resource has explicit fixture proof for that exact operation.
+3. Build a preview from the diagnosis. Require the observed source revision to equal the diagnosis source revision; otherwise return `Stale` and restart at step 2. Require an allow-listed `refs/bugs/` or `refs/identities/` target, a `refs/almtoo/recovery/` backup, expected old/new object IDs, and `RequiresExplicitConfirmation = true`.
+4. Review the preview out of band. The operator must explicitly confirm the exact plan; confirmation is not inferred from a successful diagnosis and is never stored with credentials.
+5. Apply the confirmed plan once. The Resource rejects malformed requests, stale target state, conflicting backup state, unsupported operations, and missing parent proof. It writes the original malformed tip to the backup before advancing the repaired target, and rechecks the target between those writes.
+6. Repeat the same plan to prove idempotency. Only the exact repaired target plus the original backup is accepted as `AlreadyApplied`; any other state fails closed.
+7. Verify the repaired ref with the installed Git-Bug v0.11.0 CLI in an isolated copy using `version`, `list`, `show`, `pull`, and `status`. A missing or wrong-version binary is a failed check, never a skip. Remove disposable copies in `finally` blocks.
+8. Record the evidence paths and final limitation. Do not push an external remote as part of this procedure; controlled-remote publication is a separate, explicitly confirmed acceptance scenario.
+
+### Acceptance matrix and limitations
+
+The source-bound operational matrix is implemented in `AlmToo/tests/gitBugRecoveryOperationalTests.mjs`. It covers diagnosis-before-write, explicit confirmation, stale-plan rejection, ambiguous-history refusal, backup/ref allow-lists, idempotent repeat semantics, credential redaction, and fixture no-mutation. The fixture manifest supplies the malformed legacy, duplicate-operation, stale-clock, missing-nonce, missing-edit-clock, and ambiguous-history cases; the CLI helper supplies mandatory v0.11.0 readability proof.
+
+The browser Resource's implemented repair operations are `gitBug.repair.nonce` and `gitBug.repair.editClock`. The broader deterministic Engine contract also names duplicate-operation and stale-clock candidates for preview policy; those candidates remain blocked at the Resource boundary until a separately reviewed writer and fixture proof are delivered. The matrix records this as an explicit limitation, not as a skipped test.
+
+### Credential and diagnostic policy
+
+Recovery requests, plans, receipts, and test diagnostics contain no tokens, passwords, URL user-info, raw object payloads, repository paths, or raw transport errors. Credential handling remains in the existing tab-scoped publication boundary. Timeouts, authentication failures, and network loss are reduced to safe categories; no failure retries or mutates a remote implicitly.
+
 ## Migration sequence and implementation status
 
 | Step | Change | Status |

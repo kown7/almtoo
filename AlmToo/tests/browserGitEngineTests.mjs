@@ -1060,6 +1060,7 @@ test('Git-Bug issue edits and comments write only the approved bug ref without p
     async readTree({ oid }) {
       assert.equal(oid, 'tree-oid');
       return { tree: [
+        { path: 'edit-clock-1', type: 'blob', oid: markerOid },
         { path: 'version-4', type: 'blob', oid: markerOid },
         { path: 'ops', type: 'blob', oid: opsOid }
       ] };
@@ -1109,6 +1110,7 @@ test('Git-Bug issue edits and comments write only the approved bug ref without p
   assert.equal(comment.value.commitCreated, false);
   assert.equal(writes.commits.length, 3, 'Git-Bug history requires local commits, but no ordinary repository commit is created');
   assert.ok(writes.commits.every(({ ref, parent, tree }) => ref === `refs/bugs/${issueId}` && parent[0] === currentRevision && tree === 'new-tree-oid'));
+  assert.ok(writes.trees.every(tree => tree.some(({ path }) => path === 'edit-clock-2')));
   assert.deepEqual(writes.refs.map(({ ref }) => ref), [`refs/bugs/${issueId}`, `refs/bugs/${issueId}`, `refs/bugs/${issueId}`]);
   assert.equal(writes.pushes, 0);
   assert.equal(writes.adds, 0);
@@ -1849,4 +1851,32 @@ test('publication source keeps branch and Git-Bug namespaces bounded and pushes 
   assert.ok(moduleSource.includes('publishedRefs: reviewed.updates.map(update => update.refName)'));
   assert.ok(moduleSource.includes('publication-network-unavailable'));
   assert.ok(moduleSource.includes('publication-remote-malformed'));
+});
+
+test('applyGitBugRepair rejects arbitrary target namespaces before opening a mutation path', async () => {
+  let writeCalls = 0;
+  const engine = await openFakeRepository({
+    gitOverrides: {
+      async writeRef() {
+        writeCalls += 1;
+      }
+    }
+  });
+  const sourceRevision = 'a'.repeat(40);
+  const result = await engine.applyGitBugRepair({
+    sourceRevision,
+    targetRef: 'refs/heads/main',
+    backupRef: `refs/almtoo/recovery/${sourceRevision}/heads/main`,
+    expectedOldObjectId: sourceRevision,
+    expectedNewObjectId: 'b'.repeat(40),
+    operation: 'gitBug.repair.nonce',
+    editClockStrategy: 'preserve-valid-parent',
+    editClockDelta: 0,
+    confirmed: true
+  });
+
+  assert.equal(result.succeeded, false);
+  assert.equal(result.value, null);
+  assert.equal(result.diagnostic, null);
+  assert.equal(writeCalls, 0);
 });

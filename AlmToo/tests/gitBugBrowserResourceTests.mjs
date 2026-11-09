@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import { cp, mkdtemp, readFile, readdir, rm, unlink } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, readdir, rm, symlink, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, test } from 'node:test';
@@ -36,6 +37,34 @@ async function snapshot(root) {
   ])));
 }
 
+async function refSnapshot(root) {
+  const gitdir = path.join(root, 'repository');
+  const refs = await git.listRefs({ fs, gitdir, filepath: 'refs' });
+  return Object.fromEntries(await Promise.all(refs.sort().map(async ref => [
+    ref,
+    await git.resolveRef({ fs, gitdir, ref: `refs/${ref}` })
+  ])));
+}
+
+function repairRequest(diagnosis, overrides = {}) {
+  return {
+    sourceRevision: diagnosis.sourceRevision,
+    targetRef: diagnosis.affectedRef,
+    backupRef: `refs/almtoo/recovery/${diagnosis.sourceRevision}/${diagnosis.affectedRef.slice('refs/'.length)}`,
+    expectedOldObjectId: diagnosis.sourceRevision,
+    expectedNewObjectId: diagnosis.latestValidParent,
+    operation: diagnosis.invariantCode === 'missingEditClock'
+      ? 'gitBug.repair.editClock'
+      : 'gitBug.repair.nonce',
+    editClockStrategy: diagnosis.invariantCode === 'missingEditClock'
+      ? 'advance-from-valid-parent'
+      : 'preserve-valid-parent',
+    editClockDelta: diagnosis.invariantCode === 'missingEditClock' ? 1 : 0,
+    confirmed: true,
+    ...overrides
+  };
+}
+
 async function copyFixture() {
   const destination = await mkdtemp(path.join(fixtureParent, '.resource-'));
   temporaryFixtures.push(destination);
@@ -62,6 +91,79 @@ async function makeUnsupported(root) {
   } });
   await git.writeRef({ fs, gitdir, ref, value: oid, force: true });
   return id;
+}
+
+async function makeDiagnosisScenario(root, scenario) {
+  const gitdir = path.join(root, 'repository');
+  const id = (await git.listRefs({ fs, gitdir, filepath: 'refs/bugs' })).sort()[0];
+  const parent = await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${id}` });
+  const parentCommit = (await git.readCommit({ fs, gitdir, oid: parent })).commit;
+  const parentTree = (await git.readTree({ fs, gitdir, oid: parentCommit.tree })).tree;
+  const opsEntry = parentTree.find(entry => entry.path === 'ops');
+  const opsPayload = JSON.parse(new TextDecoder().decode((await git.readBlob({
+    fs, gitdir, oid: opsEntry.oid
+  })).blob));
+  const operation = { ...opsPayload.ops[0], nonce: `diagnosis-${scenario}` };
+  let operations = [operation];
+  let treeEntries = parentTree.filter(entry => entry.path !== 'ops');
+  let parents = [parent];
+  const parentClock = treeEntries.find(entry => /^edit-clock-\d+$/u.test(entry.path));
+
+  if (scenario === 'duplicate-operations') {
+    operations = [operation, { ...operation }];
+  } else if (scenario === 'multi-operation-edit') {
+    operations = [operation, { ...operation, nonce: `diagnosis-${scenario}-second` }];
+  } else if (scenario === 'missing-nonce') {
+    const { nonce, ...withoutNonce } = operation;
+    operations = [withoutNonce];
+  } else if (scenario === 'ambiguous-history') {
+    operations = [];
+  } else if (scenario === 'unsupported-marker') {
+    treeEntries = treeEntries.map(entry => entry.path === 'version-4'
+      ? { ...entry, path: 'version-5' }
+      : entry);
+  } else if (scenario === 'invalid-parent-topology') {
+    parents = [parent, parent];
+  } else if (scenario === 'backward-clock-skew') {
+    treeEntries = treeEntries.map(entry => /^edit-clock-\d+$/u.test(entry.path)
+      ? { ...entry, path: `edit-clock-${Number.parseInt(entry.path.slice('edit-clock-'.length), 10) - 1}` }
+      : entry);
+  } else if (scenario === 'stale-edit-clock') {
+    treeEntries = treeEntries.map(entry => entry);
+  } else if (scenario === 'malformed-legacy-history') {
+    treeEntries = treeEntries.map(entry => entry.path === 'version-4'
+      ? { ...entry, path: 'version-3' }
+      : entry);
+  } else if (scenario === 'missing-edit-clock') {
+    treeEntries = treeEntries.filter(entry => !/^edit-clock-\d+$/u.test(entry.path));
+  } else {
+    throw new Error(`unknown diagnosis scenario: ${scenario}`);
+  }
+
+  if (parentClock && !['backward-clock-skew', 'stale-edit-clock', 'malformed-legacy-history', 'missing-edit-clock', 'unsupported-marker'].includes(scenario)) {
+    const clock = Number.parseInt(parentClock.path.slice('edit-clock-'.length), 10);
+    treeEntries = treeEntries.map(entry => entry.path === parentClock.path
+      ? { ...entry, path: `edit-clock-${clock + 1}` }
+      : entry);
+  }
+
+  const ops = await git.writeBlob({
+    fs,
+    gitdir,
+    blob: new TextEncoder().encode(JSON.stringify({ ...opsPayload, ops: operations }))
+  });
+  const tree = await git.writeTree({
+    fs,
+    gitdir,
+    tree: [{ mode: '100644', path: 'ops', oid: ops, type: 'blob' }, ...treeEntries]
+  });
+  const sourceRevision = await git.writeCommit({ fs, gitdir, commit: {
+    tree, parent: parents, message: '',
+    author: { name: 'fixture', email: 'fixture@example.invalid', timestamp: 1, timezoneOffset: 0 },
+    committer: { name: 'fixture', email: 'fixture@example.invalid', timestamp: 1, timezoneOffset: 0 }
+  } });
+  await git.writeRef({ fs, gitdir, ref: `refs/bugs/${id}`, value: sourceRevision, force: true });
+  return { id, sourceRevision, latestValidParent: parent };
 }
 
 async function makeEmptyCreationIssue(root) {
@@ -97,7 +199,7 @@ function resetGlobals() {
   delete globalThis.GitHttp;
 }
 
-async function openFixture(root) {
+async function openFixture(root, { writable = false, failWriteRefAt = null } = {}) {
   resetGlobals();
   const gitdir = path.join(root, 'repository');
   const calls = [];
@@ -123,7 +225,23 @@ async function openFixture(root) {
       return git[operation]({ ...options, fs, gitdir, dir: undefined });
     };
   }
+  if (writable) {
+    let writeRefCalls = 0;
+    for (const operation of ['writeBlob', 'writeTree', 'commit', 'writeCommit', 'writeRef']) {
+      runtime[operation] = async (options) => {
+        calls.push(operation);
+        if (operation === 'writeRef' && failWriteRefAt !== null
+            && writeRefCalls++ === failWriteRefAt) {
+          throw new Error('controlled-write-ref-failure');
+        }
+        return git[operation]({ ...options, fs, gitdir, dir: undefined });
+      };
+    }
+  }
   for (const operation of forbiddenOperations) {
+    if (writable && ['writeBlob', 'writeTree', 'commit', 'writeCommit', 'writeRef'].includes(operation)) {
+      continue;
+    }
     runtime[operation] = async () => assert.fail(`${operation} must not run during a Git-Bug read.`);
   }
 
@@ -283,6 +401,175 @@ test('Resource exports preserve an empty creation description without synthesizi
   });
 });
 
+test('Resource diagnosis classifies approved malformed refs without network or Git mutation', async () => {
+  const scenarios = new Map([
+    ['duplicate-operations', 'duplicateOperations'],
+    ['multi-operation-edit', 'ambiguousHistory'],
+    ['missing-nonce', 'missingNonce'],
+    ['backward-clock-skew', 'staleEditClock'],
+    ['stale-edit-clock', 'staleEditClock'],
+    ['malformed-legacy-history', 'unsupportedMarker'],
+    ['missing-edit-clock', 'missingEditClock'],
+    ['invalid-parent-topology', 'invalidParentTopology'],
+    ['unsupported-marker', 'unsupportedMarker'],
+    ['ambiguous-history', 'ambiguousHistory']
+  ]);
+
+  for (const [scenario, invariantCode] of scenarios) {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, scenario);
+    const result = await assertUnchangedRead(fixture,
+      engine => engine.diagnoseGitBugRef({ issueId: expected.id }));
+
+    assert.equal(result.operation, 'gitBug.diagnoseRef');
+    assert.equal(result.succeeded, true, result.message);
+    assert.equal(result.value.invariantCode, invariantCode);
+    assert.equal(result.value.sourceRevision, expected.sourceRevision);
+    assert.equal(result.value.affectedRef, `refs/bugs/${expected.id}`);
+    if (scenario === 'multi-operation-edit') {
+      assert.match(result.value.latestValidParent, /^[0-9a-f]{40}$/,
+        'multi-operation history must expose a concrete valid parent candidate');
+    } else {
+      assert.equal(result.value.latestValidParent,
+        invariantCode === 'invalidParentTopology' ? null : expected.latestValidParent,
+        `${scenario} latestValidParent`);
+    }
+    assert.equal(result.value.repairability,
+      ['missingNonce', 'missingEditClock'].includes(invariantCode)
+        ? 'repairable'
+        : 'notRepairable');
+    assert.equal(result.value.counts.refsInspected, 1);
+    assert.ok(Number.isInteger(result.value.counts.commitsInspected));
+    assert.ok(result.value.counts.commitsInspected > 0);
+    assert.ok(Number.isInteger(result.value.counts.operationsInspected));
+    assert.ok(result.value.counts.operationsInspected >= 0);
+    if (scenario === 'multi-operation-edit') {
+      assert.equal(result.value.counts.operationsInspected, 6,
+        'multi-operation history must remain within the bounded inspection budget');
+    }
+    assert.equal(result.diagnostic, null);
+  }
+});
+
+test('Resource repair application preserves malformed tips, unrelated refs, and idempotent repeats', async () => {
+  const fixture = await copyFixture();
+  const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+  const gitdir = path.join(fixture, 'repository');
+  const unrelatedRef = 'refs/heads/unrelated-repair-test';
+  await git.writeRef({ fs, gitdir, ref: unrelatedRef, value: expected.latestValidParent, force: false });
+
+  const beforePreview = await snapshot(fixture);
+  const beforeRefs = await refSnapshot(fixture);
+  const runtime = await openFixture(fixture, { writable: true });
+  const diagnosis = await runtime.engine.diagnoseGitBugRef({ issueId: expected.id });
+  assert.equal(diagnosis.succeeded, true, JSON.stringify(diagnosis));
+  assert.equal(diagnosis.value.repairability, 'repairable');
+  assert.deepEqual(await snapshot(fixture), beforePreview, 'preview and diagnosis must not mutate the repository');
+  assert.deepEqual(await refSnapshot(fixture), beforeRefs, 'preview must not create backup refs');
+
+  const request = repairRequest(diagnosis.value);
+  const applied = await runtime.engine.applyGitBugRepair(request);
+  assert.equal(applied.operation, 'gitBug.applyRepair');
+  assert.equal(applied.succeeded, true, applied.message);
+  assert.equal(applied.value.sourceRevision, expected.sourceRevision);
+  assert.equal(applied.value.targetRef, `refs/bugs/${expected.id}`);
+  assert.equal(applied.value.backupRef, request.backupRef);
+  assert.equal(applied.value.objectId, expected.latestValidParent);
+  assert.equal(applied.value.alreadyApplied, false);
+  assert.equal(await git.resolveRef({ fs, gitdir, ref: request.targetRef }), expected.latestValidParent);
+  assert.equal(await git.resolveRef({ fs, gitdir, ref: request.backupRef }), expected.sourceRevision);
+
+  const afterApplication = await snapshot(fixture);
+  const afterRefs = await refSnapshot(fixture);
+  for (const [ref, objectId] of Object.entries(beforeRefs)) {
+    if (ref !== request.targetRef.slice('refs/'.length)) assert.equal(afterRefs[ref], objectId, `${ref} must be preserved`);
+  }
+  assert.equal(afterRefs[request.backupRef.slice('refs/'.length)], expected.sourceRevision);
+
+  const repeated = await runtime.engine.applyGitBugRepair(request);
+  assert.equal(repeated.succeeded, true, repeated.message);
+  assert.equal(repeated.value.alreadyApplied, true);
+  assert.deepEqual(await snapshot(fixture), afterApplication, 'repeated repair must be idempotent');
+  assert.deepEqual(await refSnapshot(fixture), afterRefs, 'repeated repair must not change refs');
+});
+
+test('Resource repair application rejects stale, ambiguous, unsupported, colliding, and faulted mutations safely', async () => {
+  for (const scenario of ['duplicate-operations', 'ambiguous-history', 'unsupported-marker']) {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, scenario);
+    const readRuntime = await openFixture(fixture);
+    const diagnosis = await readRuntime.engine.diagnoseGitBugRef({ issueId: expected.id });
+    assert.equal(diagnosis.succeeded, true, JSON.stringify(diagnosis));
+    const targetRef = `refs/bugs/${expected.id}`;
+    const beforeTarget = await git.resolveRef({ fs, gitdir: path.join(fixture, 'repository'), ref: targetRef });
+    const runtime = await openFixture(fixture, { writable: true });
+    const result = await runtime.engine.applyGitBugRepair(repairRequest(diagnosis.value));
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({
+      fs,
+      gitdir: path.join(fixture, 'repository'),
+      ref: targetRef
+    }), beforeTarget, `${scenario} must leave the target unchanged`);
+  }
+
+  {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+    const gitdir = path.join(fixture, 'repository');
+    await makeUnsupported(fixture);
+    const staleTarget = await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${expected.id}` });
+    const runtime = await openFixture(fixture, { writable: true });
+    const result = await runtime.engine.applyGitBugRepair(repairRequest({
+      sourceRevision: expected.sourceRevision,
+      affectedRef: `refs/bugs/${expected.id}`,
+      latestValidParent: expected.latestValidParent,
+      invariantCode: 'missingNonce'
+    }));
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${expected.id}` }), staleTarget);
+    assert.equal(result.message.includes('controlled'), false);
+  }
+
+  {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+    const gitdir = path.join(fixture, 'repository');
+    const backupRef = `refs/almtoo/recovery/${expected.sourceRevision}/bugs/${expected.id}`;
+    await git.writeRef({ fs, gitdir, ref: backupRef, value: 'f'.repeat(40), force: false });
+    const runtime = await openFixture(fixture, { writable: true });
+    const result = await runtime.engine.applyGitBugRepair(repairRequest({
+      sourceRevision: expected.sourceRevision,
+      affectedRef: `refs/bugs/${expected.id}`,
+      latestValidParent: expected.latestValidParent,
+      invariantCode: 'missingNonce'
+    }));
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${expected.id}` }), expected.sourceRevision);
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: backupRef }), 'f'.repeat(40));
+  }
+
+  for (const failWriteRefAt of [0, 1]) {
+    const fixture = await copyFixture();
+    const expected = await makeDiagnosisScenario(fixture, 'missing-nonce');
+    const gitdir = path.join(fixture, 'repository');
+    const request = repairRequest({
+      sourceRevision: expected.sourceRevision,
+      affectedRef: `refs/bugs/${expected.id}`,
+      latestValidParent: expected.latestValidParent,
+      invariantCode: 'missingNonce'
+    });
+    const runtime = await openFixture(fixture, { writable: true, failWriteRefAt });
+    const result = await runtime.engine.applyGitBugRepair(request);
+    assertSafeFailure(result, 'gitBugDataMalformed');
+    assert.equal(await git.resolveRef({ fs, gitdir, ref: request.targetRef }), expected.sourceRevision, JSON.stringify(result));
+    if (failWriteRefAt === 0) {
+      await assert.rejects(() => git.resolveRef({ fs, gitdir, ref: request.backupRef }));
+    } else {
+      assert.equal(await git.resolveRef({ fs, gitdir, ref: request.backupRef }), expected.sourceRevision, JSON.stringify(result));
+    }
+  }
+});
+
 test('Resource exports reject malformed and oversized bridge requests before Git object reads', async () => {
   const before = await snapshot(sourceFixture);
   const runtime = await openFixture(sourceFixture);
@@ -300,4 +587,81 @@ test('Resource exports reject malformed and oversized bridge requests before Git
   assertSafeFailure(await runtime.engine.getGitBugIssue('not-an-id'), 'gitBugDataMalformed');
   assert.deepEqual(runtime.calls, []);
   assert.deepEqual(await snapshot(sourceFixture), before);
+});
+
+const gitBugBinary = process.env.GIT_BUG_BIN
+  ?? fileURLToPath(new URL('../../.tmp/git-bug-v0.11.0/git-bug', import.meta.url));
+
+test('Resource Git-Bug writes remain readable by the v0.11.0 command-line reader', {
+  skip: !fs.existsSync(gitBugBinary)
+}, async () => {
+  const root = await copyFixture();
+  await symlink('repository', path.join(root, '.git'));
+  const home = await mkdtemp(path.join(fixtureParent, '.git-bug-home-'));
+  temporaryFixtures.push(home);
+  const runtime = await openFixture(root, { writable: true });
+  const gitdir = path.join(root, 'repository');
+  const issueId = (await git.listRefs({ fs, gitdir, filepath: 'refs/bugs' })).sort()[0];
+  const expectedRevision = await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${issueId}` });
+
+  const result = await runtime.engine.createGitBugComment({
+    issueId,
+    body: 'Written by the browser Resource.',
+    preconditions: { expectedRevision },
+    serialization: { storageVersion: 'v0.11.0', encoding: 'utf-8', deterministic: true }
+  });
+
+  assert.equal(result.succeeded, true, result.message);
+  const childRevision = result.value.revision;
+  assert.equal(await git.resolveRef({ fs, gitdir, ref: `refs/bugs/${issueId}` }), childRevision);
+  const childCommit = await git.readCommit({ fs, gitdir, oid: childRevision });
+  assert.deepEqual(childCommit.commit.parent, [expectedRevision]);
+  const childTree = await git.readTree({ fs, gitdir, oid: childCommit.commit.tree });
+  const parentTree = await git.readTree({ fs, gitdir, oid: (await git.readCommit({
+    fs,
+    gitdir,
+    oid: expectedRevision
+  })).commit.tree });
+  const parentClock = parentTree.tree.find(entry => /^edit-clock-\d+$/u.test(entry.path));
+  const childClock = childTree.tree.find(entry => /^edit-clock-\d+$/u.test(entry.path));
+  assert.equal(childClock.path, `edit-clock-${Number.parseInt(parentClock.path.slice('edit-clock-'.length), 10) + 1}`);
+  const opsEntry = childTree.tree.find(entry => entry.path === 'ops');
+  const payload = JSON.parse(new TextDecoder().decode((await git.readBlob({
+    fs,
+    gitdir,
+    oid: opsEntry.oid
+  })).blob));
+
+  assert.equal(payload.ops.length, 1, 'a Git-Bug commit must contain only its new operation');
+  assert.equal(payload.ops[0].type, 3);
+  assert.equal(payload.ops[0].message, 'Written by the browser Resource.');
+  assert.match(payload.ops[0].nonce, /^[A-Za-z0-9+/]{27}=$/);
+  assert.ok(Number.isInteger(payload.ops[0].timestamp));
+
+  const bugs = ['open', 'closed'].flatMap(status => JSON.parse(execFileSync(
+    gitBugBinary,
+    ['bug', '--status', status, '--format', 'json'],
+    {
+      cwd: root,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8'
+    }
+  )));
+  assert.ok(bugs.some(bug => bug.id === issueId), `CLI ids: ${bugs.map(bug => bug.id).join(',')}; expected ${issueId}`);
+
+  const shown = JSON.parse(execFileSync(
+    gitBugBinary,
+    ['bug', 'show', issueId, '--format', 'json'],
+    { cwd: root, env: { ...process.env, HOME: home }, encoding: 'utf8' }
+  ));
+  assert.equal(shown.id, issueId);
+  assert.equal(shown.status, 'closed');
+  assert.equal(shown.title, 'Closed issue with history');
+  assert.match(shown.edit_time?.time ?? '', /^2026-/);
+
+  assert.equal(execFileSync(
+    gitBugBinary,
+    ['bug', 'status', issueId],
+    { cwd: root, env: { ...process.env, HOME: home }, encoding: 'utf8' }
+  ).trim(), 'closed');
 });

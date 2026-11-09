@@ -9,7 +9,7 @@ import git from 'isomorphic-git';
 
 const sourceFixture = fileURLToPath(new URL('../tests/fixtures/gitBug/v0.11.0', import.meta.url));
 const repositoryUrl = 'https://github.com/almtoo/git-bug-fixture.git';
-const workspacePath = '/almtoo-workspaces/git-bug-fixture';
+const defaultWorkspacePath = '/almtoo-workspaces/git-bug-fixture';
 const vendorScripts = Object.freeze([
   './js/vendor/buffer/buffer.min.js',
   './js/vendor/lightning-fs/lightning-fs.min.js',
@@ -86,6 +86,9 @@ async function fixtureEntries(variant) {
 
 export async function seedGitBugFixture(page, variant = 'supported', options = {}) {
   const entries = await fixtureEntries(variant);
+  const workspacePath = typeof options.workspacePath === 'string' && options.workspacePath.startsWith('/almtoo-workspaces/')
+    ? options.workspacePath
+    : defaultWorkspacePath;
   await page.evaluate(async ({ entries, vendorScripts, workspacePath }) => {
     const loadVendor = source => new Promise((resolve, reject) => {
       const script = document.createElement('script');
@@ -101,7 +104,9 @@ export async function seedGitBugFixture(page, variant = 'supported', options = {
     });
     for (const source of vendorScripts) await loadVendor(source);
 
-    const fixtureFs = new globalThis.LightningFS('almtoo-git', { wipe: true });
+    // Do not wipe the shared browser filesystem while the application may still hold a lock.
+    // Each acceptance scenario receives a unique workspacePath from the harness.
+    const fixtureFs = new globalThis.LightningFS('almtoo-git', { wipe: false });
     const mkdirp = async target => {
       let current = '';
       for (const segment of target.split('/').filter(Boolean)) {
@@ -139,7 +144,7 @@ export async function waitForGitBugFixture(page, { timeout = 30_000 } = {}) {
   }, undefined, { timeout });
 }
 
-export async function snapshotGitBugRepository(page, repositoryWorkspacePath = workspacePath) {
+export async function snapshotGitBugRepository(page, repositoryWorkspacePath = defaultWorkspacePath) {
   return page.evaluate(async workspacePath => {
     const filesystem = globalThis.__almTooGitBugFixtureFs
       ?? new globalThis.LightningFS('almtoo-git', { wipe: false });

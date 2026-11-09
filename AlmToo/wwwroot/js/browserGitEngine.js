@@ -49,8 +49,27 @@ const publicationLimits = Object.freeze({
 });
 const gitBugSupportedMarker = 'version-4';
 const gitBugIssueIdPattern = /^[0-9a-f]{64}$/i;
+const gitBugDiagnosisLimits = Object.freeze({
+  refsInspected: 1,
+  commitsInspected: 128,
+  operationsInspected: 512
+});
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 const textEncoder = new TextEncoder();
+
+function createGitBugNonce() {
+  const bytes = new Uint8Array(20);
+  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== 'function'
+      || typeof globalThis.btoa !== 'function') {
+    throw new Error('git-bug-nonce-unavailable');
+  }
+  globalThis.crypto.getRandomValues(bytes);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return globalThis.btoa(binary);
+}
 
 let dependenciesPromise;
 let filesystem;
@@ -1412,6 +1431,372 @@ export async function getGitBugIssue(issueId) {
   }
 }
 
+export async function diagnoseGitBugRef(request) {
+  const operation = 'gitBug.diagnoseRef';
+
+  try {
+    const issueId = requireBoundedGitBugText(
+      typeof request === 'string' ? request : request?.issueId,
+      'issueId',
+      64);
+    if (!gitBugIssueIdPattern.test(issueId)) {
+      throw new GitBugReadError('malformed');
+    }
+
+    const workspace = await getActiveWorkspace(operation);
+    const { fs, dir } = workspace;
+    const git = getGit();
+    const affectedRef = `refs/bugs/${issueId}`;
+    const sourceRevision = await git.resolveRef({ fs, dir, ref: affectedRef });
+    if (!isSafeRemoteSnapshotObjectId(sourceRevision)) {
+      throw new GitBugReadError('malformed');
+    }
+    const result = await readGitBugDiagnosis(git, fs, dir, sourceRevision, affectedRef);
+    return success(operation, 'The Git-Bug ref was diagnosed without mutation.', result);
+  } catch (error) {
+    return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
+  }
+}
+
+async function readGitBugDiagnosis(git, fs, dir, sourceRevision, affectedRef) {
+  const history = [];
+  const visited = new Set();
+  let currentRevision = sourceRevision;
+  const refsInspected = gitBugDiagnosisLimits.refsInspected;
+  let commitsInspected = 0;
+  let operationsInspected = 0;
+
+  while (currentRevision) {
+    if (visited.has(currentRevision)) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    if (commitsInspected >= gitBugDiagnosisLimits.commitsInspected) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    visited.add(currentRevision);
+    const { commit } = await git.readCommit({ fs, dir, oid: currentRevision });
+    commitsInspected += 1;
+    if (!Array.isArray(commit.parent) || commit.parent.length > 1) {
+      return createGitBugDiagnosis(
+        'invalidParentTopology', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    const { tree } = await git.readTree({ fs, dir, oid: commit.tree });
+    const markers = tree.filter((entry) => /^version-\d+$/u.test(entry.path));
+    if (markers.length !== 1 || markers[0].type !== 'blob'
+        || markers[0].path !== gitBugSupportedMarker) {
+      return createGitBugDiagnosis(
+        'unsupportedMarker', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    const opsEntries = tree.filter((entry) => entry.path === 'ops' && entry.type === 'blob');
+    if (opsEntries.length !== 1) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    const payload = await readGitBugJsonBlob(git, fs, dir, opsEntries[0].oid);
+    if (!payload || !Array.isArray(payload.ops) || payload.ops.length === 0
+        || payload.ops.length > gitBugLimits.operationsPerCommit) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    const nextOperationsInspected = operationsInspected + payload.ops.length;
+    if (nextOperationsInspected > gitBugDiagnosisLimits.operationsInspected) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, gitBugDiagnosisLimits.operationsInspected);
+    }
+    operationsInspected = nextOperationsInspected;
+
+    const editClocks = tree.filter((entry) => /^edit-clock-\d+$/u.test(entry.path));
+    if (editClocks.length === 0) {
+      return createGitBugDiagnosis(
+        'missingEditClock', sourceRevision, affectedRef, commit.parent[0] ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    if (editClocks.length > 1) {
+      return createGitBugDiagnosis(
+        'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+
+    history.push({
+      oid: currentRevision,
+      parent: commit.parent[0] ?? null,
+      editClock: Number.parseInt(editClocks[0].path.slice('edit-clock-'.length), 10),
+      operations: payload.ops
+    });
+    currentRevision = commit.parent[0] ?? null;
+  }
+
+  const operationIds = new Set();
+  let previousEditClock = null;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (!Number.isSafeInteger(entry.editClock)) {
+      return createGitBugDiagnosis(
+        'missingEditClock', sourceRevision, affectedRef,
+        index === history.length - 1 ? null : history[index + 1].oid,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    if (previousEditClock !== null && entry.editClock <= previousEditClock) {
+      return createGitBugDiagnosis(
+        'staleEditClock', sourceRevision, affectedRef,
+        index === history.length - 1 ? null : history[index + 1].oid,
+        refsInspected, commitsInspected, operationsInspected);
+    }
+    previousEditClock = entry.editClock;
+
+    const commitOperationIds = new Set();
+    for (const gitBugOperation of entry.operations) {
+      const nonce = gitBugOperation?.nonce;
+      if (!isBoundedGitBugText(nonce, 128)) {
+        return createGitBugDiagnosis(
+          'missingNonce', sourceRevision, affectedRef,
+          index === history.length - 1 ? null : history[index + 1].oid,
+          refsInspected, commitsInspected, operationsInspected);
+      }
+      if (commitOperationIds.has(nonce) || operationIds.has(nonce)) {
+        return createGitBugDiagnosis(
+          'duplicateOperations', sourceRevision, affectedRef,
+          index === history.length - 1 ? null : history[index + 1].oid,
+          refsInspected, commitsInspected, operationsInspected);
+      }
+      commitOperationIds.add(nonce);
+      operationIds.add(nonce);
+    }
+  }
+
+  return createGitBugDiagnosis(
+    'ambiguousHistory', sourceRevision, affectedRef, history.at(-1)?.oid ?? null,
+    refsInspected, commitsInspected, operationsInspected);
+}
+
+function createGitBugDiagnosis(code, sourceRevision, affectedRef, latestValidParent,
+  refsInspected, commitsInspected, operationsInspected) {
+  const repairable = code === 'missingNonce' || code === 'missingEditClock';
+  return {
+    invariantCode: code,
+    sourceRevision,
+    affectedRef,
+    latestValidParent,
+    repairability: repairable ? 'repairable' : 'notRepairable',
+    counts: { refsInspected, commitsInspected, operationsInspected }
+  };
+}
+
+function isRepairObjectId(value) {
+  return isSafeRemoteSnapshotObjectId(value);
+}
+
+function isAllowedRepairTargetRef(value) {
+  return isSafeRemoteSnapshotRef(value)
+    && (value.startsWith('refs/bugs/') || value.startsWith('refs/identities/'));
+}
+
+function isAllowedRepairBackupRef(value) {
+  return isSafeRemoteSnapshotRef(value)
+    && value.startsWith('refs/almtoo/recovery/')
+    && value.split('/').length >= 5;
+}
+
+function repairFailure(kind) {
+  const error = new Error(`git-bug-write-${kind}`);
+  error.gitBugWriteKind = kind;
+  return error;
+}
+
+async function resolveOptionalRef(git, fs, dir, ref) {
+  try {
+    return await git.resolveRef({ fs, dir, ref });
+  } catch (error) {
+    const message = String(error?.message ?? error ?? '').toLowerCase();
+    if (message.includes('not found') || message.includes('could not find')
+        || message.includes('does not exist') || message.includes('unknown ref')) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readRepairSource(git, fs, dir, sourceRevision) {
+  let commit;
+  try {
+    commit = (await git.readCommit({ fs, dir, oid: sourceRevision })).commit;
+  } catch {
+    throw repairFailure('unavailable');
+  }
+
+  const tree = (await git.readTree({ fs, dir, oid: commit.tree })).tree;
+  const markerEntries = tree.filter((entry) => entry.path === gitBugSupportedMarker && entry.type === 'blob');
+  const opsEntries = tree.filter((entry) => entry.path === 'ops' && entry.type === 'blob');
+  const editClockEntries = tree.filter((entry) => /^edit-clock-\d+$/u.test(entry.path));
+  if (markerEntries.length !== 1 || opsEntries.length !== 1 || editClockEntries.length > 1) {
+    throw repairFailure('unsupported-format');
+  }
+
+  const payload = await readGitBugJsonBlob(git, fs, dir, opsEntries[0].oid);
+  if (!payload || !Array.isArray(payload.ops) || payload.ops.length === 0
+      || payload.ops.length > gitBugLimits.operationsPerCommit) {
+    throw repairFailure('serialization-failed');
+  }
+
+  return { commit, tree, opsEntry: opsEntries[0], editClockEntries, payload };
+}
+
+async function readRepairParentEditClock(git, fs, dir, parentRevision) {
+  if (!isRepairObjectId(parentRevision)) {
+    throw repairFailure('precondition-failed');
+  }
+  const parentCommit = (await git.readCommit({ fs, dir, oid: parentRevision })).commit;
+  const parentTree = (await git.readTree({ fs, dir, oid: parentCommit.tree })).tree;
+  const clocks = parentTree.filter((entry) => /^edit-clock-\d+$/u.test(entry.path));
+  if (clocks.length !== 1) {
+    throw repairFailure('unsupported-format');
+  }
+  const clock = Number.parseInt(clocks[0].path.slice('edit-clock-'.length), 10);
+  if (!Number.isSafeInteger(clock)) {
+    throw repairFailure('unsupported-format');
+  }
+  return clock;
+}
+
+async function writeRepairCommit(git, fs, dir, request, source) {
+  const entries = source.tree.map((entry) => ({
+    mode: entry.mode,
+    path: entry.path,
+    oid: entry.oid
+  }));
+
+  if (request.operation === 'gitBug.repair.nonce') {
+    const usedNonces = new Set(source.payload.ops.map((item) => item?.nonce).filter((value) => typeof value === 'string'));
+    let changed = false;
+    const operations = source.payload.ops.map((item, index) => {
+      if (item && typeof item === 'object' && (!isBoundedGitBugText(item.nonce, 128))) {
+        let nonce = `almtoo-repair-${request.sourceRevision}-${index}`;
+        let suffix = 0;
+        while (usedNonces.has(nonce)) nonce = `almtoo-repair-${request.sourceRevision}-${index}-${++suffix}`;
+        usedNonces.add(nonce);
+        changed = true;
+        return { ...item, nonce };
+      }
+      return item;
+    });
+    if (!changed) throw repairFailure('precondition-failed');
+    const blob = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode(JSON.stringify({ ...source.payload, ops: operations })) });
+    const opsIndex = entries.findIndex((entry) => entry.path === 'ops');
+    if (opsIndex < 0) throw repairFailure('unsupported-format');
+    entries[opsIndex] = { ...entries[opsIndex], oid: blob.oid };
+  } else if (request.operation === 'gitBug.repair.editClock') {
+    if (source.editClockEntries.length !== 0) throw repairFailure('precondition-failed');
+    const parentClock = await readRepairParentEditClock(git, fs, dir, request.expectedNewObjectId);
+    const nextClock = parentClock + request.editClockDelta;
+    if (!Number.isSafeInteger(nextClock) || nextClock < 0) throw repairFailure('serialization-failed');
+    entries.push({ mode: '100644', path: `edit-clock-${nextClock}`, oid: (await git.writeBlob({
+      fs, dir, blob: new TextEncoder().encode(String(nextClock))
+    })).oid });
+  } else {
+    throw repairFailure('unsupported-format');
+  }
+
+  const tree = (await git.writeTree({ fs, dir, tree: entries })).oid;
+  const commit = (await git.writeCommit({
+    fs,
+    dir,
+    commit: {
+      tree,
+      parent: [request.expectedNewObjectId],
+      author: source.commit.author,
+      committer: source.commit.committer,
+      message: source.commit.message
+    }
+  })).oid;
+  if (!isRepairObjectId(commit)) throw repairFailure('serialization-failed');
+  return commit;
+}
+
+export async function applyGitBugRepair(request) {
+  const operation = 'gitBug.applyRepair';
+  try {
+    if (!request || request.confirmed !== true
+        || !isRepairObjectId(request.sourceRevision)
+        || !isAllowedRepairTargetRef(request.targetRef)
+        || !isAllowedRepairBackupRef(request.backupRef)
+        || !isRepairObjectId(request.expectedOldObjectId)
+        || !isRepairObjectId(request.expectedNewObjectId)
+        || !['gitBug.repair.nonce', 'gitBug.repair.editClock'].includes(request.operation)
+        || !['preserve-valid-parent', 'advance-from-valid-parent'].includes(request.editClockStrategy)
+        || !Number.isSafeInteger(request.editClockDelta)
+        || request.editClockDelta < 0 || request.editClockDelta > 1
+        || request.sourceRevision !== request.expectedOldObjectId) {
+      throw repairFailure('invalid-request');
+    }
+
+    const workspace = await getActiveWorkspace(operation);
+    const { fs, dir } = workspace;
+    const git = getGit();
+    const current = await git.resolveRef({ fs, dir, ref: request.targetRef });
+    if (current !== request.expectedOldObjectId && current !== request.expectedNewObjectId) {
+      throw repairFailure('precondition-failed');
+    }
+
+    const existingBackup = await resolveOptionalRef(git, fs, dir, request.backupRef);
+    if (existingBackup !== null && existingBackup !== request.expectedOldObjectId) {
+      throw repairFailure('conflict');
+    }
+
+    if (current === request.expectedNewObjectId) {
+      if (existingBackup === null) throw repairFailure('precondition-failed');
+      return success(operation, 'The Git-Bug repair was already applied.', {
+        sourceRevision: request.sourceRevision,
+        targetRef: request.targetRef,
+        backupRef: request.backupRef,
+        objectId: request.expectedNewObjectId,
+        alreadyApplied: true
+      });
+    }
+
+    const source = await readRepairSource(git, fs, dir, request.sourceRevision);
+    if (source.commit.parent?.[0] !== request.expectedNewObjectId) {
+      throw repairFailure('precondition-failed');
+    }
+    if (request.operation === 'gitBug.repair.nonce') {
+      const hasMissingNonce = source.payload.ops.some((item) =>
+        item && typeof item === 'object' && !isBoundedGitBugText(item.nonce, 128));
+      if (!hasMissingNonce) throw repairFailure('precondition-failed');
+    } else if (source.editClockEntries.length !== 0) {
+      throw repairFailure('precondition-failed');
+    }
+
+    if (existingBackup === null) {
+      await git.writeRef({ fs, dir, ref: request.backupRef, value: request.expectedOldObjectId, force: false });
+    }
+
+    const latest = await git.resolveRef({ fs, dir, ref: request.targetRef });
+    if (latest !== request.expectedOldObjectId) throw repairFailure('precondition-failed');
+    await git.writeRef({ fs, dir, ref: request.targetRef, value: request.expectedNewObjectId, force: true });
+
+    return success(operation, 'The Git-Bug repair was applied and the malformed tip was preserved.', {
+      sourceRevision: request.sourceRevision,
+      targetRef: request.targetRef,
+      backupRef: request.backupRef,
+      objectId: request.expectedNewObjectId,
+      alreadyApplied: false
+    });
+  } catch (error) {
+    return normalizedGitBugFailure(operation, classifyGitBugFailure(error));
+  }
+}
+
 async function writeGitBugOperation(request, operation, operations) {
   const workspace = await getActiveWorkspace(operation);
   const { fs, dir } = workspace;
@@ -1445,18 +1830,36 @@ async function writeGitBugOperation(request, operation, operations) {
   if (!gitBugIssueIdPattern.test(actorId ?? '') || !Array.isArray(envelope.ops)) {
     throw new GitBugReadError('malformed');
   }
-  const timestamp = Math.floor(Date.now() / 1000);
-  const operationRecords = [
-    ...envelope.ops,
-    ...operations.map(({ type, ...fields }) => ({ type, timestamp, ...fields }))
-  ];
+  const parentTimestamp = envelope.ops.reduce((latest, operationRecord) => {
+    const timestamp = Number.isInteger(operationRecord?.timestamp)
+      ? operationRecord.timestamp
+      : latest;
+    return Math.max(latest, timestamp);
+  }, 0);
+  const timestamp = Math.max(Math.floor(Date.now() / 1000), parentTimestamp);
+  const operationRecords = operations.map(({ type, ...fields }) => ({
+    type,
+    timestamp,
+    nonce: createGitBugNonce(),
+    ...fields
+  }));
+  const editClockEntries = tree.filter(entry => /^edit-clock-\d+$/u.test(entry.path));
+  if (editClockEntries.length !== 1) {
+    throw new GitBugReadError('malformed');
+  }
+  const currentEditClock = Number.parseInt(editClockEntries[0].path.slice('edit-clock-'.length), 10);
+  if (!Number.isSafeInteger(currentEditClock) || currentEditClock >= Number.MAX_SAFE_INTEGER) {
+    throw new GitBugReadError('malformed');
+  }
+  const nextEditClock = `edit-clock-${currentEditClock + 1}`;
   const payload = JSON.stringify({ author: { id: actorId }, ops: operationRecords });
   const opsBlob = await git.writeBlob({ fs, dir, blob: textEncoder.encode(payload) });
   const treeOid = await git.writeTree({
     fs,
     dir,
     tree: [
-      ...tree.filter(entry => entry.path !== 'ops'),
+      ...tree.filter(entry => entry.path !== 'ops' && entry.path !== editClockEntries[0].path),
+      { mode: '100644', path: nextEditClock, oid: editClockEntries[0].oid },
       { mode: '100644', path: 'ops', oid: opsBlob }
     ]
   });

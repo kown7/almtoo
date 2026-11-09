@@ -1,5 +1,12 @@
 using AlmToo.Engines.Workspace;
 using AlmToo.Managers.Workspace.Interface;
+using GitBugDiagnosisContract = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisContract;
+using GitBugDiagnosisCounts = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisCounts;
+using GitBugDiagnosisInvariantCode = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisInvariantCode;
+using GitBugDiagnosisRepairability = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisRepairability;
+using GitBugDiagnosisResult = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugDiagnosisResult;
+using GitBugRepairContract = AlmToo.Accessor.BrowserGitAccessor.Interface.GitBugRepairContract;
+using GitOperationFailureKind = AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationFailureKind;
 using Xunit;
 
 namespace AlmToo.Tests.Engines.Workspace;
@@ -198,6 +205,154 @@ public sealed class GitBugPublicationEngineTests
         var identitySpec = result.Plan.RefSpecs.Single(spec => spec.Kind == GitBugPublicationRefKind.Identity);
         Assert.Equal(GitBugPublicationChangeKind.Update, identitySpec.ChangeKind);
         Assert.Equal(identitySpec.LocalObjectId, identitySpec.ExpectedRemoteObjectId);
+    }
+
+    [Fact]
+    public void Recovery_engine_marks_only_contract_valid_repairable_diagnoses_as_ready()
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            GitBugDiagnosisInvariantCode.MissingNonce,
+            new string('a', 40),
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+
+        var result = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "bridge detail must not be used",
+                diagnosis,
+                Diagnostic: "secret transport detail"));
+
+        Assert.Equal(GitBugRecoveryStatus.ReadyToRepair, result.Status);
+        Assert.Same(diagnosis, result.Diagnosis);
+        Assert.Null(result.FailureKind);
+        Assert.DoesNotContain("bridge", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Recovery_engine_builds_a_deterministic_source_bound_repair_preview()
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            GitBugDiagnosisInvariantCode.MissingNonce,
+            SourceRevision,
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+        var decision = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "ignored",
+                diagnosis));
+
+        var result = new GitBugRecoveryEngine().BuildRepairPlan(decision, SourceRevision);
+
+        Assert.Equal(GitBugRepairPreviewStatus.Ready, result.Status);
+        Assert.Null(result.RejectionReason);
+        Assert.Equal(GitBugRepairIdempotencyState.NotApplied, result.Idempotency);
+        Assert.NotNull(result.Plan);
+        Assert.Equal(SourceRevision, result.Plan.SourceRevision);
+        Assert.Equal(SourceRevision, result.Plan.ExpectedOldObjectId);
+        Assert.Equal(new string('b', 40), result.Plan.ExpectedNewObjectId);
+        Assert.Equal("refs/bugs/issue-1", result.Plan.TargetRef);
+        Assert.Equal($"refs/almtoo/recovery/{SourceRevision}/bugs/issue-1", result.Plan.BackupRef);
+        Assert.Equal(GitBugRepairContract.RebuildMissingNonce, result.Plan.Mutation.Operation);
+        Assert.Equal("preserve-valid-parent", result.Plan.Mutation.EditClockChange.Strategy);
+        Assert.Equal(0, result.Plan.Mutation.EditClockChange.Delta);
+        Assert.True(result.Plan.RequiresExplicitConfirmation);
+        Assert.DoesNotContain("ignored", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Recovery_engine_rejects_a_stale_source_revision_before_planning()
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            GitBugDiagnosisInvariantCode.MissingNonce,
+            SourceRevision,
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+        var decision = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "ignored",
+                diagnosis));
+
+        var result = new GitBugRecoveryEngine().BuildRepairPlan(decision, new string('c', 40));
+
+        Assert.Equal(GitBugRepairPreviewStatus.Stale, result.Status);
+        Assert.Equal(GitBugRepairRejectionReason.StaleSourceRevision, result.RejectionReason);
+        Assert.Null(result.Plan);
+    }
+
+    [Theory]
+    [InlineData(GitBugDiagnosisInvariantCode.AmbiguousHistory, GitBugRepairPreviewStatus.Ambiguous, GitBugRepairRejectionReason.AmbiguousHistory)]
+    [InlineData(GitBugDiagnosisInvariantCode.UnsupportedMarker, GitBugRepairPreviewStatus.Unsupported, GitBugRepairRejectionReason.UnsupportedInvariant)]
+    public void Recovery_engine_rejects_ambiguous_or_unsupported_repair_invariants(
+        GitBugDiagnosisInvariantCode invariantCode,
+        GitBugRepairPreviewStatus expectedStatus,
+        GitBugRepairRejectionReason expectedReason)
+    {
+        var diagnosis = new GitBugDiagnosisResult(
+            invariantCode,
+            SourceRevision,
+            "refs/bugs/issue-1",
+            new string('b', 40),
+            GitBugDiagnosisRepairability.Repairable,
+            new GitBugDiagnosisCounts(1, 2, 4));
+        var decision = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                true,
+                "ignored",
+                diagnosis));
+
+        var result = new GitBugRecoveryEngine().BuildRepairPlan(decision, SourceRevision);
+
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.Equal(expectedReason, result.RejectionReason);
+        Assert.Null(result.Plan);
+    }
+
+    [Theory]
+    [InlineData("refs/heads/main")]
+    [InlineData("refs/bugs/issue..1")]
+    public void Repair_contract_rejects_backup_refs_outside_the_allowlist(string targetRef)
+    {
+        Assert.Null(GitBugRepairContract.CreateBackupRef(SourceRevision, targetRef));
+        Assert.False(GitBugRepairContract.IsAllowedBackupRef(targetRef));
+    }
+
+    [Theory]
+    [InlineData(GitOperationFailureKind.GitBugDataUnavailable, GitBugRecoveryStatus.DataUnavailable)]
+    [InlineData(GitOperationFailureKind.GitBugFormatUnsupported, GitBugRecoveryStatus.FormatUnsupported)]
+    [InlineData(GitOperationFailureKind.GitBugDataMalformed, GitBugRecoveryStatus.DataMalformed)]
+    [InlineData(GitOperationFailureKind.GitBugDiagnosisCancelled, GitBugRecoveryStatus.Cancelled)]
+    [InlineData(GitOperationFailureKind.GitBugTransportFailure, GitBugRecoveryStatus.TransportFailure)]
+    public void Recovery_engine_normalizes_safe_failure_kinds(
+        GitOperationFailureKind failureKind,
+        GitBugRecoveryStatus expectedStatus)
+    {
+        var result = new GitBugRecoveryEngine().Evaluate(
+            new AlmToo.Accessor.BrowserGitAccessor.Interface.GitOperationResult<GitBugDiagnosisResult>(
+                GitBugDiagnosisContract.DiagnosisOperation,
+                false,
+                "unsafe bridge message",
+                Diagnostic: "raw transport detail",
+                FailureKind: failureKind));
+
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.Null(result.Diagnosis);
+        Assert.Equal(failureKind, result.FailureKind);
+        Assert.DoesNotContain("unsafe", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("raw", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static GitBugPublicationRefState Ref(string refName, char objectIdPrefix) =>

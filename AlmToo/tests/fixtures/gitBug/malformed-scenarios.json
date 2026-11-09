@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "format": "git-bug-v0.11.0",
+  "baseFixture": "../v0.11.0",
+  "marker": "version-4",
+  "scenarios": {
+    "duplicate-operations": {
+      "invariantCode": "DuplicateOperations",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "NotRepairable",
+      "mutation": "duplicate-the-same-operation-id",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 2, "operationsInspected": 3 }
+    },
+    "multi-operation-edit": {
+      "invariantCode": "AmbiguousHistory",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "NotRepairable",
+      "mutation": "append-a-distinct-second-operation",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 2, "operationsInspected": 3 }
+    },
+    "missing-nonce": {
+      "invariantCode": "MissingNonce",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "Repairable",
+      "mutation": "remove-operation-nonce",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 2, "operationsInspected": 3 }
+    },
+    "backward-clock-skew": {
+      "invariantCode": "StaleEditClock",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "NotRepairable",
+      "mutation": "decrease-edit-clock-before-commit",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 2, "operationsInspected": 3 }
+    },
+    "malformed-legacy-history": {
+      "invariantCode": "UnsupportedMarker",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "NotRepairable",
+      "mutation": "replace-version-4-marker-with-legacy-version-3",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 1, "operationsInspected": 0 }
+    },
+    "stale-edit-clock-n": {
+      "invariantCode": "StaleEditClock",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "NotRepairable",
+      "mutation": "decrease-edit-clock-n",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 2, "operationsInspected": 3 }
+    },
+    "missing-edit-clock-n": {
+      "invariantCode": "MissingEditClock",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "Repairable",
+      "mutation": "remove-edit-clock-n",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 2, "operationsInspected": 3 }
+    },
+    "invalid-parent-topology": {
+      "invariantCode": "InvalidParentTopology",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "NotRepairable",
+      "mutation": "repeat-or-self-reference-parent",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 2, "operationsInspected": 0 }
+    },
+    "unsupported-marker": {
+      "invariantCode": "UnsupportedMarker",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": "94d4fde8708ffa7e954c51df9a7c656300f98374",
+      "repairability": "NotRepairable",
+      "mutation": "replace-version-4-marker-with-version-5",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 1, "operationsInspected": 0 }
+    },
+    "ambiguous-history": {
+      "invariantCode": "AmbiguousHistory",
+      "baseIssueRef": "a85873c253c45c3d1ca6b84c0810e4b15551cdff38a3f001ae5cd52d879e28e1",
+      "sourceRevision": "fa802b2190bb3e885d60afce4d88d7a35c831877",
+      "latestValidParent": null,
+      "repairability": "NotRepairable",
+      "mutation": "present-two-equally-valid-parent-branches",
+      "boundedCounts": { "refsInspected": 1, "commitsInspected": 3, "operationsInspected": 0 }
+    }
+  }
+}
